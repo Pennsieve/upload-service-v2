@@ -9,8 +9,8 @@ resource "aws_s3_bucket" "uploads_s3_bucket" {
   tags = merge(
   local.common_tags,
   {
-    "Name"         = "${var.environment_name}-uploads-s3-bucket-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
-    "name"         = "${var.environment_name}-uploads-s3-bucket-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
+    "Name"         = "${var.environment_name}-uploads-v2-s3-bucket-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
+    "name"         = "${var.environment_name}-uploads-v2-s3-bucket-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
     "service_name" = "upload-service-v2"
     "tier"         = "s3"
   },
@@ -32,3 +32,20 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "uploads_s3_bucket
   }
 }
 
+# S3 event filter
+resource "aws_s3_bucket_notification" "uploads_s3_notification" {
+  bucket = aws_s3_bucket.uploads_s3_bucket.id
+
+  queue {
+    queue_arn     = aws_sqs_queue.upload_trigger_queue.arn
+    events        = ["s3:ObjectCreated:*"]
+  }
+}
+
+## Event source from SQS
+#resource "aws_lambda_event_source_mapping" "event_source_mapping" {
+#  event_source_arn = aws_sqs_queue.queue.arn
+#  enabled          = true
+#  function_name    = aws_lambda_function.sqs_processor.arn
+#  batch_size       = 1
+#}

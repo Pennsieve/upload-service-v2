@@ -49,8 +49,8 @@ data "aws_iam_policy_document" "uploads_bucket_force_ssl_iam_policy_document" {
     effect = "Deny"
 
     resources = [
-      "arn:aws:s3:::pennsieve-${var.environment_name}-uploads-${data.terraform_remote_state.region.outputs.aws_region_shortname}",
-      "arn:aws:s3:::pennsieve-${var.environment_name}-uploads-${data.terraform_remote_state.region.outputs.aws_region_shortname}/*",
+      "arn:aws:s3:::pennsieve-${var.environment_name}-uploads-v2-${data.terraform_remote_state.region.outputs.aws_region_shortname}",
+      "arn:aws:s3:::pennsieve-${var.environment_name}-uploads-v2-${data.terraform_remote_state.region.outputs.aws_region_shortname}/*",
     ]
 
     actions = [
