@@ -9,7 +9,24 @@ resource "aws_sqs_queue" "upload_trigger_queue" {
   receive_wait_time_seconds  = 10
   visibility_timeout_seconds = 30
   redrive_policy             = "{\"deadLetterTargetArn\":\"${aws_sqs_queue.upload_trigger_deadletter_queue.arn}\",\"maxReceiveCount\":3}"
+  policy = <<POLICY
+  {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Principal": "*",
+        "Action": "sqs:SendMessage",
+        "Resource": "arn:aws:sqs:*:*:${var.environment_name}-upload_trigger-queue-${data.terraform_remote_state.region.outputs.aws_region_shortname}",
+        "Condition": {
+          "ArnEquals": { "aws:SourceArn": "${aws_s3_bucket.uploads_s3_bucket.arn}" }
+        }
+      }
+    ]
+  }
+  POLICY
 }
+
 
 resource "aws_sqs_queue" "upload_trigger_deadletter_queue" {
   name                      = "${var.environment_name}-upload_trigger-deadletter-queue-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
@@ -20,7 +37,7 @@ resource "aws_sqs_queue" "upload_trigger_deadletter_queue" {
   receive_wait_time_seconds = 10
 }
 
-resource "aws_sqs_queue_policy" "upload_trigger_sqs_queue_policy" {
-  queue_url = aws_sqs_queue.upload_trigger_queue.id
-  policy    = data.aws_iam_policy_document.upload_trigger_queue_policy_document.json
-}
+#resource "aws_sqs_queue_policy" "upload_trigger_sqs_queue_policy" {
+#  queue_url = aws_sqs_queue.upload_trigger_queue.id
+#  policy    = data.aws_iam_policy_document.upload_trigger_queue_policy_document.json
+#}

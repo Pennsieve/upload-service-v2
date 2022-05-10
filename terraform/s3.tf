@@ -19,7 +19,7 @@ resource "aws_s3_bucket" "uploads_s3_bucket" {
 
 resource "aws_s3_bucket_policy" "uploads_s3_bucket_policy" {
   bucket = aws_s3_bucket.uploads_s3_bucket.bucket
-  policy = data.aws_iam_policy_document.uploads_bucket_force_ssl_iam_policy_document.json
+  policy = data.aws_iam_policy_document.uploads_bucket_iam_policy_document.json
 }
 
 resource "aws_s3_bucket_server_side_encryption_configuration" "uploads_s3_bucket_encryption" {
@@ -34,7 +34,7 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "uploads_s3_bucket
 
 # S3 event filter
 resource "aws_s3_bucket_notification" "uploads_s3_notification" {
-  bucket = aws_s3_bucket.uploads_s3_bucket.id
+  bucket = aws_s3_bucket.uploads_s3_bucket.bucket
 
   queue {
     queue_arn     = aws_sqs_queue.upload_trigger_queue.arn

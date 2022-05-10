@@ -29,20 +29,28 @@ data "aws_iam_policy_document" "upload_trigger_queue_kms_key_policy_document" {
   }
 }
 
-data "aws_iam_policy_document" "upload_trigger_queue_policy_document" {
-  statement {
-    effect    = "Allow"
-    actions   = ["sqs:SendMessage"]
-    resources = [aws_sqs_queue.upload_trigger_queue.arn]
+#data "aws_iam_policy_document" "upload_trigger_queue_policy_document" {
+#  statement {
+#    effect    = "Allow"
+#    principal = "*"
+#    actions   = ["sqs:SendMessage"]
+#    resources = [aws_sqs_queue.upload_trigger_queue.arn]
+#
+#
+##    condition {
+##
+##      test = "ArnLike"
+##
+##      values = [
+##        "${aws_s3_bucket.uploads_s3_bucket.arn}/*"
+##      ]
+##
+##      variable = "aws:SourceArn"
+##    }
+#  }
+#}
 
-    principals {
-      type        = "Service"
-      identifiers = ["events.amazonaws.com"]
-    }
-  }
-}
-
-data "aws_iam_policy_document" "uploads_bucket_force_ssl_iam_policy_document" {
+data "aws_iam_policy_document" "uploads_bucket_iam_policy_document" {
 
   statement {
     sid    = "ForceSSLOnlyAccess"
