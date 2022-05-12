@@ -19,3 +19,6 @@
 
 # Terraform
 .terraform.lock.hcl
+
+# Lambda Binaries
+lambda/bin/*

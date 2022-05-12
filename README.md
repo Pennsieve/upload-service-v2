@@ -12,3 +12,7 @@ Version 2 of the Pennsieve upload service
    1. Lambda verifies uploaded file against manifest
    2. Lambda adds packages to dataset
    3. Lambda moves file to storage bucket
+
+## Create build for TF
+
+```env GOOS=linux GOARCH=amd64 go build -o bin/pennsieve_upload_service_v2```
