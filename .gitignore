@@ -22,3 +22,6 @@
 
 # Lambda Binaries
 lambda/bin/*
+
+# Mac
+.DS_Store

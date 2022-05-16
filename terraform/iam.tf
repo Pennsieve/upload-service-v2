@@ -121,6 +121,18 @@ resource "aws_iam_policy" "upload_trigger_lambda_iam_policy" {
 }
 
 data "aws_iam_policy_document" "upload_trigger_lambda_iam_policy_document" {
+
+  statement {
+
+    actions = [
+      "rds-db:connect"
+    ]
+
+    resources = [
+      data.terraform_remote_state.pennsieve_postgres.outputs.rds_proxy_endpoint_arn
+    ]
+  }
+
   statement {
     sid    = "UploadLambdaPermissions"
     effect = "Allow"

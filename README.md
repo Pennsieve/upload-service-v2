@@ -13,6 +13,8 @@ Version 2 of the Pennsieve upload service
    2. Lambda adds packages to dataset
    3. Lambda moves file to storage bucket
 
-## Create build for TF
+## Create Lambda Build
+Prior to terraforming the Lambda (which zips and uploads the lambda to AWS), the Lambda function needs
+to be build for the Lambda environment. You can do this with the following command:
 
-```env GOOS=linux GOARCH=amd64 go build -o bin/pennsieve_upload_service_v2```
+```env GOOS=linux GOARCH=amd64 go build -o ../bin/upload/pennsieve_upload_service_v2```
