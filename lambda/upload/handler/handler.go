@@ -11,5 +11,12 @@ func Handler(ctx context.Context, sqsEvent events.SQSEvent) error {
 		log.Printf("The message %s for event source %s = %s \n\n", message.MessageId, message.EventSource, message.Body)
 	}
 
+	db, _ := connectRDS()
+
+	// Close database connection.
+	if db.Ping() == nil {
+		db.Close()
+	}
+
 	return nil
 }
