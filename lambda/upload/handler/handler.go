@@ -9,8 +9,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/pennsieve/pennsieve-go-api/config"
 	"github.com/pennsieve/pennsieve-go-api/models"
-	"github.com/pennsieve/pennsieve-go-api/models/db"
-	"github.com/pennsieve/pennsieve-go-api/models/packageInfo"
+	"github.com/pennsieve/pennsieve-go-api/pkg"
+	"github.com/pennsieve/pennsieve-go-api/pkg/packageInfo"
 	"log"
 )
 
@@ -21,13 +21,19 @@ type UploadSession struct {
 	OwnerId        int
 }
 
+// Handler implements the function that is called when new SQS Events arrive.
 func Handler(ctx context.Context, sqsEvent events.SQSEvent) error {
-	for _, message := range sqsEvent.Records {
-		log.Printf("The message %s for event source %s = %s \n\n", message.MessageId, message.EventSource, message.Body)
+
+	// 1. Retrieve info from Manifest Tables
+	// TODO: Replace this with API calls
+	session := UploadSession{
+		OrganizationId: 19,   // Pennsieve Test
+		DatasetId:      1682, // Test Upload
+		OwnerId:        24,   // Joost
 	}
 
 	// 1. Connect to Database
-	conn, _ := config.ConnectRDS()
+	conn, _ := config.ConnectRDS(session.OrganizationId)
 	defer func() {
 		err := conn.Close()
 		if err != nil {
@@ -37,33 +43,27 @@ func Handler(ctx context.Context, sqsEvent events.SQSEvent) error {
 		log.Println("Closing DB connection.")
 	}()
 
-	// 2. Retrieve info from Manifest Tables
-	// TODO: Replace this with API calls
-	session := UploadSession{
-		OrganizationId: 19,   // Pennsieve Test
-		DatasetId:      1682, // Test Upload
-		OwnerId:        24,   // Joost
-	}
-
-	// Parse uploadFiles from S3 Event
+	// 2. Parse uploadFiles from S3 Event
 	uploadFiles, _ := getUploadFiles(sqsEvent.Records)
 
-	// Map by uploadSessionID
-	var fileBySession = map[string][]models.UploadFile{}
+	// 3. Map by uploadSessionID
+	var fileBySession = map[string][]pkg.UploadFile{}
 	for _, f := range uploadFiles {
 		fileBySession[f.SessionId] = append(fileBySession[f.SessionId], f)
 	}
 
-	for _, fileUploads := range fileBySession {
-		importFiles(fileUploads, session)
+	// 4. Iterate over different import sessions and import files.
+	for _, uploadFilesForSession := range fileBySession {
+		importFiles(uploadFilesForSession, session)
 	}
 
 	return nil
 }
 
-func getUploadFiles(fileEvents []events.SQSMessage) ([]models.UploadFile, error) {
+// getUploadFiles parses the SQS Messages and constructs an array of UploadFiles.
+func getUploadFiles(fileEvents []events.SQSMessage) ([]pkg.UploadFile, error) {
 
-	var pkgs []models.UploadFile
+	var pkgs []pkg.UploadFile
 	for _, message := range fileEvents {
 
 		/*
@@ -81,7 +81,7 @@ func getUploadFiles(fileEvents []events.SQSMessage) ([]models.UploadFile, error)
 		}
 
 		// Get UploadFile Representation from event
-		var uf = models.UploadFile{}
+		var uf = pkg.UploadFile{}
 		uploadFile, _ := uf.FromS3Event(&parsedS3Event)
 
 		pkgs = append(pkgs, uploadFile)
@@ -91,8 +91,9 @@ func getUploadFiles(fileEvents []events.SQSMessage) ([]models.UploadFile, error)
 	return pkgs, nil
 }
 
-func getPackageParams(uploadFiles []models.UploadFile, session UploadSession) ([]db.PackageParams, error) {
-	var pkgParams []db.PackageParams
+// getPackageParams returns an array of PackageParams to insert in the Packages Table.
+func getPackageParams(uploadFiles []pkg.UploadFile, session UploadSession) ([]models.PackageParams, error) {
+	var pkgParams []models.PackageParams
 
 	for _, file := range uploadFiles {
 		packageID := fmt.Sprintf("N:package:%s", uuid.New().String())
@@ -104,15 +105,15 @@ func getPackageParams(uploadFiles []models.UploadFile, session UploadSession) ([
 		uploadId := uuid.New().String()
 
 		// Set Default attributes for File ==> Subtype and Icon
-		var attributes []models.FileAttribute
-		attributes = append(attributes, models.FileAttribute{
+		var attributes []pkg.FileAttribute
+		attributes = append(attributes, pkg.FileAttribute{
 			Key:      "subType",
 			Fixed:    false,
 			Value:    file.SubType,
 			Hidden:   true,
 			Category: "Pennsieve",
 			DataType: "string",
-		}, models.FileAttribute{
+		}, pkg.FileAttribute{
 			Key:      "icon",
 			Fixed:    false,
 			Value:    file.Icon.String(),
@@ -121,7 +122,7 @@ func getPackageParams(uploadFiles []models.UploadFile, session UploadSession) ([
 			DataType: "string",
 		})
 
-		pkgParam := db.PackageParams{
+		pkgParam := models.PackageParams{
 			Name:         file.Name,
 			PackageType:  file.Type,
 			PackageState: packageInfo.Uploaded,
@@ -141,10 +142,17 @@ func getPackageParams(uploadFiles []models.UploadFile, session UploadSession) ([
 
 }
 
-func importFiles(files []models.UploadFile, session UploadSession) {
+// importFiles is the wrapper function to import files from a single upload-session.
+// A single upload session implies that all files belong to the same organization, dataset and owner.
+func importFiles(files []pkg.UploadFile, session UploadSession) {
+
+	// 2. Find list of folders and create folders if necessary
+	//TODO: implement
+
+	// 3. Create Package Params to add files to packages table.
 	pkgParams, _ := getPackageParams(files, session)
 
-	var pkg db.Package
-	pkg.Add(session.OrganizationId, pkgParams)
+	var packageTable models.Package
+	packageTable.Add(session.OrganizationId, pkgParams)
 
 }
