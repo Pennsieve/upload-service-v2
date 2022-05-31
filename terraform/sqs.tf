@@ -2,7 +2,7 @@
 
 resource "aws_sqs_queue" "upload_trigger_queue" {
   name                       = "${var.environment_name}-upload_trigger-queue-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
-  delay_seconds              = 5
+  delay_seconds              = 1
   max_message_size           = 262144
   message_retention_seconds  = 86400
 #  receive_wait_time_seconds  = 10
@@ -22,7 +22,7 @@ resource "aws_sqs_queue" "upload_trigger_deadletter_queue" {
 resource "aws_lambda_event_source_mapping" "upload_source_mapping" {
   event_source_arn = aws_sqs_queue.upload_trigger_queue.arn
   function_name    = aws_lambda_function.upload-lambda.arn
-  batch_size = 20
+  batch_size = 5
   maximum_batching_window_in_seconds = 5
 }
 

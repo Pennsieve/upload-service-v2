@@ -17,4 +17,6 @@ Version 2 of the Pennsieve upload service
 Prior to terraforming the Lambda (which zips and uploads the lambda to AWS), the Lambda function needs
 to be build for the Lambda environment. You can do this with the following command:
 
-```env GOOS=linux GOARCH=amd64 go build -o ../bin/upload/pennsieve_upload_service_v2```
+```env GOOS=linux GOARCH=amd64 go build -o ../bin/handler/pennsieve_upload_handler```
+
+```env GOOS=linux GOARCH=amd64 go build -o ../bin/service/pennsieve_upload_service```

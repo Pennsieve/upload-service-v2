@@ -48,6 +48,18 @@ data "terraform_remote_state" "platform_infrastructure" {
   }
 }
 
+# Import Authentication-Service
+data "terraform_remote_state" "authentication_service" {
+  backend = "s3"
+
+  config = {
+    bucket  = "${var.aws_account}-terraform-state"
+    key     = "aws/${data.aws_region.current_region.name}/${var.vpc_name}/${var.environment_name}/authentication-service/terraform.tfstate"
+    region  = "us-east-1"
+    profile = var.aws_account
+  }
+}
+
 # Import Postgres
 data "terraform_remote_state" "pennsieve_postgres" {
   backend = "s3"

@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/pennsieve/pennsieve-go-api/models/uploadFile"
 	"github.com/pennsieve/pennsieve-go-api/pkg"
+	"log"
 	"strings"
 )
 
@@ -29,14 +31,19 @@ func Handler(ctx context.Context, sqsEvent events.SQSEvent) error {
 	uploadFiles, _ := getUploadFiles(sqsEvent.Records)
 
 	// 3. Map by uploadSessionID
-	var fileBySession = map[string][]pkg.UploadFile{}
+	var fileBySession = map[string][]uploadFile.UploadFile{}
 	for _, f := range uploadFiles {
 		fileBySession[f.SessionId] = append(fileBySession[f.SessionId], f)
 	}
 
 	// 4. Iterate over different import sessions and import files.
 	for _, uploadFilesForSession := range fileBySession {
-		session := pkg.CreateUploadSession("fakeSessionToken")
+		var s pkg.UploadSession
+		session, err := s.CreateUploadSession("fakeSessionToken")
+		if err != nil {
+			log.Println("Unable to create upload session.")
+			continue
+		}
 		session.ImportFiles(uploadFilesForSession)
 		session.Close()
 	}
@@ -45,9 +52,9 @@ func Handler(ctx context.Context, sqsEvent events.SQSEvent) error {
 }
 
 // getUploadFiles parses the SQS Messages and constructs an array of UploadFiles.
-func getUploadFiles(fileEvents []events.SQSMessage) ([]pkg.UploadFile, error) {
+func getUploadFiles(fileEvents []events.SQSMessage) ([]uploadFile.UploadFile, error) {
 
-	var pkgs []pkg.UploadFile
+	var pkgs []uploadFile.UploadFile
 	for _, message := range fileEvents {
 
 		parsedS3Event := events.S3Event{}
@@ -56,7 +63,7 @@ func getUploadFiles(fileEvents []events.SQSMessage) ([]pkg.UploadFile, error) {
 		}
 
 		// Get UploadFile Representation from event
-		var uf = pkg.UploadFile{}
+		var uf = uploadFile.UploadFile{}
 		uploadFile, _ := uf.FromS3Event(&parsedS3Event)
 		uploadFile.Path = strings.TrimSuffix(uploadFile.Path, "/")
 		uploadFile.Path = strings.TrimPrefix(uploadFile.Path, "/")
