@@ -1,5 +1,5 @@
 ## Lambda Function which consumes messages from the SQS queue which contains all events.
-resource "aws_lambda_function" "upload-lambda" {
+resource "aws_lambda_function" "upload_lambda" {
   description      = "Lambda Function which consumes messages from the SQS queue related to newly uploaded files."
   function_name    = "${var.environment_name}-${var.service_name}-upload-lambda-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
   handler          = "pennsieve_upload_handler"
@@ -34,7 +34,7 @@ data "archive_file" "upload_trigger_lambda_archive" {
 ### SERVICE LAMBDA
 
 ## Lambda Function which consumes messages from the SQS queue which contains all events.
-resource "aws_lambda_function" "service-lambda" {
+resource "aws_lambda_function" "service_lambda" {
   description      = "Lambda Function which consumes messages from the SQS queue related to newly uploaded files."
   function_name    = "${var.environment_name}-${var.service_name}-service-lambda-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
   handler          = "pennsieve_upload_service"

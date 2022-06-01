@@ -21,7 +21,7 @@ resource "aws_sqs_queue" "upload_trigger_deadletter_queue" {
 # Mapping SQS Source to Lambda Function
 resource "aws_lambda_event_source_mapping" "upload_source_mapping" {
   event_source_arn = aws_sqs_queue.upload_trigger_queue.arn
-  function_name    = aws_lambda_function.upload-lambda.arn
+  function_name    = aws_lambda_function.upload_lambda.arn
   batch_size = 5
   maximum_batching_window_in_seconds = 5
 }
