@@ -2,7 +2,7 @@
 # SQS Queue Key Policies #
 ##########################
 
-data "aws_iam_policy_document" "upload_trigger_kms_key_policy_document" {
+data "aws_iam_policy_document" "upload_service_v2_kms_key_policy_document" {
   statement {
     sid       = "Enable IAM User Permissions"
     effect    = "Allow"
@@ -27,7 +27,7 @@ data "aws_iam_policy_document" "upload_trigger_kms_key_policy_document" {
 
     principals {
       type        = "AWS"
-      identifiers = [aws_iam_role.upload_trigger_lambda_role.arn]
+      identifiers = [aws_iam_role.upload_service_v2_lambda_role.arn]
     }
 
   }
@@ -81,15 +81,15 @@ data "aws_iam_policy_document" "uploads_bucket_iam_policy_document" {
 
 
 ##############################
-# UPLOAD-TRIGGER-LAMBDA   #
+# UPLOAD-SERVICE-LAMBDA   #
 ##############################
 // 1. Lambda can assume the upload_trigger_lambda role
 // 2. This role has a policy attachment
 // 3. This policy has a policy document attached
 // 4. This document outlines the permissions for the role
 
-resource "aws_iam_role" "upload_trigger_lambda_role" {
-  name = "${var.environment_name}-${var.service_name}-upload-trigger-lambda-role-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
+resource "aws_iam_role" "upload_service_v2_lambda_role" {
+  name = "${var.environment_name}-${var.service_name}-upload-service-lambda-role-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
 
   assume_role_policy = <<EOF
 {
@@ -108,19 +108,18 @@ resource "aws_iam_role" "upload_trigger_lambda_role" {
 EOF
 }
 
-resource "aws_iam_role_policy_attachment" "upload_trigger_lambda_iam_policy_attachment" {
-  role       = aws_iam_role.upload_trigger_lambda_role.name
-  policy_arn = aws_iam_policy.upload_trigger_lambda_iam_policy.arn
+resource "aws_iam_role_policy_attachment" "upload_service_v2_lambda_iam_policy_attachment" {
+  role       = aws_iam_role.upload_service_v2_lambda_role.name
+  policy_arn = aws_iam_policy.upload_service_v2_lambda_iam_policy.arn
 }
 
-
-resource "aws_iam_policy" "upload_trigger_lambda_iam_policy" {
-  name   = "${var.environment_name}-${var.service_name}-upload-trigger-lambda-iam-policy-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
+resource "aws_iam_policy" "upload_service_v2_lambda_iam_policy" {
+  name   = "${var.environment_name}-${var.service_name}-upload-service-lambda-iam-policy-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
   path   = "/"
-  policy = data.aws_iam_policy_document.upload_trigger_lambda_iam_policy_document.json
+  policy = data.aws_iam_policy_document.upload_service_v2_lambda_iam_policy_document.json
 }
 
-data "aws_iam_policy_document" "upload_trigger_lambda_iam_policy_document" {
+data "aws_iam_policy_document" "upload_service_v2_lambda_iam_policy_document" {
 
   statement {
 
@@ -162,6 +161,30 @@ data "aws_iam_policy_document" "upload_trigger_lambda_iam_policy_document" {
     ]
 
     resources = ["arn:aws:ssm:${data.aws_region.current_region.name}:${data.aws_caller_identity.current.account_id}:parameter/${var.environment_name}/${var.service_name}/*"]
+  }
+
+  statement {
+    sid = "LambdaAccessToDynamoDB"
+    effect = "Allow"
+
+    actions = [
+      "dynamodb:DescribeTable",
+      "dynamodb:BatchGetItem",
+      "dynamodb:GetItem",
+      "dynamodb:Query",
+      "dynamodb:Scan",
+      "dynamodb:BatchWriteItem",
+      "dynamodb:PutItem",
+      "dynamodb:UpdateItem"
+    ]
+
+    resources = [
+      aws_dynamodb_table.manifest_dynamo_table.arn,
+      "${aws_dynamodb_table.manifest_dynamo_table.arn}/*",
+      aws_dynamodb_table.manifest_files_dynamo_table.arn,
+      "${aws_dynamodb_table.manifest_files_dynamo_table.arn}/*"
+    ]
+
   }
 
   statement {
