@@ -27,7 +27,9 @@ data "aws_iam_policy_document" "upload_service_v2_kms_key_policy_document" {
 
     principals {
       type        = "AWS"
-      identifiers = [aws_iam_role.upload_service_v2_lambda_role.arn]
+      identifiers = [
+        aws_iam_role.upload_service_v2_lambda_role.arn
+      ]
     }
 
   }
@@ -122,20 +124,10 @@ resource "aws_iam_policy" "upload_service_v2_lambda_iam_policy" {
 data "aws_iam_policy_document" "upload_service_v2_lambda_iam_policy_document" {
 
   statement {
-
-    actions = [
-      "rds-db:connect"
-    ]
-
-    resources = [
-      data.terraform_remote_state.pennsieve_postgres.outputs.rds_proxy_endpoint_arn
-    ]
-  }
-
-  statement {
     sid    = "UploadLambdaPermissions"
     effect = "Allow"
     actions = [
+      "rds-db:connect",
       "logs:CreateLogGroup",
       "logs:CreateLogStream",
       "logs:PutDestination",

@@ -1,95 +1,129 @@
 package handler
 
 import (
-	"context"
 	"fmt"
 	"github.com/aws/aws-lambda-go/events"
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
-	"github.com/valyala/fastjson"
+	"github.com/pennsieve/pennsieve-go-api/models/dataset"
+	"github.com/pennsieve/pennsieve-go-api/models/dbTable"
+	"github.com/pennsieve/pennsieve-go-api/models/organization"
+	"github.com/pennsieve/pennsieve-go-api/models/permissions"
+	"log"
+	"regexp"
 )
 
-// DynamoDBDescribeTableAPI defines the interface for the DescribeTable function.
-// We use this interface to enable unit testing.
-type DynamoDBDescribeTableAPI interface {
-	DescribeTable(ctx context.Context,
-		params *dynamodb.DescribeTableInput,
-		optFns ...func(*dynamodb.Options)) (*dynamodb.DescribeTableOutput, error)
-}
+// ManifestHandler handles requests to the API V2 /manifest endpoints.
+func ManifestHandler(request events.APIGatewayV2HTTPRequest) (*events.APIGatewayV2HTTPResponse, error) {
 
-// GetTableInfo retrieves information about the table.
-func GetTableInfo(c context.Context, api DynamoDBDescribeTableAPI, input *dynamodb.DescribeTableInput) (*dynamodb.DescribeTableOutput, error) {
-	return api.DescribeTable(c, input)
-}
+	var apiResponse *events.APIGatewayV2HTTPResponse
+	var err error
 
-func Handler(request events.APIGatewayV2HTTPRequest) (events.APIGatewayV2HTTPResponse, error) {
+	r := regexp.MustCompile(`(?P<method>) (?P<pathKey>.*)`)
+	routeKeyParts := r.FindStringSubmatch(request.RouteKey)
+	routeKey := routeKeyParts[r.SubexpIndex("pathKey")]
 
-	fmt.Println("Hello event.")
-
-	ApiResponse := events.APIGatewayV2HTTPResponse{}
-	// Switch for identifying the HTTP request
-	switch request.RequestContext.HTTP.Method {
-	case "GET":
-		// Obtain the QueryStringParameter
-		name := request.QueryStringParameters["name"]
-		if name != "" {
-
-			cfg, err := config.LoadDefaultConfig(context.TODO())
-			if err != nil {
-				panic("unable to load SDK config, " + err.Error())
-			}
-
-			// Create an Amazon DynamoDB client.
-			client := dynamodb.NewFromConfig(cfg)
-
-			table := aws.String("dev-manifest-files-table-use1")
-
-			// Build the input parameters for the request.
-			input := &dynamodb.DescribeTableInput{
-				TableName: table,
-			}
-
-			resp, err := GetTableInfo(context.TODO(), client, input)
-			if err != nil {
-				panic("failed to describe table, " + err.Error())
-			}
-
-			fmt.Println("Info about " + *table + ":")
-			fmt.Println("  #items:     ", resp.Table.ItemCount)
-			fmt.Println("  Size (bytes)", resp.Table.TableSizeBytes)
-			fmt.Println("  Status:     ", string(resp.Table.TableStatus))
-
-			ApiResponse = events.APIGatewayV2HTTPResponse{
-				StatusCode:        200,
-				Headers:           nil,
-				MultiValueHeaders: nil,
-				Body:              "Hey " + name + " welcome! ",
-				IsBase64Encoded:   false,
-				Cookies:           nil,
-			}
-		} else {
-			ApiResponse = events.APIGatewayV2HTTPResponse{
-				StatusCode:        500,
-				Headers:           nil,
-				MultiValueHeaders: nil,
-				Body:              "Error: Query Parameter name missing",
-				IsBase64Encoded:   false,
-				Cookies:           nil,
-			}
+	claims := parseClaims(request)
+	authorized := false
+	switch routeKey {
+	case "/manifest":
+		fmt.Println("Handling /manifest request")
+		if authorized = hasRole(*claims, permissions.CreateDeleteFiles); authorized {
+			apiResponse, err = handleManifestRoute(request, claims)
 		}
+	case "/manifest/{id}":
+		//if authorized = checkOwner(*claims, manifestId); authorized {
+		//	apiResponse, err = handleManifestIdRoute(request, claims)
+		//}
+	case "/manifest/{id}/remove":
+		//if authorized = checkOwner(*claims, manifestId); authorized {
+		//	apiResponse, err = handleManifestIdRemoveRoute(request, claims)
+		//}
+	case "/manifest/{id}/updates":
+		//if authorized = checkOwner(*claims, manifestId); authorized {
+		//	apiResponse, err = handleManifestIdUpdatesRoute(request, claims)
+		//}
+	default:
+		log.Fatalln("Incorrect Route")
+	}
 
-	case "POST":
-		//validates json and returns error if not working
-		err := fastjson.Validate(request.Body)
+	// Return unauthorized if
+	if !authorized {
+		apiResponse := events.APIGatewayV2HTTPResponse{
+			StatusCode: 403,
+			Body:       `{"message": "User is not authorized to perform this action on the dataset."}`,
+		}
+		return &apiResponse, nil
+	}
 
-		if err != nil {
-			body := "Error: Invalid JSON payload ||| " + fmt.Sprint(err) + " Body Obtained" + "||||" + request.Body
-			ApiResponse = events.APIGatewayV2HTTPResponse{Body: body, StatusCode: 500}
-		} else {
-			ApiResponse = events.APIGatewayV2HTTPResponse{Body: request.Body, StatusCode: 200}
+	// Response
+	if err != nil {
+		log.Fatalln("Something is wrong with creating the response", err)
+	}
+	return apiResponse, nil
+}
+
+// Claims is an object containing claims and user info
+type Claims struct {
+	orgClaim       organization.Claim
+	datasetClaim   dataset.Claim
+	userId         int64
+	isSuperAdmin   bool
+	organizationId int64
+}
+
+// parseClaims parses the claims in the provided request.
+func parseClaims(request events.APIGatewayV2HTTPRequest) *Claims {
+
+	claims := request.RequestContext.Authorizer.Lambda
+
+	var orgClaim organization.Claim
+	if val, ok := claims["org_claim"]; ok {
+		orgClaims := val.(map[string]interface{})
+		orgRole := int64(orgClaims["Role"].(float64))
+		orgClaim = organization.Claim{
+			Role:            dbTable.DbPermission(orgRole),
+			IntId:           int64(orgClaims["IntId"].(float64)),
+			EnabledFeatures: nil,
 		}
 	}
-	// Response
-	return ApiResponse, nil
+
+	var datasetClaim dataset.Claim
+	if val, ok := claims["dataset_claim"]; ok {
+		if val != nil {
+			datasetClaims := val.(map[string]interface{})
+			datasetRole := int64(datasetClaims["Role"].(float64))
+			datasetClaim = dataset.Claim{
+				Role:   dataset.Role(datasetRole),
+				NodeId: datasetClaims["NodeId"].(string),
+				IntId:  int64(datasetClaims["IntId"].(float64)),
+			}
+		}
+	}
+
+	userId := int64(claims["user_id"].(float64))
+	isSuperAdmin := claims["is_super_admin"].(bool)
+	organizationId := int64(claims["organization_id"].(float64))
+
+	returnedClaims := Claims{
+		orgClaim:       orgClaim,
+		datasetClaim:   datasetClaim,
+		userId:         userId,
+		isSuperAdmin:   isSuperAdmin,
+		organizationId: organizationId,
+	}
+
+	fmt.Println(returnedClaims)
+
+	return &returnedClaims
+
+}
+
+// hasRole returns a boolean indicating whether the user has the correct permissions.
+func hasRole(claims Claims, permission permissions.DatasetPermission) bool {
+
+	//hasOrgRole := claims.orgClaim.Role >= dbTable.Delete
+
+	hasValidPermissions := permissions.HasDatasetPermission(claims.datasetClaim.Role, permission)
+
+	return hasValidPermissions
+
 }

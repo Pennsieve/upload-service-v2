@@ -9,6 +9,7 @@ resource "aws_lambda_function" "upload_lambda" {
   memory_size      = 128
   source_code_hash = data.archive_file.upload_trigger_lambda_archive.output_base64sha256
   filename         = "${path.module}/../lambda/bin/pennsieve_upload_handler.zip"
+  publish = true
 
   vpc_config {
     subnet_ids         = tolist(data.terraform_remote_state.vpc.outputs.private_subnet_ids)
@@ -58,9 +59,20 @@ resource "aws_lambda_function" "service_lambda" {
   }
 }
 
-
 data "archive_file" "upload_service_lambda_archive" {
   type        = "zip"
   source_dir  = "${path.module}/../lambda/bin/service"
   output_path = "${path.module}/../lambda/bin/pennsieve_service_handler.zip"
 }
+#
+#resource "aws_lambda_alias" "upload_service_lambda_live" {
+#  name             = "live"
+#  function_name    = aws_lambda_function.service_lambda.function_name
+#  function_version = aws_lambda_function.service_lambda.version
+#}
+#
+#resource "aws_lambda_provisioned_concurrency_config" "authorizer_lambda" {
+#  function_name                     = aws_lambda_function.service_lambda.function_name
+#  provisioned_concurrent_executions = 2
+#  qualifier                         = aws_lambda_function.service_lambda.version
+#}

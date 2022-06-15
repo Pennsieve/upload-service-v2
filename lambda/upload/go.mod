@@ -2,12 +2,12 @@ module github.com/pennsieve/pennsieve-upload-service-v2/upload
 
 go 1.18
 
-replace github.com/pennsieve/pennsieve-go-api => ../../../pennsieve-go-api
+//replace github.com/pennsieve/pennsieve-go-api => ../../../pennsieve-go-api
 
 require (
 	github.com/aws/aws-lambda-go v1.32.0
 	github.com/aws/aws-sdk-go v1.44.15
-	github.com/pennsieve/pennsieve-go-api v0.0.2
+	github.com/pennsieve/pennsieve-go-api v0.1.0
 	github.com/stretchr/testify v1.6.1
 )
 

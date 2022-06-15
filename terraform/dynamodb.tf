@@ -1,9 +1,8 @@
-# Create Upload Manifest Dynamo Table
+## Create Upload Manifest Dynamo Table
 resource "aws_dynamodb_table" "manifest_dynamo_table" {
   name           = "${var.environment_name}-manifest-table-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
   billing_mode   = "PAY_PER_REQUEST"
   hash_key       = "ManifestId"
-  range_key      = "Created"
 
   attribute {
     name = "ManifestId"
@@ -11,8 +10,22 @@ resource "aws_dynamodb_table" "manifest_dynamo_table" {
   }
 
   attribute {
-    name = "Created"
+    name = "UserId"
     type = "N"
+  }
+
+  attribute {
+    name = "DatasetId"
+    type = "S"
+  }
+
+  global_secondary_index {
+    name               = "DatasetManifestIndex"
+    hash_key           = "DatasetId"
+    range_key          = "UserId"
+    write_capacity     = 10
+    read_capacity      = 10
+    projection_type    = "KEYS_ONLY"
   }
 
   point_in_time_recovery {
@@ -38,7 +51,7 @@ resource "aws_dynamodb_table" "manifest_files_dynamo_table" {
   name           = "${var.environment_name}-manifest-files-table-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
   billing_mode   = "PAY_PER_REQUEST"
   hash_key       = "ManifestId"
-  range_key      = "Created"
+  range_key      = "UploadId"
 
   attribute {
     name = "ManifestId"
@@ -46,8 +59,8 @@ resource "aws_dynamodb_table" "manifest_files_dynamo_table" {
   }
 
   attribute {
-    name = "Created"
-    type = "N"
+    name = "UploadId"
+    type = "S"
   }
 
   point_in_time_recovery {
