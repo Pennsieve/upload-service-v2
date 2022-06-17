@@ -23,9 +23,8 @@ resource "aws_dynamodb_table" "manifest_dynamo_table" {
     name               = "DatasetManifestIndex"
     hash_key           = "DatasetId"
     range_key          = "UserId"
-    write_capacity     = 10
-    read_capacity      = 10
-    projection_type    = "KEYS_ONLY"
+    projection_type    = "INCLUDE"
+    non_key_attributes = ["ManifestId"]
   }
 
   point_in_time_recovery {
@@ -61,6 +60,18 @@ resource "aws_dynamodb_table" "manifest_files_dynamo_table" {
   attribute {
     name = "UploadId"
     type = "S"
+  }
+
+  attribute {
+    name = "FilePath"
+    type = "S"
+  }
+
+  global_secondary_index {
+    name               = "DatasetManifestIndex"
+    hash_key           = "ManifestId"
+    range_key          = "FilePath"
+    projection_type    = "ALL"
   }
 
   point_in_time_recovery {

@@ -8,8 +8,27 @@ import (
 	"github.com/pennsieve/pennsieve-go-api/models/organization"
 	"github.com/pennsieve/pennsieve-go-api/models/permissions"
 	"log"
+	"os"
 	"regexp"
 )
+
+var manifestFileTableName string
+var manifestTableName string
+
+// Claims is an object containing claims and user info
+type Claims struct {
+	orgClaim       organization.Claim
+	datasetClaim   dataset.Claim
+	userId         int64
+	isSuperAdmin   bool
+	organizationId int64
+}
+
+// init runs on cold start of lambda and gets jwt keysets from Cognito user pools.
+func init() {
+	manifestFileTableName = os.Getenv("MANIFEST_FILE_TABLE")
+	manifestTableName = os.Getenv("MANIFEST_TABLE")
+}
 
 // ManifestHandler handles requests to the API V2 /manifest endpoints.
 func ManifestHandler(request events.APIGatewayV2HTTPRequest) (*events.APIGatewayV2HTTPResponse, error) {
@@ -59,15 +78,6 @@ func ManifestHandler(request events.APIGatewayV2HTTPRequest) (*events.APIGateway
 		log.Fatalln("Something is wrong with creating the response", err)
 	}
 	return apiResponse, nil
-}
-
-// Claims is an object containing claims and user info
-type Claims struct {
-	orgClaim       organization.Claim
-	datasetClaim   dataset.Claim
-	userId         int64
-	isSuperAdmin   bool
-	organizationId int64
 }
 
 // parseClaims parses the claims in the provided request.

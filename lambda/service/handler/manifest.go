@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/google/uuid"
+	"github.com/pennsieve/pennsieve-go-api/models/gateway"
 	"github.com/pennsieve/pennsieve-go-api/models/manifest"
 	"github.com/valyala/fastjson"
 	"log"
@@ -89,20 +90,24 @@ func handleManifestRoute(request events.APIGatewayV2HTTPRequest, claims *Claims)
 	case "POST":
 		fmt.Println("Handling POST /manifest request")
 
+		// PARSING INPUTS
 		//validates json and returns error if not working
 		err := fastjson.Validate(request.Body)
 		if err != nil {
-			body := "Error: Invalid JSON payload ||| " + fmt.Sprint(err) + " Body Obtained" + "||||" + request.Body
-			apiResponse = events.APIGatewayV2HTTPResponse{Body: body, StatusCode: 500}
+			message := "Error: Invalid JSON payload ||| " + fmt.Sprint(err) + " Body Obtained" + "||||" + request.Body
+			apiResponse = events.APIGatewayV2HTTPResponse{
+				Body: gateway.CreateErrorMessage(message, 500), StatusCode: 500}
 			return &apiResponse, nil
 		}
 
+		// Unmarshal JSON into Manifest DTOs
 		bytes := []byte(request.Body)
 		var res manifest.DTO
 		json.Unmarshal(bytes, &res)
 
 		fmt.Println("SessionID: ", res.ID, " NrFiles: ", len(res.Files))
 
+		// ADDING MANIFEST IF NEEDED
 		var activeManifest *manifestTable
 		if res.ID == "" {
 			log.Printf("Creating new manifest")
@@ -111,7 +116,7 @@ func handleManifestRoute(request events.APIGatewayV2HTTPRequest, claims *Claims)
 				ManifestId: uuid.New().String(),
 				DatasetId:  claims.datasetClaim.NodeId,
 				UserId:     claims.userId,
-				Status:     manifest.ManifestInitiated.String(),
+				Status:     manifest.Initiated.String(),
 			}
 
 			createManifest(*activeManifest)
@@ -122,17 +127,22 @@ func handleManifestRoute(request events.APIGatewayV2HTTPRequest, claims *Claims)
 
 			activeManifest, err = getFromManifest(res.ID)
 			if err != nil {
-				log.Fatalln("Unable to get provided manifest.")
+				message := "Error: Invalid ManifestID |||| Manifest ID: " + res.ID
+				apiResponse = events.APIGatewayV2HTTPResponse{
+					Body: gateway.CreateErrorMessage(message, 500), StatusCode: 500}
+				return &apiResponse, nil
 			}
 
 		}
 
-		fmt.Println(activeManifest)
+		// ADDING FILES TO MANIFEST
+		addFilesResponse, err := addFiles(activeManifest.ManifestId, res.Files)
 
+		// CREATING API RESPONSE
 		responseBody := manifest.PostResponse{
 			ManifestNodeId: activeManifest.ManifestId,
-			NrFilesAdded:   0,
-			FailedFiles:    nil,
+			NrFilesAdded:   addFilesResponse.nrFilesAdded,
+			FailedFiles:    addFilesResponse.failedFiles,
 		}
 
 		jsonBody, _ := json.Marshal(responseBody)

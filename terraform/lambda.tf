@@ -55,6 +55,8 @@ resource "aws_lambda_function" "service_lambda" {
     variables = {
       ENV = var.environment_name
       PENNSIEVE_DOMAIN = data.terraform_remote_state.account.outputs.domain_name,
+      MANIFEST_TABLE = aws_dynamodb_table.manifest_dynamo_table.name,
+      MANIFEST_FILE_TABLE = aws_dynamodb_table.manifest_files_dynamo_table.name,
     }
   }
 }
