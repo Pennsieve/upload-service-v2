@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/google/uuid"
+	"github.com/pennsieve/pennsieve-go-api/models/dbTable"
 	"github.com/pennsieve/pennsieve-go-api/models/gateway"
 	"github.com/pennsieve/pennsieve-go-api/models/manifest"
 	"github.com/valyala/fastjson"
@@ -108,15 +109,17 @@ func handleManifestRoute(request events.APIGatewayV2HTTPRequest, claims *Claims)
 		fmt.Println("SessionID: ", res.ID, " NrFiles: ", len(res.Files))
 
 		// ADDING MANIFEST IF NEEDED
-		var activeManifest *manifestTable
+		var activeManifest *dbTable.ManifestTable
 		if res.ID == "" {
 			log.Printf("Creating new manifest")
 			// Create new manifest
-			activeManifest = &manifestTable{
-				ManifestId: uuid.New().String(),
-				DatasetId:  claims.datasetClaim.NodeId,
-				UserId:     claims.userId,
-				Status:     manifest.Initiated.String(),
+			activeManifest = &dbTable.ManifestTable{
+				ManifestId:     uuid.New().String(),
+				DatasetId:      claims.datasetClaim.IntId,
+				DatasetNodeId:  claims.datasetClaim.NodeId,
+				OrganizationId: claims.organizationId,
+				UserId:         claims.userId,
+				Status:         manifest.Initiated.String(),
 			}
 
 			createManifest(*activeManifest)
@@ -125,7 +128,15 @@ func handleManifestRoute(request events.APIGatewayV2HTTPRequest, claims *Claims)
 			// Check that manifest exists.
 			log.Printf("Got existing manifest")
 
-			activeManifest, err = getFromManifest(res.ID)
+			cfg, err := config.LoadDefaultConfig(context.Background())
+			if err != nil {
+				return nil, fmt.Errorf("LoadDefaultConfig: %v\n", err)
+			}
+
+			// Create an Amazon DynamoDB client.
+			client := dynamodb.NewFromConfig(cfg)
+
+			activeManifest, err = dbTable.GetFromManifest(client, manifestTableName, res.ID)
 			if err != nil {
 				message := "Error: Invalid ManifestID |||| Manifest ID: " + res.ID
 				apiResponse = events.APIGatewayV2HTTPResponse{
@@ -141,8 +152,9 @@ func handleManifestRoute(request events.APIGatewayV2HTTPRequest, claims *Claims)
 		// CREATING API RESPONSE
 		responseBody := manifest.PostResponse{
 			ManifestNodeId: activeManifest.ManifestId,
-			NrFilesAdded:   addFilesResponse.nrFilesAdded,
-			FailedFiles:    addFilesResponse.failedFiles,
+			NrFilesUpdated: addFilesResponse.NrFilesUpdated,
+			NrFilesRemoved: addFilesResponse.NrFilesRemoved,
+			FailedFiles:    addFilesResponse.FailedFiles,
 		}
 
 		jsonBody, _ := json.Marshal(responseBody)

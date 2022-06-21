@@ -15,13 +15,13 @@ resource "aws_dynamodb_table" "manifest_dynamo_table" {
   }
 
   attribute {
-    name = "DatasetId"
+    name = "DatasetNodeId"
     type = "S"
   }
 
   global_secondary_index {
     name               = "DatasetManifestIndex"
-    hash_key           = "DatasetId"
+    hash_key           = "DatasetNodeId"
     range_key          = "UserId"
     projection_type    = "INCLUDE"
     non_key_attributes = ["ManifestId"]

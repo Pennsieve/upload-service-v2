@@ -1,8 +1,11 @@
 package handler
 
 import (
+	"context"
 	"fmt"
 	"github.com/aws/aws-lambda-go/events"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/pennsieve/pennsieve-go-api/models/dataset"
 	"github.com/pennsieve/pennsieve-go-api/models/dbTable"
 	"github.com/pennsieve/pennsieve-go-api/models/organization"
@@ -14,6 +17,7 @@ import (
 
 var manifestFileTableName string
 var manifestTableName string
+var client *dynamodb.Client
 
 // Claims is an object containing claims and user info
 type Claims struct {
@@ -28,6 +32,13 @@ type Claims struct {
 func init() {
 	manifestFileTableName = os.Getenv("MANIFEST_FILE_TABLE")
 	manifestTableName = os.Getenv("MANIFEST_TABLE")
+
+	cfg, err := config.LoadDefaultConfig(context.Background())
+	if err != nil {
+		log.Fatalf("LoadDefaultConfig: %v\n", err)
+	}
+
+	client = dynamodb.NewFromConfig(cfg)
 }
 
 // ManifestHandler handles requests to the API V2 /manifest endpoints.
