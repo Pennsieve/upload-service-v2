@@ -1,89 +1,91 @@
 package handler
 
 import (
-	"github.com/pennsieve/pennsieve-go-api/pkg"
+	"github.com/pennsieve/pennsieve-go-api/models/uploadFile"
 	"github.com/stretchr/testify/assert"
 	"testing"
 )
 
 func TestHandler(t *testing.T) {
 
-	uploadFile1 := pkg.UploadFile{
-		SessionId: "",
-		Path:      "folder1/123/123/",
-		Name:      "",
-		Extension: "",
-		Type:      0,
-		SubType:   "",
-		Icon:      0,
-		Size:      0,
-		ETag:      "",
+	uploadFile1 := uploadFile.UploadFile{
+		ManifestId: "",
+		Path:       "folder1/asd/123/",
+		Name:       "",
+		Extension:  "",
+		Type:       0,
+		SubType:    "",
+		Icon:       0,
+		Size:       0,
+		ETag:       "",
 	}
-	uploadFile2 := pkg.UploadFile{
-		SessionId: "",
-		Path:      "folder1/asd/123",
-		Name:      "",
-		Extension: "",
-		Type:      0,
-		SubType:   "",
-		Icon:      0,
-		Size:      0,
-		ETag:      "",
+	uploadFile2 := uploadFile.UploadFile{
+		ManifestId: "",
+		Path:       "folder1/asd/123",
+		Name:       "",
+		Extension:  "",
+		Type:       0,
+		SubType:    "",
+		Icon:       0,
+		Size:       0,
+		ETag:       "",
 	}
 
-	uploadFiles := []pkg.UploadFile{
+	uploadFiles := []uploadFile.UploadFile{
 		uploadFile1,
 		uploadFile2,
 	}
 
-	sortUploadFiles(uploadFiles)
+	var u uploadFile.UploadFile
+	u.Sort(uploadFiles)
 	assert.Equal(t, uploadFiles[0], uploadFile2)
 
 }
 
 func TestGetUploadFolderMap(t *testing.T) {
 
-	uploadFile1 := pkg.UploadFile{
-		SessionId: "",
-		Path:      "folder1/folder2/folder3",
-		Name:      "",
-		Extension: "",
-		Type:      0,
-		SubType:   "",
-		Icon:      0,
-		Size:      0,
-		ETag:      "",
+	uploadFile1 := uploadFile.UploadFile{
+		ManifestId: "",
+		Path:       "folder1/folder2/folder3",
+		Name:       "",
+		Extension:  "",
+		Type:       0,
+		SubType:    "",
+		Icon:       0,
+		Size:       0,
+		ETag:       "",
 	}
-	uploadFile2 := pkg.UploadFile{
-		SessionId: "",
-		Path:      "folder1/folder10",
-		Name:      "",
-		Extension: "",
-		Type:      0,
-		SubType:   "",
-		Icon:      0,
-		Size:      0,
-		ETag:      "",
+	uploadFile2 := uploadFile.UploadFile{
+		ManifestId: "",
+		Path:       "folder1/folder10",
+		Name:       "",
+		Extension:  "",
+		Type:       0,
+		SubType:    "",
+		Icon:       0,
+		Size:       0,
+		ETag:       "",
 	}
-	uploadFile3 := pkg.UploadFile{
-		SessionId: "",
-		Path:      "folder2/folder1/folder8",
-		Name:      "",
-		Extension: "",
-		Type:      0,
-		SubType:   "",
-		Icon:      0,
-		Size:      0,
-		ETag:      "",
+	uploadFile3 := uploadFile.UploadFile{
+		ManifestId: "",
+		Path:       "folder2/folder1/folder8",
+		Name:       "",
+		Extension:  "",
+		Type:       0,
+		SubType:    "",
+		Icon:       0,
+		Size:       0,
+		ETag:       "",
 	}
 
-	uploadFiles := []pkg.UploadFile{
+	uploadFiles := []uploadFile.UploadFile{
 		uploadFile1,
 		uploadFile2,
 		uploadFile3,
 	}
 
-	folderMap := getUploadFolderMap(uploadFiles, "")
+	var u uploadFile.UploadFile
+	folderMap := u.GetUploadFolderMap(uploadFiles, "")
 
 	// Number of folders
 	assert.Equal(t, 7, len(folderMap))
@@ -108,7 +110,7 @@ func TestGetUploadFolderMap(t *testing.T) {
 
 	//** Check with alternative root folder.
 
-	folderMap2 := getUploadFolderMap(uploadFiles, "hello/you")
+	folderMap2 := u.GetUploadFolderMap(uploadFiles, "hello/you")
 
 	// Number of folders
 	assert.Equal(t, 9, len(folderMap2))
