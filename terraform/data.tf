@@ -71,3 +71,19 @@ data "terraform_remote_state" "pennsieve_postgres" {
     profile = var.aws_account
   }
 }
+
+# Import ETL Infrastructure Data
+data "terraform_remote_state" "etl_infrastructure" {
+  backend = "s3"
+
+  config = {
+    bucket = "${var.aws_account}-terraform-state"
+    key    = "aws/${data.aws_region.current_region.name}/${var.vpc_name}/${var.environment_name}/etl-infrastructure/terraform.tfstate"
+    region = "us-east-1"
+  }
+}
+
+# Import AWS Default SecretsManager KMS Key
+data "aws_kms_key" "ssm_kms_key" {
+  key_id = "alias/aws/secretsmanager"
+}

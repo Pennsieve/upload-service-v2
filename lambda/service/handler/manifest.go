@@ -12,6 +12,7 @@ import (
 	"github.com/pennsieve/pennsieve-go-api/models/dbTable"
 	"github.com/pennsieve/pennsieve-go-api/models/gateway"
 	"github.com/pennsieve/pennsieve-go-api/models/manifest"
+	manifestPkg "github.com/pennsieve/pennsieve-go-api/pkg/manifest"
 	"github.com/valyala/fastjson"
 	"log"
 )
@@ -108,6 +109,12 @@ func handleManifestRoute(request events.APIGatewayV2HTTPRequest, claims *Claims)
 
 		fmt.Println("SessionID: ", res.ID, " NrFiles: ", len(res.Files))
 
+		s := manifestPkg.ManifestSession{
+			FileTableName: manifestFileTableName,
+			TableName:     manifestTableName,
+			Client:        client,
+		}
+
 		// ADDING MANIFEST IF NEEDED
 		var activeManifest *dbTable.ManifestTable
 		if res.ID == "" {
@@ -122,7 +129,7 @@ func handleManifestRoute(request events.APIGatewayV2HTTPRequest, claims *Claims)
 				Status:         manifest.Initiated.String(),
 			}
 
-			createManifest(*activeManifest)
+			s.CreateManifest(*activeManifest)
 
 		} else {
 			// Check that manifest exists.
@@ -147,7 +154,7 @@ func handleManifestRoute(request events.APIGatewayV2HTTPRequest, claims *Claims)
 		}
 
 		// ADDING FILES TO MANIFEST
-		addFilesResponse, err := addFiles(activeManifest.ManifestId, res.Files)
+		addFilesResponse, err := s.AddFiles(activeManifest.ManifestId, res.Files)
 
 		// CREATING API RESPONSE
 		responseBody := manifest.PostResponse{

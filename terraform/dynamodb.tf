@@ -63,15 +63,16 @@ resource "aws_dynamodb_table" "manifest_files_dynamo_table" {
   }
 
   attribute {
-    name = "FilePath"
+    name = "Status"
     type = "S"
   }
 
+  // Used to query files to be moved to final destination
   global_secondary_index {
-    name               = "DatasetManifestIndex"
-    hash_key           = "ManifestId"
-    range_key          = "FilePath"
-    projection_type    = "ALL"
+    name               = "StatusIndex"
+    hash_key           = "Status"
+    projection_type    = "INCLUDE"
+    non_key_attributes = ["ManifestId", "UploadId"]
   }
 
   point_in_time_recovery {

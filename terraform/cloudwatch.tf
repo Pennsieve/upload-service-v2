@@ -18,3 +18,11 @@ resource "aws_cloudwatch_metric_alarm" "upload_sqs_dlq_cloudwatch_metric_alarm" 
     QueueName = aws_sqs_queue.upload_trigger_deadletter_queue.name
   }
 }
+
+// CREATE FARGATE TASK CLOUDWATCH LOG GROUP
+resource "aws_cloudwatch_log_group" "fargate_cloudwatch_log_group" {
+  name              = "/aws/fargate/${var.environment_name}-${var.service_name}-${var.tier}-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
+  retention_in_days = 7
+
+  tags = local.common_tags
+}

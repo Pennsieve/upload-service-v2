@@ -20,6 +20,36 @@ variable "user_pool_2_client_id" {
   default = "703lm5d8odccu21pagcfjkeaea"
 }
 
+// Fargate Task
+variable "container_memory" {
+  default = "2048"
+}
+
+variable "container_cpu" {
+  default = "0"
+}
+
+variable "image_url" {
+  default = "pennsieve/upload_move_files"
+}
+
+variable "task_memory" {
+  default = "2048"
+}
+
+variable "task_cpu" {
+  default = "512"
+}
+
+variable "image_tag" {
+  default = "latest"
+}
+
+variable "tier" {
+  default = "upload-move"
+}
+
+
 
 locals {
   domain_name = data.terraform_remote_state.account.outputs.domain_name
