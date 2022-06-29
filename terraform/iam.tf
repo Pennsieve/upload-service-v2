@@ -286,7 +286,9 @@ data "aws_iam_policy_document" "move_trigger_iam_policy_document" {
     sid    = "ECSTaskPermissions"
     effect = "Allow"
     actions = [
+      "ecs:DescribeTasks",
       "ecs:RunTask",
+      "ecs:ListTasks"
     ]
     resources = ["*"]
   }

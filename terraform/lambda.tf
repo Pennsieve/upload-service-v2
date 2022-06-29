@@ -106,8 +106,7 @@ resource "aws_lambda_function" "fargate_trigger_lambda" {
       TASK_DEF_ARN = aws_ecs_task_definition.ecs_task_definition.arn
       CLUSTER_ARN = data.terraform_remote_state.fargate.outputs.ecs_cluster_arn
       SUBNET_IDS = join(",", data.terraform_remote_state.vpc.outputs.private_subnet_ids)
-
-
+      SECURITY_GROUP = data.terraform_remote_state.platform_infrastructure.outputs.upload_v2_fargate_security_group_id
     }
   }
 }
