@@ -353,8 +353,8 @@ data "aws_iam_policy_document" "move_trigger_iam_policy_document" {
     ]
 
     resources = [
-      aws_sqs_queue.upload_trigger_queue.arn,
-      "${aws_sqs_queue.upload_trigger_queue.arn}/*",
+      aws_sqs_queue.imported_file_queue.arn,
+      "${aws_sqs_queue.imported_file_queue.arn}/*",
     ]
   }
 }
