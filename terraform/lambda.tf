@@ -80,3 +80,40 @@ data "archive_file" "upload_service_lambda_archive" {
 #  provisioned_concurrent_executions = 2
 #  qualifier                         = aws_lambda_function.service_lambda.version
 #}
+
+### MOVE TRIGGER
+
+
+resource "aws_lambda_function" "fargate_trigger_lambda" {
+  description      = "Lambda Function which triggers FARGATE to move files to final destination."
+  function_name    = "${var.environment_name}-${var.service_name}-fargate-trigger-lambda-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
+  handler          = "pennsieve_move_trigger"
+  runtime          = "go1.x"
+  role             = aws_iam_role.move_trigger_lambda_role.arn
+  timeout          = 300
+  memory_size      = 128
+  source_code_hash = data.archive_file.move_trigger_lambda_archive.output_base64sha256
+  filename         = "${path.module}/../lambda/bin/pennsieve_move_trigger_handler.zip"
+
+  vpc_config {
+    subnet_ids         = tolist(data.terraform_remote_state.vpc.outputs.private_subnet_ids)
+    security_group_ids = [data.terraform_remote_state.platform_infrastructure.outputs.upload_v2_security_group_id]
+  }
+
+  environment {
+    variables = {
+      ENV = var.environment_name
+      TASK_DEF_ARN = aws_ecs_task_definition.ecs_task_definition.arn
+      CLUSTER_ARN = data.terraform_remote_state.fargate.outputs.ecs_cluster_arn
+      SUBNET_IDS = join(",", data.terraform_remote_state.vpc.outputs.private_subnet_ids)
+
+
+    }
+  }
+}
+
+data "archive_file" "move_trigger_lambda_archive" {
+  type        = "zip"
+  source_dir  = "${path.module}/../lambda/bin/moveTrigger"
+  output_path = "${path.module}/../lambda/bin/pennsieve_move_trigger_handler.zip"
+}

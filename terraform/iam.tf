@@ -212,6 +212,154 @@ data "aws_iam_policy_document" "upload_service_v2_iam_policy_document" {
   }
 }
 
+##############################
+# MOVE-TRIGGER-LAMBDA   #
+##############################
+
+resource "aws_iam_role" "move_trigger_lambda_role" {
+  name = "${var.environment_name}-${var.service_name}-move-trigger-lambda-role-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
+
+  assume_role_policy = <<EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Action": "sts:AssumeRole",
+      "Principal": {
+        "Service": "lambda.amazonaws.com"
+      },
+      "Effect": "Allow",
+      "Sid": ""
+    }
+  ]
+}
+EOF
+}
+
+resource "aws_iam_role_policy_attachment" "move_trigger_lambda_iam_policy_attachment" {
+  role       = aws_iam_role.move_trigger_lambda_role.name
+  policy_arn = aws_iam_policy.move_trigger_lambda_iam_policy.arn
+}
+
+resource "aws_iam_policy" "move_trigger_lambda_iam_policy" {
+  name   = "${var.environment_name}-${var.service_name}-move-trigger-lambda-iam-policy-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
+  path   = "/"
+  policy = data.aws_iam_policy_document.move_trigger_iam_policy_document.json
+}
+
+data "aws_iam_policy_document" "move_trigger_iam_policy_document" {
+
+  statement {
+    sid    = "SecretsManagerPermissions"
+    effect = "Allow"
+
+    actions = [
+      "kms:Decrypt",
+      "secretsmanager:GetSecretValue",
+    ]
+
+    resources = [
+      data.terraform_remote_state.platform_infrastructure.outputs.docker_hub_credentials_arn,
+      data.aws_kms_key.ssm_kms_key.arn,
+    ]
+  }
+
+  statement {
+    sid    = "UploadLambdaPermissions"
+    effect = "Allow"
+    actions = [
+      "logs:CreateLogGroup",
+      "logs:CreateLogStream",
+      "logs:PutDestination",
+      "logs:PutLogEvents",
+      "logs:DescribeLogStreams",
+      "ec2:CreateNetworkInterface",
+      "ec2:DescribeNetworkInterfaces",
+      "ec2:DeleteNetworkInterface",
+      "ec2:AssignPrivateIpAddresses",
+      "ec2:UnassignPrivateIpAddresses"
+    ]
+    resources = ["*"]
+  }
+
+  statement {
+    sid    = "ECSTaskPermissions"
+    effect = "Allow"
+    actions = [
+      "ecs:RunTask",
+    ]
+    resources = ["*"]
+  }
+
+  statement {
+    sid    = "ECSPassRole"
+    effect = "Allow"
+    actions = [
+      "iam:PassRole",
+    ]
+    resources = [
+      "*"
+    ]
+  }
+
+  statement {
+    sid    = "SSMPermissions"
+    effect = "Allow"
+
+    actions = [
+      "ssm:GetParameter",
+      "ssm:GetParameters",
+      "ssm:GetParametersByPath",
+    ]
+
+    resources = ["arn:aws:ssm:${data.aws_region.current_region.name}:${data.aws_caller_identity.current.account_id}:parameter/${var.environment_name}/${var.service_name}/*"]
+  }
+
+  statement {
+    sid = "LambdaAccessToDynamoDB"
+    effect = "Allow"
+
+    actions = [
+      "dynamodb:DescribeTable",
+      "dynamodb:BatchGetItem",
+      "dynamodb:GetItem",
+      "dynamodb:Query",
+      "dynamodb:Scan",
+      "dynamodb:BatchWriteItem",
+      "dynamodb:PutItem",
+      "dynamodb:UpdateItem"
+    ]
+
+    resources = [
+      aws_dynamodb_table.manifest_dynamo_table.arn,
+      "${aws_dynamodb_table.manifest_dynamo_table.arn}/*",
+      aws_dynamodb_table.manifest_files_dynamo_table.arn,
+      "${aws_dynamodb_table.manifest_files_dynamo_table.arn}/*"
+    ]
+
+  }
+
+  statement {
+    sid    = "LambdaReadFromEventsPermission"
+    effect = "Allow"
+
+    actions = [
+      "sqs:ReceiveMessage",
+      "sqs:DeleteMessage",
+      "sqs:GetQueueAttributes",
+      "sqs:GetQueueUrl"
+    ]
+
+    resources = [
+      aws_sqs_queue.upload_trigger_queue.arn,
+      "${aws_sqs_queue.upload_trigger_queue.arn}/*",
+    ]
+  }
+}
+
+
+
+
 // FARGATE TASK
 # Create ECS Task IAM Role
 resource "aws_iam_role" "fargate_task_iam_role" {

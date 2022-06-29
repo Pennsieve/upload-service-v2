@@ -132,8 +132,6 @@ func parseClaims(request events.APIGatewayV2HTTPRequest) *Claims {
 		organizationId: organizationId,
 	}
 
-	fmt.Println(returnedClaims)
-
 	return &returnedClaims
 
 }
