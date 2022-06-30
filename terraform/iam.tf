@@ -394,20 +394,3 @@ resource "aws_iam_policy" "iam_policy" {
   name   = "${var.environment_name}-${var.service_name}-policy-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
   policy = data.aws_iam_policy_document.upload_service_v2_iam_policy_document.json
 }
-
-#data "aws_iam_policy_document" "iam_policy_document" {
-#  statement {
-#    sid    = "SecretsManagerPermissions"
-#    effect = "Allow"
-#
-#    actions = [
-#      "kms:Decrypt",
-#      "secretsmanager:GetSecretValue",
-#    ]
-#
-#    resources = [
-#      data.terraform_remote_state.platform_infrastructure.outputs.docker_hub_credentials_arn,
-#      data.aws_kms_key.ssm_kms_key.arn,
-#    ]
-#  }
-#}

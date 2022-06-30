@@ -22,6 +22,7 @@ resource "aws_lambda_function" "upload_lambda" {
       PENNSIEVE_DOMAIN = data.terraform_remote_state.account.outputs.domain_name,
       MANIFEST_TABLE = aws_dynamodb_table.manifest_dynamo_table.name,
       MANIFEST_FILE_TABLE = aws_dynamodb_table.manifest_files_dynamo_table.name,
+      IMPORTED_SNS_TOPIC = aws_sns_topic.imported_file_sns_topic.name,
     }
   }
 }

@@ -1,8 +1,12 @@
 package handler
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/sns"
+	"github.com/aws/aws-sdk-go-v2/service/sns/types"
 	"github.com/google/uuid"
 	"github.com/pennsieve/pennsieve-go-api/models/dbTable"
 	"github.com/pennsieve/pennsieve-go-api/models/fileInfo/objectType"
@@ -99,7 +103,7 @@ func (s *UploadSession) ImportFiles(files []uploadFile.UploadFile, manifest *dbT
 		fileMap[f.UploadId] = f
 	}
 
-	allFileParams := []dbTable.FileParams{}
+	var allFileParams []dbTable.FileParams
 	for i, _ := range packages {
 
 		curFile := fileMap[packages[i].ImportId.String]
@@ -120,12 +124,37 @@ func (s *UploadSession) ImportFiles(files []uploadFile.UploadFile, manifest *dbT
 	}
 
 	var ff dbTable.File
-	_, err = ff.Add(s.db, allFileParams)
+	returnedFiles, err := ff.Add(s.db, allFileParams)
 	if err != nil {
 		log.Println(err)
 	}
 
+	// Notify SNS that files were imported.
+	s.PublishToSNS(returnedFiles)
+
+	// Update storage for packages, datasets, and org
 	s.UpdateStorage(packages, manifest)
+
+	return nil
+}
+
+// PublishToSNS publishes messages to SNS after files are imported.
+func (s *UploadSession) PublishToSNS(files []dbTable.File) error {
+	// Send SNS Message
+	var snsEntries []types.PublishBatchRequestEntry
+	for _, f := range files {
+		e := types.PublishBatchRequestEntry{
+			Id:      aws.String(f.UUID.String()),
+			Message: aws.String(fmt.Sprintf("%d", f.PackageId)),
+		}
+		snsEntries = append(snsEntries, e)
+	}
+
+	params := sns.PublishBatchInput{
+		PublishBatchRequestEntries: snsEntries,
+		TopicArn:                   nil,
+	}
+	manifestSession.SNSClient.PublishBatch(context.Background(), &params)
 
 	return nil
 }

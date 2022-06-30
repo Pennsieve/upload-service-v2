@@ -45,7 +45,7 @@ resource "aws_sqs_queue_policy" "upload_trigger_sqs_policy" {
       "Resource": "${aws_sqs_queue.upload_trigger_queue.arn}",
       "Condition": {
         "ArnEquals": {
-          "aws:SourceArn": "${aws_sns_topic.imported_file_sns_topic.arn}"
+          "aws:SourceArn": "${aws_s3_bucket.uploads_s3_bucket.arn}"
         }
       }
     },
@@ -83,6 +83,7 @@ resource "aws_sqs_queue" "imported_file_deadletter_queue" {
   max_message_size          = 262144
   message_retention_seconds = 604800 // 1 week retention in dead letter queue
   receive_wait_time_seconds = 10
+
 }
 
 # Mapping SQS Source to Lambda Function
@@ -106,13 +107,13 @@ resource "aws_sqs_queue_policy" "imported_file_sqs_policy" {
       "Sid":"1",
       "Effect": "Allow",
       "Principal": {
-         "Service": "s3.amazonaws.com"
+         "Service": "sns.amazonaws.com"
       },
       "Action": ["sqs:SendMessage"],
       "Resource": "${aws_sqs_queue.imported_file_queue.arn}",
       "Condition": {
         "ArnEquals": {
-          "aws:SourceArn": "${aws_lambda_function.upload_lambda.arn}"
+          "aws:SourceArn": "${aws_sns_topic_policy.imported_file_sns_topic_policy.arn}"
         }
       }
     },

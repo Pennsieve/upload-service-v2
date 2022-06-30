@@ -10,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+	"github.com/aws/aws-sdk-go-v2/service/sns"
 	"github.com/pennsieve/pennsieve-go-api/models/dbTable"
 	"github.com/pennsieve/pennsieve-go-api/models/fileInfo/fileType"
 	manifestModels "github.com/pennsieve/pennsieve-go-api/models/manifest"
@@ -35,8 +36,12 @@ func init() {
 		FileTableName: os.Getenv("MANIFEST_FILE_TABLE"),
 		TableName:     os.Getenv("MANIFEST_TABLE"),
 		Client:        dynamodb.NewFromConfig(cfg),
+		SNSClient:     sns.NewFromConfig(cfg),
+		SNSTopic:      os.Getenv("IMPORTED_SNS_TOPIC"),
 	}
 }
+
+//
 
 // Handler implements the function that is called when new SQS Events arrive.
 func Handler(ctx context.Context, sqsEvent events.SQSEvent) error {
