@@ -195,6 +195,20 @@ data "aws_iam_policy_document" "upload_service_v2_iam_policy_document" {
   }
 
   statement {
+    sid    = "AllowPublishToMyTopic"
+    effect = "Allow"
+
+    actions = [
+      "sns:Publish"
+    ]
+
+    resources = [
+      aws_sns_topic.imported_file_sns_topic.arn
+    ]
+  }
+
+
+  statement {
     sid    = "LambdaReadFromEventsPermission"
     effect = "Allow"
 
@@ -362,8 +376,9 @@ data "aws_iam_policy_document" "move_trigger_iam_policy_document" {
 
 
 
-// FARGATE TASK
-# Create ECS Task IAM Role
+##############################
+# MOVE-FARGATE TASK   #
+##############################
 resource "aws_iam_role" "fargate_task_iam_role" {
   name = "${var.environment_name}-${var.service_name}-fargate-task-role-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
   path = "/service-roles/"
@@ -392,5 +407,125 @@ resource "aws_iam_role_policy_attachment" "fargate_iam_role_policy_attachment" {
 
 resource "aws_iam_policy" "iam_policy" {
   name   = "${var.environment_name}-${var.service_name}-policy-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
-  policy = data.aws_iam_policy_document.upload_service_v2_iam_policy_document.json
+  policy = data.aws_iam_policy_document.upload_fargate_iam_policy_document.json
+}
+
+data "aws_iam_policy_document" "upload_fargate_iam_policy_document" {
+
+  statement {
+    sid    = "SecretsManagerPermissions"
+    effect = "Allow"
+
+    actions = [
+      "kms:Decrypt",
+      "secretsmanager:GetSecretValue",
+    ]
+
+    resources = [
+      data.terraform_remote_state.platform_infrastructure.outputs.docker_hub_credentials_arn,
+      data.aws_kms_key.ssm_kms_key.arn,
+    ]
+  }
+
+  statement {
+    sid    = "UploadLambdaPermissions"
+    effect = "Allow"
+    actions = [
+      "rds-db:connect",
+      "logs:CreateLogGroup",
+      "logs:CreateLogStream",
+      "logs:PutDestination",
+      "logs:PutLogEvents",
+      "logs:DescribeLogStreams",
+      "ec2:CreateNetworkInterface",
+      "ec2:DescribeNetworkInterfaces",
+      "ec2:DeleteNetworkInterface",
+      "ec2:AssignPrivateIpAddresses",
+      "ec2:UnassignPrivateIpAddresses"
+    ]
+    resources = ["*"]
+  }
+
+  statement {
+    sid    = "SSMPermissions"
+    effect = "Allow"
+
+    actions = [
+      "ssm:GetParameter",
+      "ssm:GetParameters",
+      "ssm:GetParametersByPath",
+    ]
+
+    resources = ["arn:aws:ssm:${data.aws_region.current_region.name}:${data.aws_caller_identity.current.account_id}:parameter/${var.environment_name}/${var.service_name}/*"]
+  }
+
+  statement {
+    sid = "LambdaAccessToDynamoDB"
+    effect = "Allow"
+
+    actions = [
+      "dynamodb:DescribeTable",
+      "dynamodb:BatchGetItem",
+      "dynamodb:GetItem",
+      "dynamodb:Query",
+      "dynamodb:Scan",
+      "dynamodb:BatchWriteItem",
+      "dynamodb:PutItem",
+      "dynamodb:UpdateItem"
+    ]
+
+    resources = [
+      aws_dynamodb_table.manifest_dynamo_table.arn,
+      "${aws_dynamodb_table.manifest_dynamo_table.arn}/*",
+      aws_dynamodb_table.manifest_files_dynamo_table.arn,
+      "${aws_dynamodb_table.manifest_files_dynamo_table.arn}/*"
+    ]
+
+  }
+
+  statement {
+    sid    = "LambdaReadFromEventsPermission"
+    effect = "Allow"
+
+    actions = [
+      "sqs:ReceiveMessage",
+      "sqs:DeleteMessage",
+      "sqs:GetQueueAttributes",
+      "sqs:GetQueueUrl"
+    ]
+
+    resources = [
+      aws_sqs_queue.upload_trigger_queue.arn,
+      "${aws_sqs_queue.upload_trigger_queue.arn}/*",
+    ]
+  }
+
+  statement {
+    effect = "Allow"
+
+    actions = [
+      "s3:*",
+    ]
+
+    resources = [
+      data.terraform_remote_state.platform_infrastructure.outputs.storage_bucket_arn,
+      "${data.terraform_remote_state.platform_infrastructure.outputs.storage_bucket_arn}/*",
+      data.terraform_remote_state.platform_infrastructure.outputs.sparc_storage_bucket_arn,
+      "${data.terraform_remote_state.platform_infrastructure.outputs.sparc_storage_bucket_arn}/*",
+      aws_s3_bucket.uploads_s3_bucket.arn,
+      "${aws_s3_bucket.uploads_s3_bucket.arn}/*",
+    ]
+  }
+
+  statement {
+    effect = "Allow"
+
+    actions = [
+      "s3:List*",
+    ]
+
+    resources = [
+      "*",
+    ]
+  }
 }

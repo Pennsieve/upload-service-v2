@@ -22,7 +22,7 @@ resource "aws_lambda_function" "upload_lambda" {
       PENNSIEVE_DOMAIN = data.terraform_remote_state.account.outputs.domain_name,
       MANIFEST_TABLE = aws_dynamodb_table.manifest_dynamo_table.name,
       MANIFEST_FILE_TABLE = aws_dynamodb_table.manifest_files_dynamo_table.name,
-      IMPORTED_SNS_TOPIC = aws_sns_topic.imported_file_sns_topic.name,
+      IMPORTED_SNS_TOPIC = aws_sns_topic.imported_file_sns_topic.arn,
     }
   }
 }
@@ -88,6 +88,7 @@ data "archive_file" "upload_service_lambda_archive" {
 resource "aws_lambda_function" "fargate_trigger_lambda" {
   description      = "Lambda Function which triggers FARGATE to move files to final destination."
   function_name    = "${var.environment_name}-${var.service_name}-fargate-trigger-lambda-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
+  reserved_concurrent_executions = 1 // don't allow concurrent lambda's
   handler          = "pennsieve_move_trigger"
   runtime          = "go1.x"
   role             = aws_iam_role.move_trigger_lambda_role.arn

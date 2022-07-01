@@ -94,6 +94,14 @@ func (s *UploadSession) ImportFiles(files []uploadFile.UploadFile, manifest *dbT
 	var packageTable dbTable.Package
 	packages, err := packageTable.Add(s.db, pkgParams)
 	if err != nil {
+		// Some error in creating packages --> none of the packages are imported.
+
+		// This should not really happen but we see this when adding packages causes a constraint violation.
+		// such as importing an already imported package. (upload id)
+
+		// TODO should we retry packages individually? or send SNS message for import lambda to handle?
+
+		// TODO what do we do with failed uploads?
 		return err
 	}
 
@@ -123,6 +131,8 @@ func (s *UploadSession) ImportFiles(files []uploadFile.UploadFile, manifest *dbT
 		allFileParams = append(allFileParams, file)
 	}
 
+	log.Println(allFileParams)
+
 	var ff dbTable.File
 	returnedFiles, err := ff.Add(s.db, allFileParams)
 	if err != nil {
@@ -141,6 +151,10 @@ func (s *UploadSession) ImportFiles(files []uploadFile.UploadFile, manifest *dbT
 // PublishToSNS publishes messages to SNS after files are imported.
 func (s *UploadSession) PublishToSNS(files []dbTable.File) error {
 	// Send SNS Message
+
+	log.Println("Publish to SNS: ", len(files))
+
+	const batchSize = 10
 	var snsEntries []types.PublishBatchRequestEntry
 	for _, f := range files {
 		e := types.PublishBatchRequestEntry{
@@ -148,15 +162,31 @@ func (s *UploadSession) PublishToSNS(files []dbTable.File) error {
 			Message: aws.String(fmt.Sprintf("%d", f.PackageId)),
 		}
 		snsEntries = append(snsEntries, e)
+
+		// Send SNS mesasages in blocks of batchSize
+		if len(snsEntries) == batchSize {
+			sendSNSMessages(snsEntries)
+			snsEntries = nil
+		}
 	}
 
-	params := sns.PublishBatchInput{
-		PublishBatchRequestEntries: snsEntries,
-		TopicArn:                   nil,
-	}
-	manifestSession.SNSClient.PublishBatch(context.Background(), &params)
+	// send remaining entries
+	sendSNSMessages(snsEntries)
 
 	return nil
+}
+
+func sendSNSMessages(snsEntries []types.PublishBatchRequestEntry) {
+	log.Println("Number of SNS messages: ", len(snsEntries))
+	log.Println("Number of SNS messages: ", len(snsEntries))
+	params := sns.PublishBatchInput{
+		PublishBatchRequestEntries: snsEntries,
+		TopicArn:                   aws.String(manifestSession.SNSTopic),
+	}
+	_, err := manifestSession.SNSClient.PublishBatch(context.Background(), &params)
+	if err != nil {
+		log.Println("Error publishing to SNS: ", err)
+	}
 }
 
 // GetCreateUploadFolders creates new folders in the organization.
