@@ -1,22 +1,13 @@
-FROM golang:1.18-alpine as build
+FROM golang:1.18-alpine
 
 WORKDIR /app
 
-COPY  go.mod ./
-COPY  go.sum ./
-RUN go mod download
+#COPY  go.mod ./
+#COPY  go.sum ./
+#RUN go mod download
 
-COPY *.go ./
+#COPY *.go ./
 
-RUN go build -o app/upload-move-files
-
-
-FROM golang:1.18-alpine as service
-
-COPY --from=build app/ app/
-
-WORKDIR app
+COPY app/upload-move-files ./app/
 
 CMD [ "app/upload-move-files" ]
-
-
