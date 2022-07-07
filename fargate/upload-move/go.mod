@@ -2,7 +2,7 @@ module github.com/pennsieve/pennsieve-upload-service-v2/upload-move-files
 
 go 1.18
 
-replace github.com/pennsieve/pennsieve-go-api => ../../../pennsieve-go-api
+//replace github.com/pennsieve/pennsieve-go-api => ../../../pennsieve-go-api
 
 require (
 	github.com/aws/aws-sdk-go-v2 v1.16.6
@@ -10,7 +10,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue v1.9.4
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.15.7
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.26.12
-	github.com/pennsieve/pennsieve-go-api v0.1.4
+	github.com/pennsieve/pennsieve-go-api v0.2.2
 )
 
 require (
