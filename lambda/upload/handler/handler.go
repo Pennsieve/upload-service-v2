@@ -13,7 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sns"
 	"github.com/pennsieve/pennsieve-go-api/models/dbTable"
 	"github.com/pennsieve/pennsieve-go-api/models/fileInfo/fileType"
-	manifestModels "github.com/pennsieve/pennsieve-go-api/models/manifest"
+	"github.com/pennsieve/pennsieve-go-api/models/manifest/manifestFile"
 	"github.com/pennsieve/pennsieve-go-api/models/packageInfo/packageType"
 	"github.com/pennsieve/pennsieve-go-api/models/uploadFile"
 	manifestPkg "github.com/pennsieve/pennsieve-go-api/pkg/manifest"
@@ -92,14 +92,14 @@ func Handler(ctx context.Context, sqsEvent events.SQSEvent) error {
 		}
 
 		// Update status of files in dynamoDB
-		var fileDTOs []manifestModels.FileDTO
+		var fileDTOs []manifestFile.FileDTO
 		for _, u := range uploadFilesForManifest {
-			f := manifestModels.FileDTO{
+			f := manifestFile.FileDTO{
 				UploadID:   u.UploadId,
 				S3Key:      u.S3Key,
 				TargetPath: u.Path,
 				TargetName: u.Name,
-				Status:     manifestModels.FileImported,
+				Status:     manifestFile.Imported,
 			}
 			fileDTOs = append(fileDTOs, f)
 		}
@@ -107,7 +107,8 @@ func Handler(ctx context.Context, sqsEvent events.SQSEvent) error {
 		// We are replacing the entries instead of updating the status field as
 		// this is the only way we can batch update, and we also update the name in
 		// case that we need to append index (on name conflict).
-		manifestSession.AddFiles(manifestId, fileDTOs)
+		setStatus := manifestFile.Imported
+		manifestSession.AddFiles(manifestId, fileDTOs, &setStatus)
 
 	}
 
@@ -373,7 +374,7 @@ func getFileInfo(extension string) (fileType.Type, packageType.Info) {
 //		S3Key:      u1.S3Key,
 //		TargetPath: u1.Path,
 //		TargetName: u1.Name,
-//		Status:     ,
+//		ClientStatus:     ,
 //	}
 //
 //	client.UpdateItem()

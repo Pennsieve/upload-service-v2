@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -11,20 +10,16 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/pennsieve/pennsieve-go-api/models/dbTable"
-	"github.com/pennsieve/pennsieve-go-api/models/manifest"
+	"github.com/pennsieve/pennsieve-go-api/models/manifest/manifestFile"
 	"github.com/pennsieve/pennsieve-go-api/pkg/core"
+	"github.com/pennsieve/pennsieve-upload-service-v2/upload-move-files/pkg"
 	"log"
 	"os"
-	"sort"
-	"strconv"
-	"strings"
 	"sync"
-	"time"
 )
 
-var session awsSession
+var Session awsSession
 var uploadBucket string
 var defaultStorageBucket string
 
@@ -42,6 +37,7 @@ type fileWalk chan Item
 
 var processWg sync.WaitGroup
 
+// Number of simultaneous copy threads.
 const nrWorkers = 20
 
 // storageBucketMap maps manifestIds to storageBucket names
@@ -64,7 +60,7 @@ func main() {
 		log.Fatalf("LoadDefaultConfig: %v\n", err)
 	}
 
-	session = awsSession{
+	Session = awsSession{
 		FileTableName:  os.Getenv("FILES_TABLE"),
 		TableName:      os.Getenv("MANIFEST_TABLE"),
 		DynamodbClient: dynamodb.NewFromConfig(cfg),
@@ -73,11 +69,11 @@ func main() {
 
 	// Get Postgres connection
 	db, err := core.ConnectRDS()
-	session.pgClient = db
+	Session.pgClient = db
 	if err != nil {
 		log.Fatalf("Cannot connect to the Pennsieve Postgres Proxy.")
 	}
-	defer session.pgClient.Close()
+	defer Session.pgClient.Close()
 
 	uploadBucket = os.Getenv("UPLOAD_BUCKET")
 	defaultStorageBucket = os.Getenv("STORAGE_BUCKET")
@@ -124,7 +120,7 @@ func getManifestStorageBucket(manifestId string) (*storageOrgItem, error) {
 	}
 
 	// Get manifest from dynamodb based on id
-	manifest, err := dbTable.GetFromManifest(session.DynamodbClient, session.TableName, manifestId)
+	manifest, err := dbTable.GetFromManifest(Session.DynamodbClient, Session.TableName, manifestId)
 
 	// Get Organization associated with upload Manifest
 	db, err := core.ConnectRDS()
@@ -160,8 +156,8 @@ func getManifestStorageBucket(manifestId string) (*storageOrgItem, error) {
 // manifestFileWalk paginates results from dynamodb manifest files table and put items on channel.
 func manifestFileWalk(walker fileWalk) error {
 
-	p := dynamodb.NewQueryPaginator(session.DynamodbClient, &dynamodb.QueryInput{
-		TableName:              aws.String(session.FileTableName),
+	p := dynamodb.NewQueryPaginator(Session.DynamodbClient, &dynamodb.QueryInput{
+		TableName:              aws.String(Session.FileTableName),
 		IndexName:              aws.String("StatusIndex"),
 		Limit:                  aws.Int32(5),
 		KeyConditionExpression: aws.String("#status = :hashKey"),
@@ -169,7 +165,7 @@ func manifestFileWalk(walker fileWalk) error {
 			":hashKey": &types.AttributeValueMemberS{Value: "Imported"},
 		},
 		ExpressionAttributeNames: map[string]string{
-			"#status": "Status",
+			"#status": "ClientStatus",
 		},
 	})
 
@@ -229,7 +225,7 @@ func moveFile(workerId int32, items <-chan Item) error {
 			Bucket: aws.String(uploadBucket),
 			Key:    aws.String(sourceKey),
 		}
-		result, err := session.S3Client.HeadObject(context.Background(), &headObj)
+		result, err := Session.S3Client.HeadObject(context.Background(), &headObj)
 		if err != nil {
 			log.Println("moveFile: Cannot get size of S3 object.")
 			continue
@@ -247,7 +243,7 @@ func moveFile(workerId int32, items <-chan Item) error {
 			}
 		} else {
 			log.Println("Multipart copy")
-			err = MultiPartCopy(session.S3Client, fileSize, uploadBucket, sourceKey, stOrgItem.storageBucket, targetPath)
+			err = pkg.MultiPartCopy(Session.S3Client, fileSize, uploadBucket, sourceKey, stOrgItem.storageBucket, targetPath)
 			if err != nil {
 				log.Printf("Unable to copy item from  %s to %s, %v\n", sourcePath, targetPath, err)
 				continue
@@ -257,14 +253,14 @@ func moveFile(workerId int32, items <-chan Item) error {
 		fmt.Printf("Item %q successfully copied from %s to  %s\n", item, sourcePath, targetPath)
 
 		var f dbTable.File
-		err = f.UpdateBucket(session.pgClient, item.UploadId, stOrgItem.storageBucket, stOrgItem.organizationId)
+		err = f.UpdateBucket(Session.pgClient, item.UploadId, stOrgItem.storageBucket, stOrgItem.organizationId)
 		if err != nil {
 			log.Println("Could not update the bucket for ", item.UploadId)
 			continue
 		}
 
 		// Update status of files in dynamoDB
-		err = dbTable.UpdateFileTableStatus(session.DynamodbClient, session.FileTableName, item.ManifestId, item.UploadId, manifest.FileFinalized)
+		err = dbTable.UpdateFileTableStatus(Session.DynamodbClient, Session.FileTableName, item.ManifestId, item.UploadId, manifestFile.Finalized)
 		if err != nil {
 			log.Println("Error updating Dynamodb status: ", err)
 			continue
@@ -275,7 +271,7 @@ func moveFile(workerId int32, items <-chan Item) error {
 			Bucket: aws.String(uploadBucket),
 			Key:    aws.String(fmt.Sprintf("%s/%s", item.ManifestId, item.UploadId)),
 		}
-		_, err = session.S3Client.DeleteObject(context.Background(), &deleteParams)
+		_, err = Session.S3Client.DeleteObject(context.Background(), &deleteParams)
 		if err != nil {
 			log.Printf("Unable to delete file: %s/%s\n", item.ManifestId, item.UploadId)
 			continue
@@ -294,214 +290,10 @@ func simpleCopyFile(stOrgItem *storageOrgItem, sourcePath string, targetPath str
 		Key:        aws.String(targetPath),
 	}
 
-	_, err := session.S3Client.CopyObject(context.Background(), &params)
+	_, err := Session.S3Client.CopyObject(context.Background(), &params)
 	if err != nil {
 		return err
 	}
 
 	return nil
-}
-
-// maxPartSize constant for number of bits in 50 megabyte chunk
-// this corresponds with max file size of 500GB per file as copy can do max 10,000 parts.
-const maxPartSize = 50 * 1024 * 1024
-
-// buildCopySourceRange helper function to build the string for the range of bits to copy
-func buildCopySourceRange(start int64, objectSize int64) string {
-	end := start + maxPartSize - 1
-	if end > objectSize {
-		end = objectSize - 1
-	}
-	startRange := strconv.FormatInt(start, 10)
-	stopRange := strconv.FormatInt(end, 10)
-	return "bytes=" + startRange + "-" + stopRange
-}
-
-const nrCopyWorkers = 5
-
-// MultiPartCopy function that starts, perform each part upload, and completes the copy
-func MultiPartCopy(svc *s3.Client, fileSize int64, sourceBucket string, sourceKey string, destBucket string, destKey string) error {
-
-	partWalker := make(chan s3.UploadPartCopyInput, nrWorkers)
-	results := make(chan s3types.CompletedPart, nrWorkers)
-
-	parts := make([]s3types.CompletedPart, 0)
-
-	ctx, cancelFn := context.WithTimeout(context.TODO(), 30*time.Minute)
-	defer cancelFn()
-
-	//struct for starting a multipart upload
-	startInput := s3.CreateMultipartUploadInput{
-		Bucket: &destBucket,
-		Key:    &destKey,
-	}
-
-	//send command to start copy and get the upload id as it is needed later
-	var uploadId string
-	createOutput, err := svc.CreateMultipartUpload(ctx, &startInput)
-	if err != nil {
-		return err
-	}
-	if createOutput != nil {
-		if createOutput.UploadId != nil {
-			uploadId = *createOutput.UploadId
-		}
-	}
-	if uploadId == "" {
-		return errors.New("no upload id found in start upload request")
-	}
-
-	numUploads := fileSize / maxPartSize
-	//log.Printf("Will attempt upload in %d number of parts to %s\n", numUploads, destKey)
-
-	// Walk over all files in IMPORTED status and make available on channel for processors.
-	go allocate(uploadId, fileSize, sourceBucket, sourceKey, destBucket, destKey, partWalker)
-
-	done := make(chan bool)
-
-	go aggregateResult(done, &parts, results)
-
-	// Wait until all processors are completed.
-	createWorkerPool(ctx, nrCopyWorkers, numUploads, uploadId, partWalker, results)
-
-	// Wait until done channel has a value
-	<-done
-
-	// sort parts (required for complete method
-	sort.Slice(parts, func(i, j int) bool {
-		return parts[i].PartNumber < parts[j].PartNumber
-	})
-
-	//create struct for completing the upload
-	mpu := s3types.CompletedMultipartUpload{
-		Parts: parts,
-	}
-
-	//complete actual upload
-	complete := s3.CompleteMultipartUploadInput{
-		Bucket:          &destBucket,
-		Key:             &destKey,
-		UploadId:        &uploadId,
-		MultipartUpload: &mpu,
-	}
-	compOutput, err := svc.CompleteMultipartUpload(context.TODO(), &complete)
-	if err != nil {
-		return fmt.Errorf("error completing upload: %w", err)
-	}
-	if compOutput != nil {
-		log.Printf("Successfully copied: %s Key: %s to Bucket: %s Key: %s\n", sourceBucket, sourceKey, destBucket, destKey)
-	}
-	return nil
-}
-
-// allocate create entries into the chunk channel for the workers to consume.
-func allocate(uploadId string, fileSize int64, sourceBucket string, sourceKey string, destBucket string, destKey string, partWalker chan s3.UploadPartCopyInput) {
-	defer func() {
-		close(partWalker)
-	}()
-
-	var i int64
-	var partNumber int32 = 1
-	for i = 0; i < fileSize; i += maxPartSize {
-		copySourceRange := buildCopySourceRange(i, fileSize)
-		copySource := "/" + sourceBucket + "/" + sourceKey
-		partWalker <- s3.UploadPartCopyInput{
-			Bucket:          &destBucket,
-			CopySource:      &copySource,
-			CopySourceRange: &copySourceRange,
-			Key:             &destKey,
-			PartNumber:      partNumber,
-			UploadId:        &uploadId,
-		}
-		partNumber++
-	}
-}
-
-// createWorkerPool creates a worker pool for uploading parts
-func createWorkerPool(ctx context.Context, nrWorkers int, nrUploads int64, uploadId string,
-	partWalker chan s3.UploadPartCopyInput, results chan s3types.CompletedPart) {
-
-	defer func() {
-		close(results)
-	}()
-
-	var copyWg sync.WaitGroup
-	workerFailed := false
-	for w := 1; w <= nrWorkers; w++ {
-		copyWg.Add(1)
-		log.Println("starting uploadpart worker:", w)
-		w := int32(w)
-		go func() {
-			err := worker(ctx, &copyWg, w, nrUploads, partWalker, results)
-			if err != nil {
-				workerFailed = true
-			}
-		}()
-
-	}
-
-	// Wait until all workers are finished
-	copyWg.Wait()
-
-	// Check if workers finished due to error
-	if workerFailed {
-		log.Println("Attempting to abort upload")
-		abortIn := s3.AbortMultipartUploadInput{
-			UploadId: aws.String(uploadId),
-		}
-		//ignoring any errors with aborting the copy
-		session.S3Client.AbortMultipartUpload(context.TODO(), &abortIn)
-	}
-
-	log.Println("Finished checking status of workers.")
-}
-
-// aggregateResult grabs the etags from results channel and aggregates in array
-func aggregateResult(done chan bool, parts *[]s3types.CompletedPart, results chan s3types.CompletedPart) {
-
-	for cPart := range results {
-		*parts = append(*parts, cPart)
-	}
-
-	done <- true
-}
-
-// worker uploads parts of a file as part of copy function.
-func worker(ctx context.Context, wg *sync.WaitGroup, workerId int32, numUploads int64,
-	partWalker chan s3.UploadPartCopyInput, results chan s3types.CompletedPart) error {
-
-	// Close worker after it completes.
-	// This happens when the items channel closes.
-	defer func() {
-		log.Println("Closing UploadPart Worker: ", workerId)
-		wg.Done()
-	}()
-
-	for partInput := range partWalker {
-
-		//log.Printf("Attempting to upload part %d range: %s\n", partInput.PartNumber, *partInput.CopySourceRange)
-		partResp, err := session.S3Client.UploadPartCopy(ctx, &partInput)
-
-		if err != nil {
-			return err
-		}
-
-		//copy etag and part number from response as it is needed for completion
-		if partResp != nil {
-			partNum := partInput.PartNumber
-			etag := strings.Trim(*partResp.CopyPartResult.ETag, "\"")
-			cPart := s3types.CompletedPart{
-				ETag:       &etag,
-				PartNumber: partNum,
-			}
-
-			results <- cPart
-
-			log.Printf("Successfully upload part %d of %s\n", partInput.PartNumber, *partInput.UploadId)
-		}
-
-	}
-
-	return nil
-
 }

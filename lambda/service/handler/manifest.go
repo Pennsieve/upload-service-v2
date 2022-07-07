@@ -66,7 +66,7 @@ func handleManifestRoute(request events.APIGatewayV2HTTPRequest, claims *Claims)
 			fmt.Println("Info about " + *table + ":")
 			fmt.Println("  #items:     ", resp.Table.ItemCount)
 			fmt.Println("  Size (bytes)", resp.Table.TableSizeBytes)
-			fmt.Println("  Status:     ", string(resp.Table.TableStatus))
+			fmt.Println("  ClientStatus:     ", string(resp.Table.TableStatus))
 
 			apiResponse = events.APIGatewayV2HTTPResponse{
 				StatusCode:        200,
@@ -133,7 +133,7 @@ func handleManifestRoute(request events.APIGatewayV2HTTPRequest, claims *Claims)
 
 		} else {
 			// Check that manifest exists.
-			log.Printf("Got existing manifest")
+			log.Printf("Has existing manifest")
 
 			cfg, err := config.LoadDefaultConfig(context.Background())
 			if err != nil {
@@ -154,11 +154,12 @@ func handleManifestRoute(request events.APIGatewayV2HTTPRequest, claims *Claims)
 		}
 
 		// ADDING FILES TO MANIFEST
-		addFilesResponse, err := s.AddFiles(activeManifest.ManifestId, res.Files)
+		addFilesResponse, err := s.AddFiles(activeManifest.ManifestId, res.Files, nil)
 
 		// CREATING API RESPONSE
 		responseBody := manifest.PostResponse{
 			ManifestNodeId: activeManifest.ManifestId,
+			UpdatedFiles:   addFilesResponse.FileStatus,
 			NrFilesUpdated: addFilesResponse.NrFilesUpdated,
 			NrFilesRemoved: addFilesResponse.NrFilesRemoved,
 			FailedFiles:    addFilesResponse.FailedFiles,
@@ -207,7 +208,7 @@ func handleManifestIdRoute(request events.APIGatewayV2HTTPRequest, claims *Claim
 			fmt.Println("Info about " + *table + ":")
 			fmt.Println("  #items:     ", resp.Table.ItemCount)
 			fmt.Println("  Size (bytes)", resp.Table.TableSizeBytes)
-			fmt.Println("  Status:     ", string(resp.Table.TableStatus))
+			fmt.Println("  ClientStatus:     ", string(resp.Table.TableStatus))
 
 			apiResponse = events.APIGatewayV2HTTPResponse{
 				StatusCode:        200,
@@ -277,7 +278,7 @@ func handleManifestIdUpdatesRoute(request events.APIGatewayV2HTTPRequest, claims
 			fmt.Println("Info about " + *table + ":")
 			fmt.Println("  #items:     ", resp.Table.ItemCount)
 			fmt.Println("  Size (bytes)", resp.Table.TableSizeBytes)
-			fmt.Println("  Status:     ", string(resp.Table.TableStatus))
+			fmt.Println("  ClientStatus:     ", string(resp.Table.TableStatus))
 
 			apiResponse = events.APIGatewayV2HTTPResponse{
 				StatusCode:        200,
@@ -347,7 +348,7 @@ func handleManifestIdRemoveRoute(request events.APIGatewayV2HTTPRequest, claims 
 			fmt.Println("Info about " + *table + ":")
 			fmt.Println("  #items:     ", resp.Table.ItemCount)
 			fmt.Println("  Size (bytes)", resp.Table.TableSizeBytes)
-			fmt.Println("  Status:     ", string(resp.Table.TableStatus))
+			fmt.Println("  ClientStatus:     ", string(resp.Table.TableStatus))
 
 			apiResponse = events.APIGatewayV2HTTPResponse{
 				StatusCode:        200,
