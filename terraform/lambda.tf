@@ -69,6 +69,7 @@ data "archive_file" "upload_service_lambda_archive" {
   source_dir  = "${path.module}/../lambda/bin/service"
   output_path = "${path.module}/../lambda/bin/pennsieve_service_handler.zip"
 }
+
 #
 #resource "aws_lambda_alias" "upload_service_lambda_live" {
 #  name             = "live"

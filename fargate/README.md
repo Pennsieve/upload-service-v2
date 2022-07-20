@@ -29,8 +29,3 @@ docker push pennsieve/upload_move_files
 The executor has IAM access to the RDS Proxy so no RDS password needs to be provided.
 
 
-createManifest(path , func(){
-dosomthing...
-})
-
-
