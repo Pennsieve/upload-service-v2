@@ -21,7 +21,7 @@
 .terraform.lock.hcl
 
 # Lambda Binaries
-lambda/bin/*
+lambda/bin/*.zip
 
 # Mac
 .DS_Store
