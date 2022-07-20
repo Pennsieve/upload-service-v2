@@ -529,3 +529,117 @@ data "aws_iam_policy_document" "upload_fargate_iam_policy_document" {
     ]
   }
 }
+
+##############################
+# COGNITO IDENTITY POOL      #
+##############################
+
+resource "aws_iam_role" "cognito_identity_auth_role" {
+  name = "cognito_authenticated"
+
+  assume_role_policy = <<EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "cognito-identity.amazonaws.com"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "cognito-identity.amazonaws.com:aud": "${aws_cognito_identity_pool.pennsieve_auth.id}"
+        },
+        "ForAnyValue:StringLike": {
+          "cognito-identity.amazonaws.com:amr": "authenticated"
+        }
+      }
+    }
+  ]
+}
+EOF
+}
+
+resource "aws_iam_role_policy_attachment" "cognito_identity_policy_attachment" {
+  role       = aws_iam_role.cognito_identity_auth_role.id
+  policy_arn = aws_iam_policy.upload_auth_identity_policy.arn
+}
+
+resource "aws_iam_policy" "upload_auth_identity_policy" {
+  name   = "${var.environment_name}-${var.service_name}-upload-auth-identity-policy-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
+  policy = data.aws_iam_policy_document.cognito_upload_identity_policy_document.json
+}
+
+data "aws_iam_policy_document" "cognito_upload_identity_policy_document" {
+  statement {
+    sid    = "UploadsBucketAccess"
+    effect = "Allow"
+
+    actions = [
+      "s3:PutObject",
+      "s3:ListBucketMultipartUploads",
+      "s3:AbortMultipartUpload",
+      "s3:ListMultipartUploadParts"
+    ]
+
+    resources = [
+      aws_s3_bucket.uploads_s3_bucket.arn,
+      "${aws_s3_bucket.uploads_s3_bucket.arn}/*"
+    ]
+  }
+}
+
+resource "aws_iam_role" "cognito_identity_unauth_role" {
+  name = "cognito_unauthenticated"
+
+  assume_role_policy = <<EOF
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Principal": {
+                "Federated": "cognito-identity.amazonaws.com"
+            },
+            "Action": "sts:AssumeRoleWithWebIdentity",
+            "Condition": {
+                "StringEquals": {
+                    "cognito-identity.amazonaws.com:aud": "${aws_cognito_identity_pool.pennsieve_auth.id}"
+                },
+                "ForAnyValue:StringLike": {
+                    "cognito-identity.amazonaws.com:amr": "unauthenticated"
+                }
+            }
+        }
+    ]
+}
+EOF
+}
+
+resource "aws_iam_role_policy_attachment" "cognito_identity_unauth_policy_attachment" {
+  role       = aws_iam_role.cognito_identity_unauth_role.id
+  policy_arn = aws_iam_policy.upload_unauth_identity_policy.arn
+}
+
+resource "aws_iam_policy" "upload_unauth_identity_policy" {
+  name   = "${var.environment_name}-${var.service_name}-upload-unauth-identity-policy-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
+  policy = data.aws_iam_policy_document.cognito_upload_unauth_identity_policy_document.json
+}
+
+data "aws_iam_policy_document" "cognito_upload_unauth_identity_policy_document" {
+  statement {
+    sid    = "UnauthCognitoAccess"
+    effect = "Allow"
+
+    actions = [
+      "mobileanalytics:PutEvents",
+      "cognito-sync:*"
+    ]
+
+    resources = [
+      "*"
+    ]
+  }
+}
+

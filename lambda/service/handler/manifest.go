@@ -88,7 +88,7 @@ func handleManifestRoute(request events.APIGatewayV2HTTPRequest, claims *Claims)
 		}
 		fmt.Println("Handling GET /manifest request")
 
-	// Add files to a new or existing manifest.
+	// Sync files in manifest
 	case "POST":
 		fmt.Println("Handling POST /manifest request")
 

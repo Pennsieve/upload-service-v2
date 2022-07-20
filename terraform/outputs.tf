@@ -21,3 +21,7 @@ output "service_lambda_function_name" {
 output "upload_lambda_invoke_arn" {
   value = aws_lambda_function.upload_lambda.invoke_arn
 }
+
+output "identity_pool_id" {
+  value = aws_cognito_identity_pool.pennsieve_auth.id
+}
