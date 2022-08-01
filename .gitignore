@@ -20,7 +20,7 @@
 # Terraform
 .terraform.lock.hcl
 
-# Lambda Binaries
+# Lambda Binaries Zip files
 lambda/bin/*.zip
 
 # Mac

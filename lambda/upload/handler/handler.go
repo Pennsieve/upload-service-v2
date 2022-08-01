@@ -364,18 +364,3 @@ func getFileInfo(extension string) (fileType.Type, packageType.Info) {
 
 	return fType, pType
 }
-
-//
-//func updateFileStatus(uploadFiles []uploadFile.UploadFile) {
-//
-//	u1 := uploadFiles[0]
-//	s := manifest.FileDTO{
-//		UploadID:   u1.UploadId,
-//		S3Key:      u1.S3Key,
-//		TargetPath: u1.Path,
-//		TargetName: u1.Name,
-//		ClientStatus:     ,
-//	}
-//
-//	client.UpdateItem()
-//}

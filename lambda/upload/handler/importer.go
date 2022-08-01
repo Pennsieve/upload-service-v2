@@ -131,8 +131,6 @@ func (s *UploadSession) ImportFiles(files []uploadFile.UploadFile, manifest *dbT
 		allFileParams = append(allFileParams, file)
 	}
 
-	log.Println(allFileParams)
-
 	var ff dbTable.File
 	returnedFiles, err := ff.Add(s.db, allFileParams)
 	if err != nil {

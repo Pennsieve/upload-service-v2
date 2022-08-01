@@ -2,7 +2,6 @@ package handler
 
 import (
 	"context"
-	"fmt"
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
@@ -55,7 +54,6 @@ func ManifestHandler(request events.APIGatewayV2HTTPRequest) (*events.APIGateway
 	authorized := false
 	switch routeKey {
 	case "/manifest":
-		fmt.Println("Handling /manifest request")
 		if authorized = hasRole(*claims, permissions.CreateDeleteFiles); authorized {
 			apiResponse, err = handleManifestRoute(request, claims)
 		}
