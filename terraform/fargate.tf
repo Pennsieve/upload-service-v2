@@ -8,11 +8,13 @@ data "template_file" "task_definition" {
     container_cpu             = var.container_cpu
     container_memory          = var.container_memory
     environment_name          = var.environment_name
+    env                       = var.environment_name
     manifest_table_name       = aws_dynamodb_table.manifest_dynamo_table.name
     manifest_files_table_name = aws_dynamodb_table.manifest_files_dynamo_table.name
     upload_bucket             = aws_s3_bucket.uploads_s3_bucket.id
     storage_bucket            = data.terraform_remote_state.platform_infrastructure.outputs.storage_bucket_id
     docker_hub_credentials    = data.terraform_remote_state.platform_infrastructure.outputs.docker_hub_credentials_arn
+    rds_proxy_endpoint        = data.terraform_remote_state.pennsieve_postgres.outputs.rds_proxy_endpoint
     image_tag                 = var.image_tag
     image_url                 = var.image_url
     service_name              = var.service_name

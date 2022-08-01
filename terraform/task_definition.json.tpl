@@ -13,7 +13,10 @@
       { "name" : "MANIFEST_TABLE", "value": "${manifest_table_name}" },
       { "name" : "FILES_TABLE", "value": "${manifest_files_table_name}" },
       { "name" : "UPLOAD_BUCKET", "value": "${upload_bucket}" },
-      { "name" : "STORAGE_BUCKET", "value": "${storage_bucket}" }
+      { "name" : "STORAGE_BUCKET", "value": "${storage_bucket}" },
+      { "name" : "ENV", "value": "${environment_name}" },
+      { "name" : "REGION", "value": "${aws_region}" },
+      { "name" : "RDS_PROXY_ENDPOINT", "value": "${rds_proxy_endpoint}" }
     ],
     "name": "${tier}",
     "image": "${image_url}:${image_tag}",

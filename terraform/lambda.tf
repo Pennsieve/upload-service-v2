@@ -23,6 +23,8 @@ resource "aws_lambda_function" "upload_lambda" {
       MANIFEST_TABLE = aws_dynamodb_table.manifest_dynamo_table.name,
       MANIFEST_FILE_TABLE = aws_dynamodb_table.manifest_files_dynamo_table.name,
       IMPORTED_SNS_TOPIC = aws_sns_topic.imported_file_sns_topic.arn,
+      REGION = var.aws_region
+      RDS_PROXY_ENDPOINT = data.terraform_remote_state.pennsieve_postgres.outputs.rds_proxy_endpoint,
     }
   }
 }
@@ -60,6 +62,8 @@ resource "aws_lambda_function" "service_lambda" {
       PENNSIEVE_DOMAIN = data.terraform_remote_state.account.outputs.domain_name,
       MANIFEST_TABLE = aws_dynamodb_table.manifest_dynamo_table.name,
       MANIFEST_FILE_TABLE = aws_dynamodb_table.manifest_files_dynamo_table.name,
+      REGION = var.aws_region
+      RDS_PROXY_ENDPOINT = data.terraform_remote_state.pennsieve_postgres.outputs.rds_proxy_endpoint,
     }
   }
 }
@@ -110,6 +114,8 @@ resource "aws_lambda_function" "fargate_trigger_lambda" {
       CLUSTER_ARN = data.terraform_remote_state.fargate.outputs.ecs_cluster_arn
       SUBNET_IDS = join(",", data.terraform_remote_state.vpc.outputs.private_subnet_ids)
       SECURITY_GROUP = data.terraform_remote_state.platform_infrastructure.outputs.upload_v2_fargate_security_group_id
+      REGION = var.aws_region
+      RDS_PROXY_ENDPOINT = data.terraform_remote_state.pennsieve_postgres.outputs.rds_proxy_endpoint,
     }
   }
 }
