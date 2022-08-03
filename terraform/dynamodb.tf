@@ -67,12 +67,30 @@ resource "aws_dynamodb_table" "manifest_files_dynamo_table" {
     type = "S"
   }
 
+  attribute {
+    name = "FilePath"
+    type = "S"
+  }
+
   // Used to query files to be moved to final destination
   global_secondary_index {
     name               = "StatusIndex"
     hash_key           = "Status"
     projection_type    = "INCLUDE"
     non_key_attributes = ["ManifestId", "UploadId"]
+    read_capacity      = 0
+    write_capacity     = 0
+  }
+
+  // Used to query packageIDs for files that should share package
+  global_secondary_index {
+    name               = "PathIndex"
+    hash_key           = "ManifestId"
+    range_key          = "FilePath"
+    projection_type    = "INCLUDE"
+    non_key_attributes = ["FileName", "UploadId", "MergePackageId"]
+    read_capacity      = 0
+    write_capacity     = 0
   }
 
   point_in_time_recovery {

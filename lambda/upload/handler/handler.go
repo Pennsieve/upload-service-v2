@@ -41,8 +41,6 @@ func init() {
 	}
 }
 
-//
-
 // Handler implements the function that is called when new SQS Events arrive.
 func Handler(ctx context.Context, sqsEvent events.SQSEvent) error {
 
@@ -95,11 +93,13 @@ func Handler(ctx context.Context, sqsEvent events.SQSEvent) error {
 		var fileDTOs []manifestFile.FileDTO
 		for _, u := range uploadFilesForManifest {
 			f := manifestFile.FileDTO{
-				UploadID:   u.UploadId,
-				S3Key:      u.S3Key,
-				TargetPath: u.Path,
-				TargetName: u.Name,
-				Status:     manifestFile.Imported,
+				UploadID:       u.UploadId,
+				S3Key:          u.S3Key,
+				TargetPath:     u.Path,
+				TargetName:     u.Name,
+				Status:         manifestFile.Imported,
+				MergePackageId: u.MergePackageId,
+				FileType:       u.FileType.String(),
 			}
 			fileDTOs = append(fileDTOs, f)
 		}
@@ -109,7 +109,6 @@ func Handler(ctx context.Context, sqsEvent events.SQSEvent) error {
 		// case that we need to append index (on name conflict).
 		setStatus := manifestFile.Imported
 		manifestSession.AddFiles(manifestId, fileDTOs, &setStatus)
-
 	}
 
 	return nil
@@ -130,8 +129,6 @@ func GetUploadEntries(fileEvents []events.SQSMessage) ([]uploadEntry, error) {
 			log.Println("Unable to parse s3-key: ", err)
 			continue
 		}
-
-		fmt.Println("getUploadEntries: uploadID ", entry.uploadId)
 
 		entries = append(entries, *entry)
 
@@ -214,15 +211,17 @@ func GetUploadFiles(entries []uploadEntry) ([]uploadFile.UploadFile, error) {
 			}
 
 			verifiedFiles = append(verifiedFiles, uploadEntry{
-				manifestId: fileEntry.ManifestId,
-				uploadId:   fileEntry.UploadId,
-				s3Bucket:   inputUploadEntry.s3Bucket,
-				s3Key:      inputUploadEntry.s3Key,
-				size:       inputUploadEntry.size,
-				isStandard: true,
-				path:       fileEntry.FilePath,
-				name:       fileEntry.FileName,
-				extension:  pathParts[r.SubexpIndex("Extension")],
+				manifestId:     fileEntry.ManifestId,
+				uploadId:       fileEntry.UploadId,
+				s3Bucket:       inputUploadEntry.s3Bucket,
+				s3Key:          inputUploadEntry.s3Key,
+				size:           inputUploadEntry.size,
+				isStandard:     true,
+				path:           fileEntry.FilePath,
+				name:           fileEntry.FileName,
+				extension:      pathParts[r.SubexpIndex("Extension")],
+				mergePackageId: fileEntry.MergePackageId,
+				fileType:       fileEntry.FileType,
 			})
 
 			fmt.Println("GetUploadFiles: uploadID ", fileEntry.UploadId)
@@ -236,32 +235,34 @@ func GetUploadFiles(entries []uploadEntry) ([]uploadFile.UploadFile, error) {
 	var uploadFiles []uploadFile.UploadFile
 	for _, f := range verifiedFiles {
 
-		// Match uploadEntry
-		fType, pInfo := getFileInfo(f.extension)
+		// Get FileInfo from fileType string in verified file.
+		fType, pInfo := getFileInfo(f.fileType)
+
 		file := uploadFile.UploadFile{
-			ManifestId: f.manifestId,
-			UploadId:   f.uploadId,
-			FileType:   fType,
-			S3Bucket:   f.s3Bucket,
-			S3Key:      f.s3Key,
-			Path:       f.path,
-			Name:       f.name,
-			Extension:  f.extension,
-			Type:       pInfo.PackageType,
-			SubType:    pInfo.PackageSubType,
-			Icon:       pInfo.Icon,
-			Size:       f.size,
-			ETag:       f.eTag,
+			ManifestId:     f.manifestId,
+			UploadId:       f.uploadId,
+			FileType:       fType,
+			S3Bucket:       f.s3Bucket,
+			S3Key:          f.s3Key,
+			Path:           f.path,
+			Name:           f.name,
+			Extension:      f.extension,
+			Type:           pInfo.PackageType,
+			SubType:        pInfo.PackageSubType,
+			Icon:           pInfo.Icon,
+			Size:           f.size,
+			ETag:           f.eTag,
+			MergePackageId: f.mergePackageId,
 		}
 
-		fmt.Println(file)
+		log.Println("uploadFile: ", file.Name, "merge: ", file.MergePackageId)
 
 		uploadFiles = append(uploadFiles, file)
 	}
 
 	return uploadFiles, nil
 
-	// 4. TODO handle (delete) non-compliant uploads.
+	// TODO handle (delete) non-compliant uploads.
 	// Currently non-compliant uploads are ignored and will remain in uploads folder.
 
 }
@@ -337,24 +338,10 @@ func uploadEntryFromS3Event(event *events.S3Event) (*uploadEntry, error) {
 
 }
 
-// getFileInfo returns a PackageTypeInfo for a particular extension.
-func getFileInfo(extension string) (fileType.Type, packageType.Info) {
+// getFileInfo returns a FileType and PackageType.Info object based on filetype string.
+func getFileInfo(fileTypeStr string) (fileType.Type, packageType.Info) {
 
-	// Check full extension
-	fType, exists := fileType.ExtensionToTypeDict[extension]
-	if !exists {
-		fType = fileType.GenericData
-
-		// Check last extension if unknown as extension can contain multiple '.'.
-		r := regexp.MustCompile(`(?P<Extension>[^.]*)$`)
-		pathParts := r.FindStringSubmatch(extension)
-
-		fType, exists = fileType.ExtensionToTypeDict[pathParts[r.SubexpIndex("Extension")]]
-		if !exists {
-			fType = fileType.GenericData
-		}
-
-	}
+	fType := fileType.Dict[fileTypeStr]
 
 	pType, exists := packageType.FileTypeToInfoDict[fType]
 	if !exists {

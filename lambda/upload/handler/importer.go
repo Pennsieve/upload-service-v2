@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/sns"
@@ -17,23 +18,26 @@ import (
 	"github.com/pennsieve/pennsieve-go-api/models/uploadFolder"
 	"github.com/pennsieve/pennsieve-go-api/pkg/core"
 	"log"
+	"regexp"
 	"sort"
 )
 
 type uploadEntry struct {
-	manifestId string
-	uploadId   string
-	s3Bucket   string
-	s3Key      string
-	isStandard bool
-	path       string
-	name       string
-	extension  string
-	eTag       string
-	size       int64
+	manifestId     string
+	uploadId       string
+	s3Bucket       string
+	s3Key          string
+	isStandard     bool
+	path           string
+	name           string
+	extension      string
+	eTag           string
+	size           int64
+	mergePackageId string
+	fileType       string
 }
 
-// UploadSession contains the information that is shared based on the upload session ID
+// UploadSession contains the information that is shared based on the manifest ID
 type UploadSession struct {
 	organizationId  int
 	datasetId       int
@@ -71,8 +75,9 @@ func (*UploadSession) CreateUploadSession(manifest *dbTable.ManifestTable) (*Upl
 	return &s, nil
 }
 
-// ImportFiles is the wrapper function to import files from a single upload-session.
-// A single upload session implies that all files belong to the same organization, dataset and owner.
+// ImportFiles is the wrapper function to import files from a single manifest.
+// A single manifest implies that all files belong to the same organization, dataset and owner.
+// This function is called in response to an upload handler event.
 func (s *UploadSession) ImportFiles(files []uploadFile.UploadFile, manifest *dbTable.ManifestTable) error {
 
 	// Sort files by the length of their path
@@ -106,26 +111,29 @@ func (s *UploadSession) ImportFiles(files []uploadFile.UploadFile, manifest *dbT
 	}
 
 	// 4. Associate Files with Packages
-	fileMap := map[string]uploadFile.UploadFile{}
-	for _, f := range files {
-		fileMap[f.UploadId] = f
+	packageMap := map[string]dbTable.Package{}
+	for _, p := range packages {
+		packageMap[p.NodeId] = p
 	}
 
 	var allFileParams []dbTable.FileParams
-	for i, _ := range packages {
-
-		curFile := fileMap[packages[i].ImportId.String]
+	for i, f := range files {
+		packageNodeId := fmt.Sprintf("N:package:%s", f.UploadId)
+		if len(files[i].MergePackageId) > 0 {
+			log.Println("USING MERGED PACKAGE")
+			packageNodeId = fmt.Sprintf("N:package:%s", files[i].MergePackageId)
+		}
 
 		file := dbTable.FileParams{
-			PackageId:  int(packages[i].Id),
-			Name:       packages[i].Name,
-			FileType:   curFile.FileType,
-			S3Bucket:   curFile.S3Bucket,
-			S3Key:      curFile.S3Key,
+			PackageId:  int(packageMap[packageNodeId].Id),
+			Name:       files[i].Name,
+			FileType:   files[i].FileType,
+			S3Bucket:   files[i].S3Bucket,
+			S3Key:      files[i].S3Key,
 			ObjectType: objectType.Source,
-			Size:       curFile.Size,
-			CheckSum:   curFile.ETag,
-			UUID:       uuid.MustParse(curFile.UploadId),
+			Size:       files[i].Size,
+			CheckSum:   files[i].ETag,
+			UUID:       uuid.MustParse(files[i].UploadId),
 		}
 
 		allFileParams = append(allFileParams, file)
@@ -191,8 +199,6 @@ func sendSNSMessages(snsEntries []types.PublishBatchRequestEntry) {
 // It updates UploadFolders with real folder ID for folders that already exist.
 // Assumes map keys are absolute paths in the dataset
 func (s *UploadSession) GetCreateUploadFolders(folders uploadFolder.UploadFolderMap) dbTable.PackageMap {
-
-	// Create map to map parentID to array of children
 
 	// Get Root Folders
 	p := dbTable.Package{}
@@ -266,8 +272,18 @@ func (s *UploadSession) GetCreateUploadFolders(folders uploadFolder.UploadFolder
 func (s *UploadSession) GetPackageParams(uploadFiles []uploadFile.UploadFile, pathToFolderMap dbTable.PackageMap) ([]dbTable.PackageParams, error) {
 	var pkgParams []dbTable.PackageParams
 
+	// First create a map of params. As there can be upload-files that should be mapped to the same package,
+	// we want to ensure we are not creating duplicate packages (as this will cause an error when inserting in db).
+	// Then we turn map into array and return the array.
+	pkgParamsMap := map[string]dbTable.PackageParams{}
 	for _, file := range uploadFiles {
-		packageID := fmt.Sprintf("N:package:%s", uuid.New().String())
+
+		// Create the packageID based on the uploadID or the mergePackageID if it exists
+		packageId, packageName, err := parsePackageId(file)
+		if err != nil {
+			log.Println(err.Error())
+			continue
+		}
 
 		parentId := int64(-1)
 		if file.Path != "" {
@@ -298,10 +314,10 @@ func (s *UploadSession) GetPackageParams(uploadFiles []uploadFile.UploadFile, pa
 		})
 
 		pkgParam := dbTable.PackageParams{
-			Name:         file.Name,
+			Name:         packageName,
 			PackageType:  file.Type,
 			PackageState: packageState.Uploaded,
-			NodeId:       packageID,
+			NodeId:       packageId,
 			ParentId:     parentId,
 			DatasetId:    s.datasetId,
 			OwnerId:      s.ownerId,
@@ -310,7 +326,13 @@ func (s *UploadSession) GetPackageParams(uploadFiles []uploadFile.UploadFile, pa
 			Attributes:   attributes,
 		}
 
-		pkgParams = append(pkgParams, pkgParam)
+		pkgParamsMap[packageId] = pkgParam
+
+	}
+
+	// Turn map into array --> ensure no duplicate packages.
+	for i, _ := range pkgParamsMap {
+		pkgParams = append(pkgParams, pkgParamsMap[i])
 	}
 
 	return pkgParams, nil
@@ -362,4 +384,25 @@ func (s *UploadSession) UpdateStorage(packages []dbTable.Package, manifest *dbTa
 
 	return nil
 
+}
+
+// parsePackageId returns a packageId and name based on upload-file
+func parsePackageId(file uploadFile.UploadFile) (string, string, error) {
+	packageId := fmt.Sprintf("N:package:%s", file.UploadId)
+	packageName := file.Name
+	if len(file.MergePackageId) > 0 {
+		packageId = fmt.Sprintf("N:package:%s", file.MergePackageId)
+
+		// Set packageName to name without extension
+		r := regexp.MustCompile(`(?P<FileName>[^\.]*)?\.?(?P<Extension>.*)`)
+		pathParts := r.FindStringSubmatch(file.Name)
+		if pathParts == nil {
+			log.Println("Unable to parse filename:", file.Name)
+			return "", "", errors.New(fmt.Sprintf("Unable to parse filename: %s", file.Name))
+		}
+
+		packageName = pathParts[r.SubexpIndex("FileName")]
+	}
+
+	return packageId, packageName, nil
 }

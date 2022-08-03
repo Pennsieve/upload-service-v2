@@ -15,6 +15,7 @@ import (
 	manifestPkg "github.com/pennsieve/pennsieve-go-api/pkg/manifest"
 	"github.com/valyala/fastjson"
 	"log"
+	"os"
 )
 
 // DynamoDBDescribeTableAPI defines the interface for the DescribeTable function.
@@ -51,7 +52,7 @@ func handleManifestRoute(request events.APIGatewayV2HTTPRequest, claims *Claims)
 			// Create an Amazon DynamoDB client.
 			client := dynamodb.NewFromConfig(cfg)
 
-			table := aws.String("dev-manifest-files-table-use1")
+			table := aws.String(os.Getenv("MANIFEST_FILE_TABLE"))
 
 			// Build the input parameters for the request.
 			input := &dynamodb.DescribeTableInput{
@@ -152,6 +153,9 @@ func handleManifestRoute(request events.APIGatewayV2HTTPRequest, claims *Claims)
 			}
 
 		}
+
+		// 	MERGE PACKAGES FOR SPECIFIC FILETYPES
+		s.PackageTypeResolver(res.Files)
 
 		// ADDING FILES TO MANIFEST
 		addFilesResponse, err := s.AddFiles(activeManifest.ManifestId, res.Files, nil)
@@ -319,7 +323,7 @@ func handleManifestIdRemoveRoute(request events.APIGatewayV2HTTPRequest, claims 
 	apiResponse := events.APIGatewayV2HTTPResponse{}
 
 	switch request.RequestContext.HTTP.Method {
-	case "GET":
+	case "DELETE":
 		// Obtain the QueryStringParameter
 		name := request.QueryStringParameters["name"]
 
@@ -367,16 +371,6 @@ func handleManifestIdRemoveRoute(request events.APIGatewayV2HTTPRequest, claims 
 				IsBase64Encoded:   false,
 				Cookies:           nil,
 			}
-		}
-	case "POST":
-		//validates json and returns error if not working
-		err := fastjson.Validate(request.Body)
-
-		if err != nil {
-			body := "Error: Invalid JSON payload ||| " + fmt.Sprint(err) + " Body Obtained" + "||||" + request.Body
-			apiResponse = events.APIGatewayV2HTTPResponse{Body: body, StatusCode: 500}
-		} else {
-			apiResponse = events.APIGatewayV2HTTPResponse{Body: request.Body, StatusCode: 200}
 		}
 	}
 
