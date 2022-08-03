@@ -149,7 +149,7 @@ func (s *UploadSession) ImportFiles(files []uploadFile.UploadFile, manifest *dbT
 	s.PublishToSNS(returnedFiles)
 
 	// Update storage for packages, datasets, and org
-	s.UpdateStorage(packages, manifest)
+	s.UpdateStorage(allFileParams, packages, manifest)
 
 	return nil
 }
@@ -321,12 +321,18 @@ func (s *UploadSession) GetPackageParams(uploadFiles []uploadFile.UploadFile, pa
 			ParentId:     parentId,
 			DatasetId:    s.datasetId,
 			OwnerId:      s.ownerId,
-			Size:         file.Size,
+			Size:         0,
 			ImportId:     uploadId,
 			Attributes:   attributes,
 		}
 
 		pkgParamsMap[packageId] = pkgParam
+		//// If entry already exists --> sum size, else assign value
+		//if val, ok := pkgParamsMap[packageId]; ok {
+		//	val.Size += pkgParam.Size
+		//} else {
+		//	pkgParamsMap[packageId] = pkgParam
+		//}
 
 	}
 
@@ -340,7 +346,12 @@ func (s *UploadSession) GetPackageParams(uploadFiles []uploadFile.UploadFile, pa
 }
 
 // UpdateStorage updates storage in packages, dataset and organization for uploaded package
-func (s *UploadSession) UpdateStorage(packages []dbTable.Package, manifest *dbTable.ManifestTable) error {
+func (s *UploadSession) UpdateStorage(files []dbTable.FileParams, packages []dbTable.Package, manifest *dbTable.ManifestTable) error {
+
+	packageMap := map[int]dbTable.Package{}
+	for _, p := range packages {
+		packageMap[int(p.Id)] = p
+	}
 
 	dbOrg, err := core.ConnectRDS()
 	if err != nil {
@@ -350,17 +361,18 @@ func (s *UploadSession) UpdateStorage(packages []dbTable.Package, manifest *dbTa
 	defer dbOrg.Close()
 
 	// Update all packageSize
-	for _, pkg := range packages {
+	for _, f := range files {
 
 		var p dbTable.PackageStorage
-		err := p.Increment(s.db, pkg.Id, pkg.Size.Int64)
+		err := p.Increment(s.db, int64(f.PackageId), f.Size)
 		if err != nil {
 			log.Println("Error incrementing package")
 			return err
 		}
 
+		pkg := packageMap[f.PackageId]
 		if pkg.ParentId.Valid {
-			p.IncrementAncestors(s.db, pkg.ParentId.Int64, pkg.Size.Int64)
+			p.IncrementAncestors(s.db, pkg.ParentId.Int64, f.Size)
 			if err != nil {
 				log.Println("Error incrementing package ancestors")
 				return err
@@ -368,14 +380,14 @@ func (s *UploadSession) UpdateStorage(packages []dbTable.Package, manifest *dbTa
 		}
 
 		var d dbTable.DatasetStorage
-		err = d.Increment(s.db, manifest.DatasetId, pkg.Size.Int64)
+		err = d.Increment(s.db, manifest.DatasetId, f.Size)
 		if err != nil {
 			log.Println("Error incrementing dataset.")
 			return err
 		}
 
 		var o dbTable.OrganizationStorage
-		err = o.Increment(dbOrg, manifest.OrganizationId, pkg.Size.Int64)
+		err = o.Increment(dbOrg, manifest.OrganizationId, f.Size)
 		if err != nil {
 			log.Println("Error incrementing organization")
 			return err
