@@ -16,6 +16,7 @@ import (
 	"github.com/valyala/fastjson"
 	"log"
 	"os"
+	"time"
 )
 
 // DynamoDBDescribeTableAPI defines the interface for the DescribeTable function.
@@ -31,151 +32,192 @@ func GetTableInfo(c context.Context, api DynamoDBDescribeTableAPI, input *dynamo
 	return api.DescribeTable(c, input)
 }
 
-func handleManifestRoute(request events.APIGatewayV2HTTPRequest, claims *Claims) (*events.APIGatewayV2HTTPResponse, error) {
+func getManifestRoute(request events.APIGatewayV2HTTPRequest, claims *Claims) (*events.APIGatewayV2HTTPResponse, error) {
 
 	apiResponse := events.APIGatewayV2HTTPResponse{}
 
-	switch request.RequestContext.HTTP.Method {
-	// Get a list of active manifest for user.
-	case "GET":
+	cfg, err := config.LoadDefaultConfig(context.Background())
+	if err != nil {
+		panic("unable to load SDK config, " + err.Error())
+	}
 
-		// Obtain the QueryStringParameter
-		name := request.QueryStringParameters["name"]
+	// Create an Amazon DynamoDB client.
+	client := dynamodb.NewFromConfig(cfg)
+	table := os.Getenv("MANIFEST_TABLE")
 
-		if name != "" {
+	manifests, err := dbTable.GetManifestsForDataset(client, table, claims.datasetClaim.NodeId)
+	if err != nil {
+		message := "Error: Unable to get manifests for dataset: " + claims.datasetClaim.NodeId + " ||| " + fmt.Sprint(err)
+		apiResponse = events.APIGatewayV2HTTPResponse{
+			Body: gateway.CreateErrorMessage(message, 500), StatusCode: 500}
+		return &apiResponse, nil
+	}
 
-			cfg, err := config.LoadDefaultConfig(context.Background())
-			if err != nil {
-				panic("unable to load SDK config, " + err.Error())
-			}
+	// Build the input parameters for the request.
+	var manifestDTOs []manifest.ManifestDTO
+	for _, m := range manifests {
+		manifestDTOs = append(manifestDTOs, manifest.ManifestDTO{
+			Id:            m.ManifestId,
+			DatasetNodeId: m.DatasetNodeId,
+			DatasetId:     m.DatasetId,
+			Status:        m.Status,
+			User:          m.UserId,
+			DateCreated:   m.DateCreated,
+		})
+	}
 
-			// Create an Amazon DynamoDB client.
-			client := dynamodb.NewFromConfig(cfg)
+	responseBody := manifest.GetResponse{
+		Manifests: manifestDTOs,
+	}
 
-			table := aws.String(os.Getenv("MANIFEST_FILE_TABLE"))
+	headers := map[string]string{
+		"Access-Control-Allow-Headers": "Content-Type, Authorization",
+		"Access-Control-Allow-Origin":  "*",
+		"Access-Control-Allow-Methods": "OPTIONS,POST,GET",
+	}
 
-			// Build the input parameters for the request.
-			input := &dynamodb.DescribeTableInput{
-				TableName: table,
-			}
+	jsonBody, _ := json.Marshal(responseBody)
+	apiResponse = events.APIGatewayV2HTTPResponse{Body: string(jsonBody), StatusCode: 200, Headers: headers}
 
-			resp, err := GetTableInfo(context.TODO(), client, input)
-			if err != nil {
-				panic("failed to describe table, " + err.Error())
-			}
+	return &apiResponse, nil
+}
 
-			fmt.Println("Info about " + *table + ":")
-			fmt.Println("  #items:     ", resp.Table.ItemCount)
-			fmt.Println("  Size (bytes)", resp.Table.TableSizeBytes)
-			fmt.Println("  ClientStatus:     ", string(resp.Table.TableStatus))
+func postManifestRoute(request events.APIGatewayV2HTTPRequest, claims *Claims) (*events.APIGatewayV2HTTPResponse, error) {
+	fmt.Println("Handling POST /manifest request")
 
-			apiResponse = events.APIGatewayV2HTTPResponse{
-				StatusCode:        200,
-				Headers:           nil,
-				MultiValueHeaders: nil,
-				Body:              "Hey " + name + " welcome! ",
-				IsBase64Encoded:   false,
-				Cookies:           nil,
-			}
-		} else {
-			apiResponse = events.APIGatewayV2HTTPResponse{
-				StatusCode:        500,
-				Headers:           nil,
-				MultiValueHeaders: nil,
-				Body:              "Error: Query Parameter name missing",
-				IsBase64Encoded:   false,
-				Cookies:           nil,
-			}
+	apiResponse := events.APIGatewayV2HTTPResponse{}
+
+	// PARSING INPUTS
+	//validates json and returns error if not working
+	err := fastjson.Validate(request.Body)
+	if err != nil {
+		message := "Error: Invalid JSON payload ||| " + fmt.Sprint(err) + " Body Obtained" + "||||" + request.Body
+		apiResponse = events.APIGatewayV2HTTPResponse{
+			Body: gateway.CreateErrorMessage(message, 500), StatusCode: 500}
+		return &apiResponse, nil
+	}
+
+	// Unmarshal JSON into Manifest DTOs
+	bytes := []byte(request.Body)
+	var res manifest.DTO
+	json.Unmarshal(bytes, &res)
+
+	fmt.Println("SessionID: ", res.ID, " NrFiles: ", len(res.Files))
+
+	s := manifestPkg.ManifestSession{
+		FileTableName: manifestFileTableName,
+		TableName:     manifestTableName,
+		Client:        client,
+	}
+
+	// ADDING MANIFEST IF NEEDED
+	var activeManifest *dbTable.ManifestTable
+	if res.ID == "" {
+		log.Printf("Creating new manifest")
+		// Create new manifest
+		activeManifest = &dbTable.ManifestTable{
+			ManifestId:     uuid.New().String(),
+			DatasetId:      claims.datasetClaim.IntId,
+			DatasetNodeId:  claims.datasetClaim.NodeId,
+			OrganizationId: claims.organizationId,
+			UserId:         claims.userId,
+			Status:         manifest.Initiated.String(),
+			DateCreated:    time.Now().Unix(),
 		}
-		fmt.Println("Handling GET /manifest request")
 
-	// Sync files in manifest
-	case "POST":
-		fmt.Println("Handling POST /manifest request")
+		s.CreateManifest(*activeManifest)
 
-		// PARSING INPUTS
-		//validates json and returns error if not working
-		err := fastjson.Validate(request.Body)
+	} else {
+		// Check that manifest exists.
+		log.Printf("Has existing manifest")
+
+		cfg, err := config.LoadDefaultConfig(context.Background())
 		if err != nil {
-			message := "Error: Invalid JSON payload ||| " + fmt.Sprint(err) + " Body Obtained" + "||||" + request.Body
+			return nil, fmt.Errorf("LoadDefaultConfig: %v\n", err)
+		}
+
+		// Create an Amazon DynamoDB client.
+		client := dynamodb.NewFromConfig(cfg)
+
+		activeManifest, err = dbTable.GetFromManifest(client, manifestTableName, res.ID)
+		if err != nil {
+			message := "Error: Invalid ManifestID |||| Manifest ID: " + res.ID
 			apiResponse = events.APIGatewayV2HTTPResponse{
 				Body: gateway.CreateErrorMessage(message, 500), StatusCode: 500}
 			return &apiResponse, nil
 		}
 
-		// Unmarshal JSON into Manifest DTOs
-		bytes := []byte(request.Body)
-		var res manifest.DTO
-		json.Unmarshal(bytes, &res)
-
-		fmt.Println("SessionID: ", res.ID, " NrFiles: ", len(res.Files))
-
-		s := manifestPkg.ManifestSession{
-			FileTableName: manifestFileTableName,
-			TableName:     manifestTableName,
-			Client:        client,
-		}
-
-		// ADDING MANIFEST IF NEEDED
-		var activeManifest *dbTable.ManifestTable
-		if res.ID == "" {
-			log.Printf("Creating new manifest")
-			// Create new manifest
-			activeManifest = &dbTable.ManifestTable{
-				ManifestId:     uuid.New().String(),
-				DatasetId:      claims.datasetClaim.IntId,
-				DatasetNodeId:  claims.datasetClaim.NodeId,
-				OrganizationId: claims.organizationId,
-				UserId:         claims.userId,
-				Status:         manifest.Initiated.String(),
-			}
-
-			s.CreateManifest(*activeManifest)
-
-		} else {
-			// Check that manifest exists.
-			log.Printf("Has existing manifest")
-
-			cfg, err := config.LoadDefaultConfig(context.Background())
-			if err != nil {
-				return nil, fmt.Errorf("LoadDefaultConfig: %v\n", err)
-			}
-
-			// Create an Amazon DynamoDB client.
-			client := dynamodb.NewFromConfig(cfg)
-
-			activeManifest, err = dbTable.GetFromManifest(client, manifestTableName, res.ID)
-			if err != nil {
-				message := "Error: Invalid ManifestID |||| Manifest ID: " + res.ID
-				apiResponse = events.APIGatewayV2HTTPResponse{
-					Body: gateway.CreateErrorMessage(message, 500), StatusCode: 500}
-				return &apiResponse, nil
-			}
-
-		}
-
-		// 	MERGE PACKAGES FOR SPECIFIC FILETYPES
-		s.PackageTypeResolver(res.Files)
-
-		// ADDING FILES TO MANIFEST
-		addFilesResponse, err := s.AddFiles(activeManifest.ManifestId, res.Files, nil)
-
-		// CREATING API RESPONSE
-		responseBody := manifest.PostResponse{
-			ManifestNodeId: activeManifest.ManifestId,
-			UpdatedFiles:   addFilesResponse.FileStatus,
-			NrFilesUpdated: addFilesResponse.NrFilesUpdated,
-			NrFilesRemoved: addFilesResponse.NrFilesRemoved,
-			FailedFiles:    addFilesResponse.FailedFiles,
-		}
-
-		jsonBody, _ := json.Marshal(responseBody)
-		apiResponse = events.APIGatewayV2HTTPResponse{Body: string(jsonBody), StatusCode: 200}
-
 	}
 
-	return &apiResponse, nil
+	// 	MERGE PACKAGES FOR SPECIFIC FILETYPES
+	s.PackageTypeResolver(res.Files)
 
+	// ADDING FILES TO MANIFEST
+	addFilesResponse, err := s.AddFiles(activeManifest.ManifestId, res.Files, nil)
+
+	// CREATING API RESPONSE
+	responseBody := manifest.PostResponse{
+		ManifestNodeId: activeManifest.ManifestId,
+		UpdatedFiles:   addFilesResponse.FileStatus,
+		NrFilesUpdated: addFilesResponse.NrFilesUpdated,
+		NrFilesRemoved: addFilesResponse.NrFilesRemoved,
+		FailedFiles:    addFilesResponse.FailedFiles,
+	}
+
+	jsonBody, _ := json.Marshal(responseBody)
+	apiResponse = events.APIGatewayV2HTTPResponse{Body: string(jsonBody), StatusCode: 200}
+
+	return &apiResponse, nil
+}
+
+func getManifestFilesRoute(request events.APIGatewayV2HTTPRequest, claims *Claims) (*events.APIGatewayV2HTTPResponse, error) {
+
+	apiResponse := events.APIGatewayV2HTTPResponse{}
+
+	cfg, err := config.LoadDefaultConfig(context.Background())
+	if err != nil {
+		panic("unable to load SDK config, " + err.Error())
+	}
+
+	// Create an Amazon DynamoDB client.
+	client := dynamodb.NewFromConfig(cfg)
+	table := os.Getenv("MANIFEST_TABLE")
+
+	manifests, err := dbTable.GetManifestsForDataset(client, table, claims.datasetClaim.NodeId)
+	if err != nil {
+		message := "Error: Unable to get manifests for dataset: " + claims.datasetClaim.NodeId + " ||| " + fmt.Sprint(err)
+		apiResponse = events.APIGatewayV2HTTPResponse{
+			Body: gateway.CreateErrorMessage(message, 500), StatusCode: 500}
+		return &apiResponse, nil
+	}
+
+	// Build the input parameters for the request.
+	var manifestDTOs []manifest.ManifestDTO
+	for _, m := range manifests {
+		manifestDTOs = append(manifestDTOs, manifest.ManifestDTO{
+			Id:            m.ManifestId,
+			DatasetNodeId: m.DatasetNodeId,
+			DatasetId:     m.DatasetId,
+			Status:        m.Status,
+			User:          m.UserId,
+			DateCreated:   m.DateCreated,
+		})
+	}
+
+	responseBody := manifest.GetResponse{
+		Manifests: manifestDTOs,
+	}
+
+	headers := map[string]string{
+		"Access-Control-Allow-Headers": "Content-Type, Authorization",
+		"Access-Control-Allow-Origin":  "*",
+		"Access-Control-Allow-Methods": "OPTIONS,POST,GET",
+	}
+
+	jsonBody, _ := json.Marshal(responseBody)
+	apiResponse = events.APIGatewayV2HTTPResponse{Body: string(jsonBody), StatusCode: 200, Headers: headers}
+
+	return &apiResponse, nil
 }
 
 func handleManifestIdRoute(request events.APIGatewayV2HTTPRequest, claims *Claims) (*events.APIGatewayV2HTTPResponse, error) {

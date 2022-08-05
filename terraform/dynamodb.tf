@@ -23,8 +23,7 @@ resource "aws_dynamodb_table" "manifest_dynamo_table" {
     name               = "DatasetManifestIndex"
     hash_key           = "DatasetNodeId"
     range_key          = "UserId"
-    projection_type    = "INCLUDE"
-    non_key_attributes = ["ManifestId"]
+    projection_type    = "ALL"
   }
 
   point_in_time_recovery {

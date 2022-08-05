@@ -54,13 +54,23 @@ func ManifestHandler(request events.APIGatewayV2HTTPRequest) (*events.APIGateway
 	authorized := false
 	switch routeKey {
 	case "/manifest":
-		if authorized = hasRole(*claims, permissions.CreateDeleteFiles); authorized {
-			apiResponse, err = handleManifestRoute(request, claims)
+		switch request.RequestContext.HTTP.Method {
+		case "GET":
+			if authorized = hasRole(*claims, permissions.ViewFiles); authorized {
+				apiResponse, err = getManifestRoute(request, claims)
+			}
+		case "POST":
+			if authorized = hasRole(*claims, permissions.CreateDeleteFiles); authorized {
+				apiResponse, err = postManifestRoute(request, claims)
+			}
 		}
 	case "/manifest/{id}":
-		//if authorized = checkOwner(*claims, manifestId); authorized {
-		//	apiResponse, err = handleManifestIdRoute(request, claims)
-		//}
+		switch request.RequestContext.HTTP.Method {
+		case "GET":
+			if authorized = hasRole(*claims, permissions.ViewFiles); authorized {
+				apiResponse, err = getManifestFilesRoute(request, claims)
+			}
+		}
 	case "/manifest/{id}/remove":
 		//if authorized = checkOwner(*claims, manifestId); authorized {
 		//	apiResponse, err = handleManifestIdRemoveRoute(request, claims)
