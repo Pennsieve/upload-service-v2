@@ -75,8 +75,9 @@ resource "aws_dynamodb_table" "manifest_files_dynamo_table" {
   global_secondary_index {
     name               = "StatusIndex"
     hash_key           = "Status"
+    range_key          = "ManifestId"
     projection_type    = "INCLUDE"
-    non_key_attributes = ["ManifestId", "UploadId"]
+    non_key_attributes = ["ManifestId", "UploadId", "FileName", "FilePath", "FileType"]
     read_capacity      = 0
     write_capacity     = 0
   }

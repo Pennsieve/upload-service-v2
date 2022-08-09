@@ -2,7 +2,7 @@ module github.com/pennsieve/pennsieve-upload-service-v2/upload-move-files
 
 go 1.18
 
-//replace github.com/pennsieve/pennsieve-go-api => ../../../pennsieve-go-api
+replace github.com/pennsieve/pennsieve-go-api => ../../../pennsieve-go-api
 
 require (
 	github.com/aws/aws-sdk-go-v2 v1.16.6

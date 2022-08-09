@@ -2,20 +2,25 @@ package handler
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/google/uuid"
 	"github.com/pennsieve/pennsieve-go-api/models/dbTable"
 	"github.com/pennsieve/pennsieve-go-api/models/gateway"
 	"github.com/pennsieve/pennsieve-go-api/models/manifest"
+	"github.com/pennsieve/pennsieve-go-api/models/manifest/manifestFile"
 	manifestPkg "github.com/pennsieve/pennsieve-go-api/pkg/manifest"
 	"github.com/valyala/fastjson"
 	"log"
 	"os"
+	"strconv"
 	"time"
 )
 
@@ -32,6 +37,7 @@ func GetTableInfo(c context.Context, api DynamoDBDescribeTableAPI, input *dynamo
 	return api.DescribeTable(c, input)
 }
 
+// getManifestRoute returns a list of manifests for a given dataset
 func getManifestRoute(request events.APIGatewayV2HTTPRequest, claims *Claims) (*events.APIGatewayV2HTTPResponse, error) {
 
 	apiResponse := events.APIGatewayV2HTTPResponse{}
@@ -82,6 +88,7 @@ func getManifestRoute(request events.APIGatewayV2HTTPRequest, claims *Claims) (*
 	return &apiResponse, nil
 }
 
+// postManifestRoute synchronizes manifests with a provided ID
 func postManifestRoute(request events.APIGatewayV2HTTPRequest, claims *Claims) (*events.APIGatewayV2HTTPResponse, error) {
 	fmt.Println("Handling POST /manifest request")
 
@@ -170,9 +177,11 @@ func postManifestRoute(request events.APIGatewayV2HTTPRequest, claims *Claims) (
 	return &apiResponse, nil
 }
 
+// getManifestFilesRoute returns a paginated list of files for a manifest with a provided ID
 func getManifestFilesRoute(request events.APIGatewayV2HTTPRequest, claims *Claims) (*events.APIGatewayV2HTTPResponse, error) {
 
 	apiResponse := events.APIGatewayV2HTTPResponse{}
+	manifestId := request.PathParameters["id"]
 
 	cfg, err := config.LoadDefaultConfig(context.Background())
 	if err != nil {
@@ -181,41 +190,95 @@ func getManifestFilesRoute(request events.APIGatewayV2HTTPRequest, claims *Claim
 
 	// Create an Amazon DynamoDB client.
 	client := dynamodb.NewFromConfig(cfg)
-	table := os.Getenv("MANIFEST_TABLE")
 
-	manifests, err := dbTable.GetManifestsForDataset(client, table, claims.datasetClaim.NodeId)
+	// Check that DatasetID in claims matches DatasetID for manifestID
+	// We tried to include this in the authorizer but this would need some more thought as the Gateway authorizer caches the response.
+	table := os.Getenv("MANIFEST_TABLE")
+	manifest, err := dbTable.GetFromManifest(client, table, manifestId)
 	if err != nil {
-		message := "Error: Unable to get manifests for dataset: " + claims.datasetClaim.NodeId + " ||| " + fmt.Sprint(err)
+		message := "Error: Unable to get Manifest: " + manifestId + " ||| " + fmt.Sprint(err)
+		apiResponse = events.APIGatewayV2HTTPResponse{
+			Body: gateway.CreateErrorMessage(message, 500), StatusCode: 500}
+		return &apiResponse, nil
+	}
+
+	if manifest.DatasetNodeId != claims.datasetClaim.NodeId {
+		message := "Error: Manifest does not belong to the provided Dataset: "
+		apiResponse = events.APIGatewayV2HTTPResponse{
+			Body: gateway.CreateErrorMessage(message, 401), StatusCode: 401}
+		return &apiResponse, nil
+	}
+
+	table = os.Getenv("MANIFEST_FILE_TABLE")
+
+	queryParams := request.QueryStringParameters
+
+	var limit int32
+	if v, found := queryParams["limit"]; found {
+		r, err := strconv.ParseInt(v, 10, 32)
+		limit = int32(r)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		limit = int32(20)
+	}
+
+	status := sql.NullString{}
+	if v, found := queryParams["status"]; found {
+		status = sql.NullString{
+			String: v,
+			Valid:  true,
+		}
+	}
+
+	var startKey map[string]types.AttributeValue
+	if v, found := queryParams["continuation_token"]; found {
+		if status.Valid {
+			startKey = map[string]types.AttributeValue{
+				"ManifestId": &types.AttributeValueMemberS{Value: manifestId},
+				"UploadId":   &types.AttributeValueMemberS{Value: v},
+				"Status":     &types.AttributeValueMemberS{Value: status.String},
+			}
+		} else {
+			startKey = map[string]types.AttributeValue{
+				"ManifestId": &types.AttributeValueMemberS{Value: manifestId},
+				"UploadId":   &types.AttributeValueMemberS{Value: v},
+			}
+		}
+	}
+
+	manifestFiles, lastKey, err := dbTable.GetFilesPaginated(client, table, manifestId, status, limit, startKey)
+	if err != nil {
+		message := "Error: Unable to get files for manifests: " + manifestId + " ||| " + fmt.Sprint(err)
 		apiResponse = events.APIGatewayV2HTTPResponse{
 			Body: gateway.CreateErrorMessage(message, 500), StatusCode: 500}
 		return &apiResponse, nil
 	}
 
 	// Build the input parameters for the request.
-	var manifestDTOs []manifest.ManifestDTO
-	for _, m := range manifests {
-		manifestDTOs = append(manifestDTOs, manifest.ManifestDTO{
-			Id:            m.ManifestId,
-			DatasetNodeId: m.DatasetNodeId,
-			DatasetId:     m.DatasetId,
-			Status:        m.Status,
-			User:          m.UserId,
-			DateCreated:   m.DateCreated,
+	var manifestFilesDTO []manifestFile.DTO
+	for _, m := range manifestFiles {
+		manifestFilesDTO = append(manifestFilesDTO, manifestFile.DTO{
+			FileName: m.FileName,
+			FilePath: m.FilePath,
+			FileType: m.FileType,
+			UploadId: m.UploadId,
+			Status:   m.Status,
 		})
 	}
 
-	responseBody := manifest.GetResponse{
-		Manifests: manifestDTOs,
-	}
+	var lastUploadId string
+	_ = attributevalue.Unmarshal(lastKey["UploadId"], &lastUploadId)
 
-	headers := map[string]string{
-		"Access-Control-Allow-Headers": "Content-Type, Authorization",
-		"Access-Control-Allow-Origin":  "*",
-		"Access-Control-Allow-Methods": "OPTIONS,POST,GET",
+	responseBody := manifestFile.GetManifestFilesResponse{
+		ManifestId:        manifestId,
+		Files:             manifestFilesDTO,
+		ContinuationToken: lastUploadId,
 	}
 
 	jsonBody, _ := json.Marshal(responseBody)
-	apiResponse = events.APIGatewayV2HTTPResponse{Body: string(jsonBody), StatusCode: 200, Headers: headers}
+	apiResponse = events.APIGatewayV2HTTPResponse{Body: string(jsonBody), StatusCode: 200}
 
 	return &apiResponse, nil
 }

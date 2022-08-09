@@ -26,6 +26,7 @@ var defaultStorageBucket string
 type Item struct {
 	ManifestId string `dynamodbav:"ManifestId"`
 	UploadId   string `dynamodbav:"UploadId"`
+	Status     string `dynamodbav:"Status"`
 }
 
 type storageOrgItem struct {
@@ -165,7 +166,7 @@ func manifestFileWalk(walker fileWalk) error {
 			":hashKey": &types.AttributeValueMemberS{Value: "Imported"},
 		},
 		ExpressionAttributeNames: map[string]string{
-			"#status": "ClientStatus",
+			"#status": "Status",
 		},
 	})
 
@@ -284,6 +285,9 @@ func moveFile(workerId int32, items <-chan Item) error {
 
 func simpleCopyFile(stOrgItem *storageOrgItem, sourcePath string, targetPath string) error {
 	// Copy the item
+
+	log.Println("Simple copy: ", sourcePath, " to: ", stOrgItem.storageBucket, ":", targetPath)
+
 	params := s3.CopyObjectInput{
 		Bucket:     aws.String(stOrgItem.storageBucket),
 		CopySource: aws.String(sourcePath),
