@@ -185,7 +185,7 @@ func getManifestFilesRoute(request events.APIGatewayV2HTTPRequest, claims *Claim
 
 	var manifestId string
 	var found bool
-	if manifestId, found = queryParams["manifestId"]; !found {
+	if manifestId, found = queryParams["manifest_id"]; !found {
 		message := "Error: ManifestID not specified"
 		apiResponse = events.APIGatewayV2HTTPResponse{
 			Body: gateway.CreateErrorMessage(message, 500), StatusCode: 500}
@@ -199,24 +199,6 @@ func getManifestFilesRoute(request events.APIGatewayV2HTTPRequest, claims *Claim
 
 	// Create an Amazon DynamoDB client.
 	client := dynamodb.NewFromConfig(cfg)
-
-	// Check that DatasetID in claims matches DatasetID for manifestID
-	// We tried to include this in the authorizer but this would need some more thought as the Gateway authorizer caches the response.
-	//table := os.Getenv("MANIFEST_TABLE")
-	//manifest, err := dbTable.GetFromManifest(client, table, manifestId)
-	//if err != nil {
-	//	message := "Error: Unable to get Manifest: " + manifestId + " ||| " + fmt.Sprint(err)
-	//	apiResponse = events.APIGatewayV2HTTPResponse{
-	//		Body: gateway.CreateErrorMessage(message, 500), StatusCode: 500}
-	//	return &apiResponse, nil
-	//}
-	//
-	//if manifest.DatasetNodeId != claims.datasetClaim.NodeId {
-	//	message := "Error: Manifest does not belong to the provided Dataset: "
-	//	apiResponse = events.APIGatewayV2HTTPResponse{
-	//		Body: gateway.CreateErrorMessage(message, 401), StatusCode: 401}
-	//	return &apiResponse, nil
-	//}
 
 	table := os.Getenv("MANIFEST_FILE_TABLE")
 

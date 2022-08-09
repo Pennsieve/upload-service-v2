@@ -25,3 +25,11 @@ output "upload_lambda_invoke_arn" {
 output "identity_pool_id" {
   value = aws_cognito_identity_pool.pennsieve_auth.id
 }
+
+output "manifest_table_arn" {
+  value =aws_dynamodb_table.manifest_dynamo_table.arn
+}
+
+output "manifest_table_name" {
+  value =aws_dynamodb_table.manifest_dynamo_table.name
+}
