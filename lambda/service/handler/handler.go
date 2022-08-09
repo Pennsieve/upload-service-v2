@@ -64,7 +64,7 @@ func ManifestHandler(request events.APIGatewayV2HTTPRequest) (*events.APIGateway
 				apiResponse, err = postManifestRoute(request, claims)
 			}
 		}
-	case "/manifest/{id}":
+	case "/manifest/files":
 		switch request.RequestContext.HTTP.Method {
 		case "GET":
 			if authorized = hasRole(*claims, permissions.ViewFiles); authorized {

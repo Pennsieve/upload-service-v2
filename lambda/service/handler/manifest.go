@@ -181,7 +181,16 @@ func postManifestRoute(request events.APIGatewayV2HTTPRequest, claims *Claims) (
 func getManifestFilesRoute(request events.APIGatewayV2HTTPRequest, claims *Claims) (*events.APIGatewayV2HTTPResponse, error) {
 
 	apiResponse := events.APIGatewayV2HTTPResponse{}
-	manifestId := request.PathParameters["id"]
+	queryParams := request.QueryStringParameters
+
+	var manifestId string
+	var found bool
+	if manifestId, found = queryParams["manifestId"]; !found {
+		message := "Error: ManifestID not specified"
+		apiResponse = events.APIGatewayV2HTTPResponse{
+			Body: gateway.CreateErrorMessage(message, 500), StatusCode: 500}
+		return &apiResponse, nil
+	}
 
 	cfg, err := config.LoadDefaultConfig(context.Background())
 	if err != nil {
@@ -193,25 +202,23 @@ func getManifestFilesRoute(request events.APIGatewayV2HTTPRequest, claims *Claim
 
 	// Check that DatasetID in claims matches DatasetID for manifestID
 	// We tried to include this in the authorizer but this would need some more thought as the Gateway authorizer caches the response.
-	table := os.Getenv("MANIFEST_TABLE")
-	manifest, err := dbTable.GetFromManifest(client, table, manifestId)
-	if err != nil {
-		message := "Error: Unable to get Manifest: " + manifestId + " ||| " + fmt.Sprint(err)
-		apiResponse = events.APIGatewayV2HTTPResponse{
-			Body: gateway.CreateErrorMessage(message, 500), StatusCode: 500}
-		return &apiResponse, nil
-	}
+	//table := os.Getenv("MANIFEST_TABLE")
+	//manifest, err := dbTable.GetFromManifest(client, table, manifestId)
+	//if err != nil {
+	//	message := "Error: Unable to get Manifest: " + manifestId + " ||| " + fmt.Sprint(err)
+	//	apiResponse = events.APIGatewayV2HTTPResponse{
+	//		Body: gateway.CreateErrorMessage(message, 500), StatusCode: 500}
+	//	return &apiResponse, nil
+	//}
+	//
+	//if manifest.DatasetNodeId != claims.datasetClaim.NodeId {
+	//	message := "Error: Manifest does not belong to the provided Dataset: "
+	//	apiResponse = events.APIGatewayV2HTTPResponse{
+	//		Body: gateway.CreateErrorMessage(message, 401), StatusCode: 401}
+	//	return &apiResponse, nil
+	//}
 
-	if manifest.DatasetNodeId != claims.datasetClaim.NodeId {
-		message := "Error: Manifest does not belong to the provided Dataset: "
-		apiResponse = events.APIGatewayV2HTTPResponse{
-			Body: gateway.CreateErrorMessage(message, 401), StatusCode: 401}
-		return &apiResponse, nil
-	}
-
-	table = os.Getenv("MANIFEST_FILE_TABLE")
-
-	queryParams := request.QueryStringParameters
+	table := os.Getenv("MANIFEST_FILE_TABLE")
 
 	var limit int32
 	if v, found := queryParams["limit"]; found {
