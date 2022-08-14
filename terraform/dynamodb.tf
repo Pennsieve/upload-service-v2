@@ -71,6 +71,11 @@ resource "aws_dynamodb_table" "manifest_files_dynamo_table" {
     type = "S"
   }
 
+  attribute {
+    name = "InProgress"
+    type = "S"
+  }
+
   // Used to query files to be moved to final destination
   global_secondary_index {
     name               = "StatusIndex"
@@ -78,6 +83,18 @@ resource "aws_dynamodb_table" "manifest_files_dynamo_table" {
     range_key          = "ManifestId"
     projection_type    = "INCLUDE"
     non_key_attributes = ["ManifestId", "UploadId", "FileName", "FilePath", "FileType"]
+    read_capacity      = 0
+    write_capacity     = 0
+  }
+
+  // Used check which files in manifest have been imported.
+  // We are using a sparse index for this that only contains records that have inProgress flag set.
+  global_secondary_index {
+    name               = "InProgressIndex"
+    hash_key           = "ManifestId"
+    range_key          = "InProgress"
+    projection_type    = "INCLUDE"
+    non_key_attributes = ["FileName", "FilePath", "FileType", "Status"]
     read_capacity      = 0
     write_capacity     = 0
   }

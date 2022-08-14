@@ -12,11 +12,13 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/google/uuid"
-	"github.com/pennsieve/pennsieve-go-api/models/dbTable"
-	"github.com/pennsieve/pennsieve-go-api/models/gateway"
-	"github.com/pennsieve/pennsieve-go-api/models/manifest"
-	"github.com/pennsieve/pennsieve-go-api/models/manifest/manifestFile"
 	manifestPkg "github.com/pennsieve/pennsieve-go-api/pkg/manifest"
+	"github.com/pennsieve/pennsieve-go-api/pkg/models/dbTable"
+	"github.com/pennsieve/pennsieve-go-api/pkg/models/fileInfo/fileType"
+	"github.com/pennsieve/pennsieve-go-api/pkg/models/gateway"
+	"github.com/pennsieve/pennsieve-go-api/pkg/models/manifest"
+	"github.com/pennsieve/pennsieve-go-api/pkg/models/manifest/manifestFile"
+	"github.com/pennsieve/pennsieve-go-api/pkg/models/packageInfo/packageType"
 	"github.com/valyala/fastjson"
 	"log"
 	"os"
@@ -248,12 +250,15 @@ func getManifestFilesRoute(request events.APIGatewayV2HTTPRequest, claims *Claim
 	// Build the input parameters for the request.
 	var manifestFilesDTO []manifestFile.DTO
 	for _, m := range manifestFiles {
+
+		pt := packageType.FileTypeToInfoDict[fileType.Dict[m.FileType]]
 		manifestFilesDTO = append(manifestFilesDTO, manifestFile.DTO{
 			FileName: m.FileName,
 			FilePath: m.FilePath,
 			FileType: m.FileType,
 			UploadId: m.UploadId,
 			Status:   m.Status,
+			Icon:     pt.Icon.String(),
 		})
 	}
 

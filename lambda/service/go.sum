@@ -12,6 +12,8 @@ github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue v1.9.4 h1:EoyeSOfbS
 github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue v1.9.4/go.mod h1:bfCL7OwZS6owS06pahfGxhcgpLWj2W1sQASoYRuenag=
 github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.12.5 h1:YPxclBeE07HsLQE8vtjC8T2emcTjM9nzqsnDi2fv5UM=
 github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.12.5/go.mod h1:WAPnuhG5IQ/i6DETFl5NmX3kKqCzw7aau9NHAGcm4QE=
+github.com/aws/aws-sdk-go-v2/feature/rds/auth v1.1.21 h1:oBKKcDoyyG5bvfVG1swTGiEbot4NCl6xwye4fTC8Rhk=
+github.com/aws/aws-sdk-go-v2/feature/rds/auth v1.1.21/go.mod h1:KQUZ3AVhBGrIc6gMT34CtketqvHcwSi3JKWrGM6/9so=
 github.com/aws/aws-sdk-go-v2/internal/configsources v1.1.11/go.mod h1:tmUB6jakq5DFNcXsXOA/ZQ7/C8VnSKYkx58OI7Fh79g=
 github.com/aws/aws-sdk-go-v2/internal/configsources v1.1.12/go.mod h1:Afj/U8svX6sJ77Q+FPWMzabJ9QjbwP32YlopgKALUpg=
 github.com/aws/aws-sdk-go-v2/internal/configsources v1.1.13 h1:WuQ1yGs3TMJgxpGVLspcsU/5q1omSA0SG6Cu0yZ4jkM=
@@ -57,6 +59,8 @@ github.com/lib/pq v1.10.6 h1:jbk+ZieJ0D7EVGJYpL9QTz7/YW6UHbmdnZWYyK5cdBs=
 github.com/lib/pq v1.10.6/go.mod h1:AlVN5x4E4T544tWzH6hKfbfQvm3HdbOxrmggDNAPY9o=
 github.com/pennsieve/pennsieve-go-api v1.0.3 h1:cr2oPfmHOaIlEHdBAgzREXzTJrZL3zOlUELth5JplzQ=
 github.com/pennsieve/pennsieve-go-api v1.0.3/go.mod h1:ZW2fEW+gWNkPH4cFeqt0gwQU+uzk+XsDr4YGQZ3DB+M=
+github.com/pennsieve/pennsieve-go-api v1.0.4 h1:zJimYoxAfNuiEijXpF1gMBiEC90R0onyqay31BfAKkg=
+github.com/pennsieve/pennsieve-go-api v1.0.4/go.mod h1:ZW2fEW+gWNkPH4cFeqt0gwQU+uzk+XsDr4YGQZ3DB+M=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
