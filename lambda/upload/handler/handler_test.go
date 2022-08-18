@@ -1,7 +1,7 @@
 package handler
 
 import (
-	"github.com/pennsieve/pennsieve-go-api/models/uploadFile"
+	"github.com/pennsieve/pennsieve-go-api/pkg/models/uploadFile"
 	"github.com/stretchr/testify/assert"
 	"testing"
 )

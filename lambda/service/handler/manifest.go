@@ -277,6 +277,120 @@ func getManifestFilesRoute(request events.APIGatewayV2HTTPRequest, claims *Claim
 	return &apiResponse, nil
 }
 
+// getManifestFilesStatusRoute Returns a list of upload-ids associated with a specified manifest and status
+//
+// This method returns a list of file ids for the given manifest and status.
+// If the "verify" flag is set in the request, then the requested status is always set to "Finalized" and the status
+// for the returned files is updated to "Verfied". This enables the workflow for the agent to verify completed uploads
+// and indicate that they uploads were verified by the client.
+func getManifestFilesStatusRoute(request events.APIGatewayV2HTTPRequest, claims *Claims) (*events.APIGatewayV2HTTPResponse, error) {
+
+	/*
+		Parse inputs
+	*/
+
+	apiResponse := events.APIGatewayV2HTTPResponse{}
+	queryParams := request.QueryStringParameters
+
+	// Get Manifest ID
+	var manifestId string
+	var found bool
+	if manifestId, found = queryParams["manifest_id"]; !found {
+		message := "Error: ManifestID not specified"
+		apiResponse = events.APIGatewayV2HTTPResponse{
+			Body: gateway.CreateErrorMessage(message, 400), StatusCode: 400}
+		return &apiResponse, nil
+	}
+
+	// Get Status
+	// Check "Verify" flag
+	var statusStr string
+	var verifyFlag string
+	updateStatus := false
+	if verifyFlag, found = queryParams["verify"]; found {
+		updateStatus = verifyFlag == "true"
+	}
+
+	// Check "Status" query input
+	if statusStr, found = queryParams["status"]; !found {
+		message := "Error: status not specified"
+		apiResponse = events.APIGatewayV2HTTPResponse{
+			Body: gateway.CreateErrorMessage(message, 400), StatusCode: 400}
+		return &apiResponse, nil
+	}
+
+	if updateStatus {
+		// Assert that the user requested the "Finalized" status
+		if statusStr != manifestFile.Finalized.String() {
+			message := "Error: Status parameter needs to be set to 'Finalized' when verifying upload."
+			apiResponse = events.APIGatewayV2HTTPResponse{
+				Body: gateway.CreateErrorMessage(message, 400), StatusCode: 400}
+			return &apiResponse, nil
+		}
+
+		statusStr = "Finalized"
+	}
+
+	status := sql.NullString{
+		String: statusStr,
+		Valid:  true,
+	}
+
+	// Get Continuation Key
+	var startKey map[string]types.AttributeValue
+	if v, found := queryParams["continuation_token"]; found {
+		startKey = map[string]types.AttributeValue{
+			"ManifestId": &types.AttributeValueMemberS{Value: manifestId},
+			"UploadId":   &types.AttributeValueMemberS{Value: v},
+			"Status":     &types.AttributeValueMemberS{Value: status.String},
+		}
+	}
+
+	/*
+		Query table
+	*/
+	files, lastKey, err := dbTable.GetFilesPaginated(client, manifestFileTableName, manifestId, status, 500, startKey)
+	if err != nil {
+		message := "Error: Unable to get manifests for dataset: " + claims.datasetClaim.NodeId + " ||| " + fmt.Sprint(err)
+		apiResponse = events.APIGatewayV2HTTPResponse{
+			Body: gateway.CreateErrorMessage(message, 500), StatusCode: 500}
+		return &apiResponse, nil
+	}
+
+	// Build the input parameters for the request.
+	var UploadIds []string
+	for _, f := range files {
+		UploadIds = append(UploadIds, f.UploadId)
+	}
+
+	// Update status for returned items to "Verified"
+	if updateStatus {
+		for _, f := range UploadIds {
+			err = dbTable.UpdateFileTableStatus(client, manifestFileTableName, manifestId, f, manifestFile.Verified)
+			if err != nil {
+				fmt.Println("Error updating table: ", err)
+			}
+		}
+	}
+
+	// Only return UploadID of lastKey as the rest can be inferred from call.
+	var lastUploadId string
+	_ = attributevalue.Unmarshal(lastKey["UploadId"], &lastUploadId)
+
+	responseBody := manifest.GetStatusEndpointResponse{
+		ManifestId:        manifestId,
+		Status:            status.String,
+		Files:             UploadIds,
+		ContinuationToken: lastUploadId,
+		Verified:          updateStatus,
+	}
+
+	jsonBody, _ := json.Marshal(responseBody)
+	apiResponse = events.APIGatewayV2HTTPResponse{Body: string(jsonBody), StatusCode: 200}
+
+	return &apiResponse, nil
+}
+
 func handleManifestIdRoute(request events.APIGatewayV2HTTPRequest, claims *Claims) (*events.APIGatewayV2HTTPResponse, error) {
 
 	apiResponse := events.APIGatewayV2HTTPResponse{}

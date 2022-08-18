@@ -71,6 +71,13 @@ func ManifestHandler(request events.APIGatewayV2HTTPRequest) (*events.APIGateway
 				apiResponse, err = getManifestFilesRoute(request, claims)
 			}
 		}
+	case "/manifest/status":
+		switch request.RequestContext.HTTP.Method {
+		case "GET":
+			if authorized = hasRole(*claims, permissions.ViewFiles); authorized {
+				apiResponse, err = getManifestFilesStatusRoute(request, claims)
+			}
+		}
 	case "/manifest/{id}/remove":
 		//if authorized = checkOwner(*claims, manifestId); authorized {
 		//	apiResponse, err = handleManifestIdRemoveRoute(request, claims)

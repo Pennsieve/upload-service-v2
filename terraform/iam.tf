@@ -182,7 +182,11 @@ data "aws_iam_policy_document" "upload_service_v2_iam_policy_document" {
       "dynamodb:Scan",
       "dynamodb:BatchWriteItem",
       "dynamodb:PutItem",
-      "dynamodb:UpdateItem"
+      "dynamodb:UpdateItem",
+      "dynamodb:PartiQLUpdate",
+      "dynamodb:PartiQLSelect",
+      "dynamodb:PartiQLInsert",
+      "dynamodb:PartiQLDelete"
     ]
 
     resources = [
@@ -343,7 +347,11 @@ data "aws_iam_policy_document" "move_trigger_iam_policy_document" {
       "dynamodb:Scan",
       "dynamodb:BatchWriteItem",
       "dynamodb:PutItem",
-      "dynamodb:UpdateItem"
+      "dynamodb:UpdateItem",
+      "dynamodb:PartiQLUpdate",
+      "dynamodb:PartiQLSelect",
+      "dynamodb:PartiQLInsert",
+      "dynamodb:PartiQLDelete"
     ]
 
     resources = [
@@ -471,7 +479,11 @@ data "aws_iam_policy_document" "upload_fargate_iam_policy_document" {
       "dynamodb:Scan",
       "dynamodb:BatchWriteItem",
       "dynamodb:PutItem",
-      "dynamodb:UpdateItem"
+      "dynamodb:UpdateItem",
+      "dynamodb:PartiQLUpdate",
+      "dynamodb:PartiQLSelect",
+      "dynamodb:PartiQLInsert",
+      "dynamodb:PartiQLDelete"
     ]
 
     resources = [

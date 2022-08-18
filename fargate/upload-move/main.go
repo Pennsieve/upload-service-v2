@@ -209,6 +209,10 @@ func moveFile(workerId int32, items <-chan Item) error {
 	// Iterate over items from the channel.
 	for item := range items {
 
+		// This check should be obsolete but want to add a double check to ensure we never remove files that have not
+		// been successfully copied to final location.
+		moveSuccess := false
+
 		stOrgItem, err := getManifestStorageBucket(item.ManifestId)
 		if err != nil {
 			log.Println("Error getting storage bucket for manifest: ", err)
@@ -229,6 +233,11 @@ func moveFile(workerId int32, items <-chan Item) error {
 		result, err := Session.S3Client.HeadObject(context.Background(), &headObj)
 		if err != nil {
 			log.Println("moveFile: Cannot get size of S3 object.")
+			err = dbTable.UpdateFileTableStatus(Session.DynamodbClient, Session.FileTableName, item.ManifestId, item.UploadId, manifestFile.Failed)
+			if err != nil {
+				log.Println("Error updating Dynamodb status: ", err)
+				continue
+			}
 			continue
 		}
 
@@ -236,18 +245,30 @@ func moveFile(workerId int32, items <-chan Item) error {
 		fileSize := result.ContentLength           // size in bytes
 		const maxFileSize = 5 * 1000 * 1000 * 1000 // 5GiB (real limit is 5GB but want to be conservative)
 		if fileSize < maxFileSize {
-			log.Println("Simple copy")
 			err = simpleCopyFile(stOrgItem, sourcePath, targetPath)
 			if err != nil {
 				log.Printf("Unable to copy item from  %s to %s, %v\n", sourcePath, targetPath, err)
+				err = dbTable.UpdateFileTableStatus(Session.DynamodbClient, Session.FileTableName, item.ManifestId, item.UploadId, manifestFile.Failed)
+				if err != nil {
+					log.Println("Error updating Dynamodb status: ", err)
+					continue
+				}
 				continue
+			} else {
+				moveSuccess = true
 			}
 		} else {
-			log.Println("Multipart copy")
 			err = pkg.MultiPartCopy(Session.S3Client, fileSize, uploadBucket, sourceKey, stOrgItem.storageBucket, targetPath)
 			if err != nil {
 				log.Printf("Unable to copy item from  %s to %s, %v\n", sourcePath, targetPath, err)
+				err = dbTable.UpdateFileTableStatus(Session.DynamodbClient, Session.FileTableName, item.ManifestId, item.UploadId, manifestFile.Failed)
+				if err != nil {
+					log.Println("Error updating Dynamodb status: ", err)
+					continue
+				}
 				continue
+			} else {
+				moveSuccess = true
 			}
 		}
 
@@ -257,6 +278,12 @@ func moveFile(workerId int32, items <-chan Item) error {
 		err = f.UpdateBucket(Session.pgClient, item.UploadId, stOrgItem.storageBucket, stOrgItem.organizationId)
 		if err != nil {
 			log.Println("Could not update the bucket for ", item.UploadId)
+			// Update status of files in dynamoDB
+			err = dbTable.UpdateFileTableStatus(Session.DynamodbClient, Session.FileTableName, item.ManifestId, item.UploadId, manifestFile.Failed)
+			if err != nil {
+				log.Println("Error updating Dynamodb status: ", err)
+				continue
+			}
 			continue
 		}
 
@@ -264,18 +291,25 @@ func moveFile(workerId int32, items <-chan Item) error {
 		err = dbTable.UpdateFileTableStatus(Session.DynamodbClient, Session.FileTableName, item.ManifestId, item.UploadId, manifestFile.Finalized)
 		if err != nil {
 			log.Println("Error updating Dynamodb status: ", err)
+			err = dbTable.UpdateFileTableStatus(Session.DynamodbClient, Session.FileTableName, item.ManifestId, item.UploadId, manifestFile.Failed)
+			if err != nil {
+				log.Println("Error updating Dynamodb status: ", err)
+				continue
+			}
 			continue
 		}
 
 		// Deleting item in Uploads Folder if successfully moved to final location.
-		deleteParams := s3.DeleteObjectInput{
-			Bucket: aws.String(uploadBucket),
-			Key:    aws.String(fmt.Sprintf("%s/%s", item.ManifestId, item.UploadId)),
-		}
-		_, err = Session.S3Client.DeleteObject(context.Background(), &deleteParams)
-		if err != nil {
-			log.Printf("Unable to delete file: %s/%s\n", item.ManifestId, item.UploadId)
-			continue
+		if moveSuccess == true {
+			deleteParams := s3.DeleteObjectInput{
+				Bucket: aws.String(uploadBucket),
+				Key:    aws.String(fmt.Sprintf("%s/%s", item.ManifestId, item.UploadId)),
+			}
+			_, err = Session.S3Client.DeleteObject(context.Background(), &deleteParams)
+			if err != nil {
+				log.Printf("Unable to delete file: %s/%s\n", item.ManifestId, item.UploadId)
+				continue
+			}
 		}
 
 	}

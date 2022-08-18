@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	manifestPkg "github.com/pennsieve/pennsieve-go-api/pkg/manifest"
 	"github.com/pennsieve/pennsieve-go-api/pkg/models/dbTable"
 	"github.com/pennsieve/pennsieve-go-api/pkg/models/fileInfo/fileType"
+	manfestModels "github.com/pennsieve/pennsieve-go-api/pkg/models/manifest"
 	"github.com/pennsieve/pennsieve-go-api/pkg/models/manifest/manifestFile"
 	"github.com/pennsieve/pennsieve-go-api/pkg/models/packageInfo/packageType"
 	"github.com/pennsieve/pennsieve-go-api/pkg/models/uploadFile"
@@ -109,6 +111,21 @@ func Handler(ctx context.Context, sqsEvent events.SQSEvent) error {
 		// case that we need to append index (on name conflict).
 		setStatus := manifestFile.Imported
 		manifestSession.AddFiles(manifestId, fileDTOs, &setStatus)
+
+		// Check if there are any remaining items for manifest and
+		// set manifest status if not
+		reqStatus := sql.NullString{
+			String: "InProgress",
+			Valid:  true,
+		}
+		remaining, _, err := dbTable.GetFilesPaginated(manifestSession.Client, manifestSession.TableName,
+			manifestId, reqStatus, 1, nil)
+		if len(remaining) == 0 {
+			dbTable.UpdateManifestStatus(manifestSession.Client, manifestSession.TableName, manifestId, manfestModels.Completed)
+		} else if manifest.Status == "Completed" {
+			dbTable.UpdateManifestStatus(manifestSession.Client, manifestSession.TableName, manifestId, manfestModels.Uploading)
+		}
+
 	}
 
 	return nil
