@@ -2,11 +2,13 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/pennsieve/pennsieve-go-api/pkg/models/dataset"
 	"github.com/pennsieve/pennsieve-go-api/pkg/models/dbTable"
+	"github.com/pennsieve/pennsieve-go-api/pkg/models/manifest"
 	"github.com/pennsieve/pennsieve-go-api/pkg/models/organization"
 	"github.com/pennsieve/pennsieve-go-api/pkg/models/permissions"
 	"log"
@@ -78,6 +80,18 @@ func ManifestHandler(request events.APIGatewayV2HTTPRequest) (*events.APIGateway
 				apiResponse, err = getManifestFilesStatusRoute(request, claims)
 			}
 		}
+	case "/bookyper":
+		log.Println("Hello")
+		responseBody := manifest.PostResponse{
+			ManifestNodeId: "",
+			NrFilesUpdated: 0,
+			NrFilesRemoved: 0,
+			UpdatedFiles:   nil,
+			FailedFiles:    nil,
+		}
+		jsonBody, _ := json.Marshal(responseBody)
+		apiResponse = &events.APIGatewayV2HTTPResponse{Body: string(jsonBody), StatusCode: 200}
+		authorized = true
 	case "/manifest/{id}/remove":
 		//if authorized = checkOwner(*claims, manifestId); authorized {
 		//	apiResponse, err = handleManifestIdRemoveRoute(request, claims)
@@ -86,6 +100,7 @@ func ManifestHandler(request events.APIGatewayV2HTTPRequest) (*events.APIGateway
 		//if authorized = checkOwner(*claims, manifestId); authorized {
 		//	apiResponse, err = handleManifestIdUpdatesRoute(request, claims)
 		//}
+		//
 	default:
 		log.Fatalln("Incorrect Route")
 	}
@@ -109,42 +124,47 @@ func ManifestHandler(request events.APIGatewayV2HTTPRequest) (*events.APIGateway
 // parseClaims parses the claims in the provided request.
 func parseClaims(request events.APIGatewayV2HTTPRequest) *Claims {
 
-	claims := request.RequestContext.Authorizer.Lambda
+	var returnedClaims Claims
+	if request.RequestContext.Authorizer != nil {
+		claims := request.RequestContext.Authorizer.Lambda
 
-	var orgClaim organization.Claim
-	if val, ok := claims["org_claim"]; ok {
-		orgClaims := val.(map[string]interface{})
-		orgRole := int64(orgClaims["Role"].(float64))
-		orgClaim = organization.Claim{
-			Role:            dbTable.DbPermission(orgRole),
-			IntId:           int64(orgClaims["IntId"].(float64)),
-			EnabledFeatures: nil,
-		}
-	}
-
-	var datasetClaim dataset.Claim
-	if val, ok := claims["dataset_claim"]; ok {
-		if val != nil {
-			datasetClaims := val.(map[string]interface{})
-			datasetRole := int64(datasetClaims["Role"].(float64))
-			datasetClaim = dataset.Claim{
-				Role:   dataset.Role(datasetRole),
-				NodeId: datasetClaims["NodeId"].(string),
-				IntId:  int64(datasetClaims["IntId"].(float64)),
+		var orgClaim organization.Claim
+		if val, ok := claims["org_claim"]; ok {
+			orgClaims := val.(map[string]interface{})
+			orgRole := int64(orgClaims["Role"].(float64))
+			orgClaim = organization.Claim{
+				Role:            dbTable.DbPermission(orgRole),
+				IntId:           int64(orgClaims["IntId"].(float64)),
+				EnabledFeatures: nil,
 			}
 		}
-	}
 
-	userId := int64(claims["user_id"].(float64))
-	isSuperAdmin := claims["is_super_admin"].(bool)
-	organizationId := int64(claims["organization_id"].(float64))
+		var datasetClaim dataset.Claim
+		if val, ok := claims["dataset_claim"]; ok {
+			if val != nil {
+				datasetClaims := val.(map[string]interface{})
+				datasetRole := int64(datasetClaims["Role"].(float64))
+				datasetClaim = dataset.Claim{
+					Role:   dataset.Role(datasetRole),
+					NodeId: datasetClaims["NodeId"].(string),
+					IntId:  int64(datasetClaims["IntId"].(float64)),
+				}
+			}
+		}
 
-	returnedClaims := Claims{
-		orgClaim:       orgClaim,
-		datasetClaim:   datasetClaim,
-		userId:         userId,
-		isSuperAdmin:   isSuperAdmin,
-		organizationId: organizationId,
+		userId := int64(claims["user_id"].(float64))
+		isSuperAdmin := claims["is_super_admin"].(bool)
+		organizationId := int64(claims["organization_id"].(float64))
+
+		returnedClaims = Claims{
+			orgClaim:       orgClaim,
+			datasetClaim:   datasetClaim,
+			userId:         userId,
+			isSuperAdmin:   isSuperAdmin,
+			organizationId: organizationId,
+		}
+	} else {
+		returnedClaims = Claims{}
 	}
 
 	return &returnedClaims
