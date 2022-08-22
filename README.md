@@ -22,3 +22,20 @@ to be build for the Lambda environment. You can do this with the following comma
 ```env GOOS=linux GOARCH=amd64 go build -o ../bin/handler/pennsieve_upload_handler```
 
 ```env GOOS=linux GOARCH=amd64 go build -o ../bin/service/pennsieve_upload_service```
+
+
+## Deploying
+
+In the Infrastructure repository, go to:
+
+```aws/pennsieve-non-prod/us-east-1/dev-vpc-use1/dev/upload-service-v2```
+
+Then assume the admin role in non-prod
+
+Then run
+
+``./terraform.sh plan``
+
+to check and you should see that the lambda function needs updating. If all is okay, then
+
+``./terraform.sh apply``
