@@ -81,7 +81,8 @@ func ManifestHandler(request events.APIGatewayV2HTTPRequest) (*events.APIGateway
 			}
 		}
 	case "/bookyper":
-		log.Println("Hello")
+		
+		/*log.Println("Hello")
 		responseBody := manifest.PostResponse{
 			ManifestNodeId: "",
 			NrFilesUpdated: 0,
@@ -92,6 +93,14 @@ func ManifestHandler(request events.APIGatewayV2HTTPRequest) (*events.APIGateway
 		jsonBody, _ := json.Marshal(responseBody)
 		apiResponse = &events.APIGatewayV2HTTPResponse{Body: string(jsonBody), StatusCode: 200}
 		authorized = true
+		*/
+		authorized = true
+		switch request.RequestContext.HTTP.Method {
+			case "POST":
+			if authorized = hasRole(*claims, permissions.CreateDeleteFiles); authorized {
+				apiResponse, err = postManifestRoute(request, claims)
+			}
+		}
 	case "/manifest/{id}/remove":
 		//if authorized = checkOwner(*claims, manifestId); authorized {
 		//	apiResponse, err = handleManifestIdRemoveRoute(request, claims)
