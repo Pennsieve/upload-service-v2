@@ -158,7 +158,7 @@ func postManifestRoute(request events.APIGatewayV2HTTPRequest, claims *Claims) (
 
 	}
 
-	// 	MERGE PACKAGES FOR SPECIFIC FILETYPES
+	// MERGE PACKAGES FOR SPECIFIC FILETYPES
 	s.PackageTypeResolver(res.Files)
 
 	// ADDING FILES TO MANIFEST
