@@ -12,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/google/uuid"
+	"github.com/pennsieve/pennsieve-go-api/pkg/authorizer"
 	manifestPkg "github.com/pennsieve/pennsieve-go-api/pkg/manifest"
 	"github.com/pennsieve/pennsieve-go-api/pkg/models/dbTable"
 	"github.com/pennsieve/pennsieve-go-api/pkg/models/fileInfo/fileType"
@@ -40,7 +41,7 @@ func GetTableInfo(c context.Context, api DynamoDBDescribeTableAPI, input *dynamo
 }
 
 // getManifestRoute returns a list of manifests for a given dataset
-func getManifestRoute(request events.APIGatewayV2HTTPRequest, claims *Claims) (*events.APIGatewayV2HTTPResponse, error) {
+func getManifestRoute(request events.APIGatewayV2HTTPRequest, claims *authorizer.Claims) (*events.APIGatewayV2HTTPResponse, error) {
 
 	apiResponse := events.APIGatewayV2HTTPResponse{}
 
@@ -53,9 +54,9 @@ func getManifestRoute(request events.APIGatewayV2HTTPRequest, claims *Claims) (*
 	client := dynamodb.NewFromConfig(cfg)
 	table := os.Getenv("MANIFEST_TABLE")
 
-	manifests, err := dbTable.GetManifestsForDataset(client, table, claims.datasetClaim.NodeId)
+	manifests, err := dbTable.GetManifestsForDataset(client, table, claims.DatasetClaim.NodeId)
 	if err != nil {
-		message := "Error: Unable to get manifests for dataset: " + claims.datasetClaim.NodeId + " ||| " + fmt.Sprint(err)
+		message := "Error: Unable to get manifests for dataset: " + claims.DatasetClaim.NodeId + " ||| " + fmt.Sprint(err)
 		apiResponse = events.APIGatewayV2HTTPResponse{
 			Body: gateway.CreateErrorMessage(message, 500), StatusCode: 500}
 		return &apiResponse, nil
@@ -91,7 +92,7 @@ func getManifestRoute(request events.APIGatewayV2HTTPRequest, claims *Claims) (*
 }
 
 // postManifestRoute synchronizes manifests with a provided ID
-func postManifestRoute(request events.APIGatewayV2HTTPRequest, claims *Claims) (*events.APIGatewayV2HTTPResponse, error) {
+func postManifestRoute(request events.APIGatewayV2HTTPRequest, claims *authorizer.Claims) (*events.APIGatewayV2HTTPResponse, error) {
 	fmt.Println("Handling POST /manifest request")
 
 	apiResponse := events.APIGatewayV2HTTPResponse{}
@@ -126,10 +127,10 @@ func postManifestRoute(request events.APIGatewayV2HTTPRequest, claims *Claims) (
 		// Create new manifest
 		activeManifest = &dbTable.ManifestTable{
 			ManifestId:     uuid.New().String(),
-			DatasetId:      claims.datasetClaim.IntId,
-			DatasetNodeId:  claims.datasetClaim.NodeId,
-			OrganizationId: claims.organizationId,
-			UserId:         claims.userId,
+			DatasetId:      claims.DatasetClaim.IntId,
+			DatasetNodeId:  claims.DatasetClaim.NodeId,
+			OrganizationId: claims.OrgClaim.IntId,
+			UserId:         claims.UserClaim.Id,
 			Status:         manifest.Initiated.String(),
 			DateCreated:    time.Now().Unix(),
 		}
@@ -180,7 +181,7 @@ func postManifestRoute(request events.APIGatewayV2HTTPRequest, claims *Claims) (
 }
 
 // getManifestFilesRoute returns a paginated list of files for a manifest with a provided ID
-func getManifestFilesRoute(request events.APIGatewayV2HTTPRequest, claims *Claims) (*events.APIGatewayV2HTTPResponse, error) {
+func getManifestFilesRoute(request events.APIGatewayV2HTTPRequest, claims *authorizer.Claims) (*events.APIGatewayV2HTTPResponse, error) {
 
 	apiResponse := events.APIGatewayV2HTTPResponse{}
 	queryParams := request.QueryStringParameters
@@ -283,7 +284,7 @@ func getManifestFilesRoute(request events.APIGatewayV2HTTPRequest, claims *Claim
 // If the "verify" flag is set in the request, then the requested status is always set to "Finalized" and the status
 // for the returned files is updated to "Verfied". This enables the workflow for the agent to verify completed uploads
 // and indicate that they uploads were verified by the client.
-func getManifestFilesStatusRoute(request events.APIGatewayV2HTTPRequest, claims *Claims) (*events.APIGatewayV2HTTPResponse, error) {
+func getManifestFilesStatusRoute(request events.APIGatewayV2HTTPRequest, claims *authorizer.Claims) (*events.APIGatewayV2HTTPResponse, error) {
 
 	/*
 		Parse inputs
@@ -351,7 +352,7 @@ func getManifestFilesStatusRoute(request events.APIGatewayV2HTTPRequest, claims 
 	*/
 	files, lastKey, err := dbTable.GetFilesPaginated(client, manifestFileTableName, manifestId, status, 500, startKey)
 	if err != nil {
-		message := "Error: Unable to get manifests for dataset: " + claims.datasetClaim.NodeId + " ||| " + fmt.Sprint(err)
+		message := "Error: Unable to get manifests for dataset: " + claims.DatasetClaim.NodeId + " ||| " + fmt.Sprint(err)
 		apiResponse = events.APIGatewayV2HTTPResponse{
 			Body: gateway.CreateErrorMessage(message, 500), StatusCode: 500}
 		return &apiResponse, nil
@@ -391,7 +392,7 @@ func getManifestFilesStatusRoute(request events.APIGatewayV2HTTPRequest, claims 
 	return &apiResponse, nil
 }
 
-func handleManifestIdRoute(request events.APIGatewayV2HTTPRequest, claims *Claims) (*events.APIGatewayV2HTTPResponse, error) {
+func handleManifestIdRoute(request events.APIGatewayV2HTTPRequest, claims *authorizer.Claims) (*events.APIGatewayV2HTTPResponse, error) {
 
 	apiResponse := events.APIGatewayV2HTTPResponse{}
 
@@ -461,7 +462,7 @@ func handleManifestIdRoute(request events.APIGatewayV2HTTPRequest, claims *Claim
 
 }
 
-func handleManifestIdUpdatesRoute(request events.APIGatewayV2HTTPRequest, claims *Claims) (*events.APIGatewayV2HTTPResponse, error) {
+func handleManifestIdUpdatesRoute(request events.APIGatewayV2HTTPRequest, claims *authorizer.Claims) (*events.APIGatewayV2HTTPResponse, error) {
 
 	apiResponse := events.APIGatewayV2HTTPResponse{}
 
@@ -531,7 +532,7 @@ func handleManifestIdUpdatesRoute(request events.APIGatewayV2HTTPRequest, claims
 
 }
 
-func handleManifestIdRemoveRoute(request events.APIGatewayV2HTTPRequest, claims *Claims) (*events.APIGatewayV2HTTPResponse, error) {
+func handleManifestIdRemoveRoute(request events.APIGatewayV2HTTPRequest, claims *authorizer.Claims) (*events.APIGatewayV2HTTPResponse, error) {
 
 	apiResponse := events.APIGatewayV2HTTPResponse{}
 
