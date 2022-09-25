@@ -12,7 +12,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.15.7
 	github.com/aws/aws-sdk-go-v2/service/sns v1.17.8
 	github.com/google/uuid v1.3.0
-	github.com/pennsieve/pennsieve-go-api v1.2.0
+	github.com/pennsieve/pennsieve-go-api v1.2.2
 	github.com/stretchr/testify v1.8.0
 )
 
