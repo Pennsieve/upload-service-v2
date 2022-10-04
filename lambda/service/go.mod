@@ -11,7 +11,8 @@ require (
 	github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue v1.9.4
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.15.7
 	github.com/google/uuid v1.3.0
-	github.com/pennsieve/pennsieve-go-api v1.2.2
+	github.com/pennsieve/pennsieve-go-api v1.3.1
+	github.com/sirupsen/logrus v1.9.0
 	github.com/valyala/fastjson v1.6.3
 )
 
@@ -32,5 +33,6 @@ require (
 	github.com/aws/smithy-go v1.12.0 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/lib/pq v1.10.6 // indirect
+	golang.org/x/sys v0.0.0-20220715151400-c0bba94af5f8 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 )

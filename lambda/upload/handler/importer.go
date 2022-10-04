@@ -17,17 +17,17 @@ import (
 	"github.com/pennsieve/pennsieve-go-api/pkg/models/packageInfo/packageType"
 	"github.com/pennsieve/pennsieve-go-api/pkg/models/uploadFile"
 	"github.com/pennsieve/pennsieve-go-api/pkg/models/uploadFolder"
-	"log"
+	log "github.com/sirupsen/logrus"
 	"regexp"
 	"sort"
 )
 
+// uploadEntry representation of file from SQS queue on Upload Trigger
 type uploadEntry struct {
 	manifestId     string
 	uploadId       string
 	s3Bucket       string
 	s3Key          string
-	isStandard     bool
 	path           string
 	name           string
 	extension      string
@@ -51,7 +51,7 @@ type UploadSession struct {
 func (s *UploadSession) Close() {
 	err := s.db.Close()
 	if err != nil {
-		log.Println("Unable to close DB connection from Lambda function.")
+		log.Error("Unable to close DB connection from Lambda function.")
 		return
 	}
 
@@ -99,6 +99,7 @@ func (s *UploadSession) ImportFiles(files []uploadFile.UploadFile, manifest *dbT
 	var packageTable dbTable.Package
 	packages, err := packageTable.Add(s.db, pkgParams)
 	if err != nil {
+		log.Error("Error creating a package: ", err)
 		// Some error in creating packages --> none of the packages are imported.
 
 		// This should not really happen but we see this when adding packages causes a constraint violation.
@@ -120,7 +121,7 @@ func (s *UploadSession) ImportFiles(files []uploadFile.UploadFile, manifest *dbT
 	for i, f := range files {
 		packageNodeId := fmt.Sprintf("N:package:%s", f.UploadId)
 		if len(files[i].MergePackageId) > 0 {
-			log.Println("USING MERGED PACKAGE")
+			log.Debug("USING MERGED PACKAGE")
 			packageNodeId = fmt.Sprintf("N:package:%s", files[i].MergePackageId)
 		}
 
@@ -142,11 +143,14 @@ func (s *UploadSession) ImportFiles(files []uploadFile.UploadFile, manifest *dbT
 	var ff dbTable.File
 	returnedFiles, err := ff.Add(s.db, allFileParams)
 	if err != nil {
-		log.Println(err)
+		log.Error(err)
 	}
 
 	// Notify SNS that files were imported.
-	s.PublishToSNS(returnedFiles)
+	err = s.PublishToSNS(returnedFiles)
+	if err != nil {
+		log.Error("Error with notifying SNS that records are imported.", err)
+	}
 
 	// Update storage for packages, datasets, and org
 	s.UpdateStorage(allFileParams, packages, manifest)
@@ -156,9 +160,6 @@ func (s *UploadSession) ImportFiles(files []uploadFile.UploadFile, manifest *dbT
 
 // PublishToSNS publishes messages to SNS after files are imported.
 func (s *UploadSession) PublishToSNS(files []dbTable.File) error {
-	// Send SNS Message
-
-	log.Println("Publish to SNS: ", len(files))
 
 	const batchSize = 10
 	var snsEntries []types.PublishBatchRequestEntry
@@ -169,30 +170,39 @@ func (s *UploadSession) PublishToSNS(files []dbTable.File) error {
 		}
 		snsEntries = append(snsEntries, e)
 
-		// Send SNS mesasages in blocks of batchSize
+		// Send SNS messages in blocks of batchSize
 		if len(snsEntries) == batchSize {
-			sendSNSMessages(snsEntries)
+			err := sendSNSMessages(snsEntries)
+			if err != nil {
+				return err
+			}
 			snsEntries = nil
 		}
 	}
 
 	// send remaining entries
-	sendSNSMessages(snsEntries)
+	err := sendSNSMessages(snsEntries)
 
-	return nil
+	return err
 }
 
-func sendSNSMessages(snsEntries []types.PublishBatchRequestEntry) {
-	log.Println("Number of SNS messages: ", len(snsEntries))
-	log.Println("Number of SNS messages: ", len(snsEntries))
-	params := sns.PublishBatchInput{
-		PublishBatchRequestEntries: snsEntries,
-		TopicArn:                   aws.String(manifestSession.SNSTopic),
+func sendSNSMessages(snsEntries []types.PublishBatchRequestEntry) error {
+	log.Debug("Number of SNS messages: ", len(snsEntries))
+
+	if len(snsEntries) > 0 {
+		params := sns.PublishBatchInput{
+			PublishBatchRequestEntries: snsEntries,
+			TopicArn:                   aws.String(manifestSession.SNSTopic),
+		}
+		_, err := manifestSession.SNSClient.PublishBatch(context.Background(), &params)
+		if err != nil {
+			log.Error("Error publishing to SNS: ", err)
+			return err
+		}
 	}
-	_, err := manifestSession.SNSClient.PublishBatch(context.Background(), &params)
-	if err != nil {
-		log.Println("Error publishing to SNS: ", err)
-	}
+
+	return nil
+
 }
 
 // GetCreateUploadFolders creates new folders in the organization.
@@ -281,7 +291,7 @@ func (s *UploadSession) GetPackageParams(uploadFiles []uploadFile.UploadFile, pa
 		// Create the packageID based on the uploadID or the mergePackageID if it exists
 		packageId, packageName, err := parsePackageId(file)
 		if err != nil {
-			log.Println(err.Error())
+			log.Error(err.Error())
 			continue
 		}
 
@@ -355,7 +365,7 @@ func (s *UploadSession) UpdateStorage(files []dbTable.FileParams, packages []dbT
 
 	dbOrg, err := core.ConnectRDS()
 	if err != nil {
-		log.Println("Error connecting to database.")
+		log.Error("Error connecting to database.")
 		return err
 	}
 	defer dbOrg.Close()
@@ -366,7 +376,7 @@ func (s *UploadSession) UpdateStorage(files []dbTable.FileParams, packages []dbT
 		var p dbTable.PackageStorage
 		err := p.Increment(s.db, int64(f.PackageId), f.Size)
 		if err != nil {
-			log.Println("Error incrementing package")
+			log.Error("Error incrementing package")
 			return err
 		}
 
@@ -374,7 +384,7 @@ func (s *UploadSession) UpdateStorage(files []dbTable.FileParams, packages []dbT
 		if pkg.ParentId.Valid {
 			p.IncrementAncestors(s.db, pkg.ParentId.Int64, f.Size)
 			if err != nil {
-				log.Println("Error incrementing package ancestors")
+				log.Error("Error incrementing package ancestors")
 				return err
 			}
 		}
@@ -382,14 +392,14 @@ func (s *UploadSession) UpdateStorage(files []dbTable.FileParams, packages []dbT
 		var d dbTable.DatasetStorage
 		err = d.Increment(s.db, manifest.DatasetId, f.Size)
 		if err != nil {
-			log.Println("Error incrementing dataset.")
+			log.Error("Error incrementing dataset.")
 			return err
 		}
 
 		var o dbTable.OrganizationStorage
 		err = o.Increment(dbOrg, manifest.OrganizationId, f.Size)
 		if err != nil {
-			log.Println("Error incrementing organization")
+			log.Error("Error incrementing organization")
 			return err
 		}
 	}
@@ -409,7 +419,7 @@ func parsePackageId(file uploadFile.UploadFile) (string, string, error) {
 		r := regexp.MustCompile(`(?P<FileName>[^\.]*)?\.?(?P<Extension>.*)`)
 		pathParts := r.FindStringSubmatch(file.Name)
 		if pathParts == nil {
-			log.Println("Unable to parse filename:", file.Name)
+			log.Error("Unable to parse filename:", file.Name)
 			return "", "", errors.New(fmt.Sprintf("Unable to parse filename: %s", file.Name))
 		}
 

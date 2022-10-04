@@ -7,7 +7,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/pennsieve/pennsieve-go-api/pkg/authorizer"
 	"github.com/pennsieve/pennsieve-go-api/pkg/models/permissions"
-	"log"
+	log "github.com/sirupsen/logrus"
 	"os"
 	"regexp"
 )
@@ -18,6 +18,15 @@ var client *dynamodb.Client
 
 // init runs on cold start of lambda and gets jwt keysets from Cognito user pools.
 func init() {
+
+	log.SetFormatter(&log.JSONFormatter{})
+	ll, err := log.ParseLevel(os.Getenv("LOG_LEVEL"))
+	if err != nil {
+		log.SetLevel(log.InfoLevel)
+	} else {
+		log.SetLevel(ll)
+	}
+
 	manifestFileTableName = os.Getenv("MANIFEST_FILE_TABLE")
 	manifestTableName = os.Getenv("MANIFEST_TABLE")
 

@@ -20,8 +20,8 @@ import (
 	"github.com/pennsieve/pennsieve-go-api/pkg/models/manifest"
 	"github.com/pennsieve/pennsieve-go-api/pkg/models/manifest/manifestFile"
 	"github.com/pennsieve/pennsieve-go-api/pkg/models/packageInfo/packageType"
+	log "github.com/sirupsen/logrus"
 	"github.com/valyala/fastjson"
-	"log"
 	"os"
 	"strconv"
 	"time"
@@ -123,10 +123,20 @@ func postManifestRoute(request events.APIGatewayV2HTTPRequest, claims *authorize
 	// ADDING MANIFEST IF NEEDED
 	var activeManifest *dbTable.ManifestTable
 	if res.ID == "" {
-		log.Printf("Creating new manifest")
+
+		manifestId := uuid.New().String()
+
+		log.WithFields(
+			log.Fields{
+				"dataset_id":  claims.DatasetClaim.NodeId,
+				"manifest_id": manifestId,
+				"user_id":     claims.UserClaim.Id,
+			},
+		).Info("Creating new manifest.")
+
 		// Create new manifest
 		activeManifest = &dbTable.ManifestTable{
-			ManifestId:     uuid.New().String(),
+			ManifestId:     manifestId,
 			DatasetId:      claims.DatasetClaim.IntId,
 			DatasetNodeId:  claims.DatasetClaim.NodeId,
 			OrganizationId: claims.OrgClaim.IntId,
@@ -139,7 +149,7 @@ func postManifestRoute(request events.APIGatewayV2HTTPRequest, claims *authorize
 
 	} else {
 		// Check that manifest exists.
-		log.Printf("Has existing manifest")
+		log.Debug("Has existing manifest")
 
 		cfg, err := config.LoadDefaultConfig(context.Background())
 		if err != nil {

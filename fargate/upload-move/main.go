@@ -14,7 +14,7 @@ import (
 	"github.com/pennsieve/pennsieve-go-api/pkg/models/dbTable"
 	"github.com/pennsieve/pennsieve-go-api/pkg/models/manifest/manifestFile"
 	"github.com/pennsieve/pennsieve-upload-service-v2/upload-move-files/pkg"
-	"log"
+	log "github.com/sirupsen/logrus"
 	"os"
 	"sync"
 )
@@ -54,6 +54,11 @@ type awsSession struct {
 
 // main entry method for the task.
 func main() {
+
+	log.SetLevel(log.InfoLevel)
+
+	// Initialize logger
+	log.SetFormatter(&log.JSONFormatter{})
 
 	// Initializing environment
 	cfg, err := config.LoadDefaultConfig(context.Background())
@@ -96,12 +101,12 @@ func main() {
 	// Initiate the upload workers
 	for w := 1; w <= nrWorkers; w++ {
 		processWg.Add(1)
-		log.Println("starting worker:", w)
+		log.Debug("starting worker:", w)
 		w := int32(w)
 		go func() {
 			err := moveFile(w, walker)
 			if err != nil {
-				log.Println("Error in Move Worker:", err)
+				log.Error("Error in Move Worker:", err)
 			}
 		}()
 	}
@@ -202,7 +207,7 @@ func moveFile(workerId int32, items <-chan Item) error {
 	// Close worker after it completes.
 	// This happens when the items channel closes.
 	defer func() {
-		log.Println("Closing Worker: ", workerId)
+		log.Debug("Closing Worker: ", workerId)
 		processWg.Done()
 	}()
 
@@ -215,11 +220,15 @@ func moveFile(workerId int32, items <-chan Item) error {
 
 		stOrgItem, err := getManifestStorageBucket(item.ManifestId)
 		if err != nil {
-			log.Println("Error getting storage bucket for manifest: ", err)
+			log.WithFields(
+				log.Fields{
+					"manifest_id": item.ManifestId,
+					"upload_id":   item.UploadId,
+				}).Error("Error getting storage bucket for manifest: ", err)
 			return err
 		}
 
-		log.Println(fmt.Sprintf("%d - %s - %s", workerId, item.UploadId, stOrgItem.storageBucket))
+		log.Debug(fmt.Sprintf("%d - %s - %s", workerId, item.UploadId, stOrgItem.storageBucket))
 
 		sourceKey := fmt.Sprintf("%s/%s", item.ManifestId, item.UploadId)
 		sourcePath := fmt.Sprintf("%s/%s/%s", uploadBucket, item.ManifestId, item.UploadId)
@@ -232,7 +241,11 @@ func moveFile(workerId int32, items <-chan Item) error {
 		}
 		result, err := Session.S3Client.HeadObject(context.Background(), &headObj)
 		if err != nil {
-			log.Println("moveFile: Cannot get size of S3 object.")
+			log.WithFields(
+				log.Fields{
+					"upload_bucket": uploadBucket,
+					"s3_key":        sourceKey,
+				}).Error("moveFile: Cannot get size of S3 object.")
 			err = dbTable.UpdateFileTableStatus(Session.DynamodbClient, Session.FileTableName, item.ManifestId, item.UploadId, manifestFile.Failed)
 			if err != nil {
 				log.Println("Error updating Dynamodb status: ", err)
@@ -247,10 +260,10 @@ func moveFile(workerId int32, items <-chan Item) error {
 		if fileSize < maxFileSize {
 			err = simpleCopyFile(stOrgItem, sourcePath, targetPath)
 			if err != nil {
-				log.Printf("Unable to copy item from  %s to %s, %v\n", sourcePath, targetPath, err)
+				log.Error("Unable to copy item from  %s to %s, %v\n", sourcePath, targetPath, err)
 				err = dbTable.UpdateFileTableStatus(Session.DynamodbClient, Session.FileTableName, item.ManifestId, item.UploadId, manifestFile.Failed)
 				if err != nil {
-					log.Println("Error updating Dynamodb status: ", err)
+					log.Error("Error updating Dynamodb status: ", err)
 					continue
 				}
 				continue
@@ -260,10 +273,10 @@ func moveFile(workerId int32, items <-chan Item) error {
 		} else {
 			err = pkg.MultiPartCopy(Session.S3Client, fileSize, uploadBucket, sourceKey, stOrgItem.storageBucket, targetPath)
 			if err != nil {
-				log.Printf("Unable to copy item from  %s to %s, %v\n", sourcePath, targetPath, err)
+				log.Error("Unable to copy item from  %s to %s, %v\n", sourcePath, targetPath, err)
 				err = dbTable.UpdateFileTableStatus(Session.DynamodbClient, Session.FileTableName, item.ManifestId, item.UploadId, manifestFile.Failed)
 				if err != nil {
-					log.Println("Error updating Dynamodb status: ", err)
+					log.Error("Error updating Dynamodb status: ", err)
 					continue
 				}
 				continue
@@ -272,16 +285,29 @@ func moveFile(workerId int32, items <-chan Item) error {
 			}
 		}
 
-		fmt.Printf("Item %q successfully copied from %s to  %s\n", item, sourcePath, targetPath)
+		log.WithFields(
+			log.Fields{
+				"manifest_id": item.ManifestId,
+				"upload_id":   item.UploadId,
+			}).Info("Item %q successfully copied from %s to %s\n", item, sourcePath, targetPath)
 
 		var f dbTable.File
 		err = f.UpdateBucket(Session.pgClient, item.UploadId, stOrgItem.storageBucket, stOrgItem.organizationId)
 		if err != nil {
-			log.Println("Could not update the bucket for ", item.UploadId)
+			log.WithFields(
+				log.Fields{
+					"manifest_id": item.ManifestId,
+					"upload_id":   item.UploadId,
+				}).Error("Could not update the bucket for ", item.UploadId)
+
 			// Update status of files in dynamoDB
 			err = dbTable.UpdateFileTableStatus(Session.DynamodbClient, Session.FileTableName, item.ManifestId, item.UploadId, manifestFile.Failed)
 			if err != nil {
-				log.Println("Error updating Dynamodb status: ", err)
+				log.WithFields(
+					log.Fields{
+						"manifest_id": item.ManifestId,
+						"upload_id":   item.UploadId,
+					}).Error("Error updating Dynamodb status: ", err)
 				continue
 			}
 			continue
@@ -290,10 +316,18 @@ func moveFile(workerId int32, items <-chan Item) error {
 		// Update status of files in dynamoDB
 		err = dbTable.UpdateFileTableStatus(Session.DynamodbClient, Session.FileTableName, item.ManifestId, item.UploadId, manifestFile.Finalized)
 		if err != nil {
-			log.Println("Error updating Dynamodb status: ", err)
+			log.WithFields(
+				log.Fields{
+					"manifest_id": item.ManifestId,
+					"upload_id":   item.UploadId,
+				}).Error("Error updating Dynamodb status: ", err)
 			err = dbTable.UpdateFileTableStatus(Session.DynamodbClient, Session.FileTableName, item.ManifestId, item.UploadId, manifestFile.Failed)
 			if err != nil {
-				log.Println("Error updating Dynamodb status: ", err)
+				log.WithFields(
+					log.Fields{
+						"manifest_id": item.ManifestId,
+						"upload_id":   item.UploadId,
+					}).Error("Error updating Dynamodb status: ", err)
 				continue
 			}
 			continue
@@ -307,7 +341,11 @@ func moveFile(workerId int32, items <-chan Item) error {
 			}
 			_, err = Session.S3Client.DeleteObject(context.Background(), &deleteParams)
 			if err != nil {
-				log.Printf("Unable to delete file: %s/%s\n", item.ManifestId, item.UploadId)
+				log.WithFields(
+					log.Fields{
+						"manifest_id": item.ManifestId,
+						"upload_id":   item.UploadId,
+					}).Error("Unable to delete file.")
 				continue
 			}
 		}
@@ -320,7 +358,7 @@ func moveFile(workerId int32, items <-chan Item) error {
 func simpleCopyFile(stOrgItem *storageOrgItem, sourcePath string, targetPath string) error {
 	// Copy the item
 
-	log.Println("Simple copy: ", sourcePath, " to: ", stOrgItem.storageBucket, ":", targetPath)
+	log.Debug("Simple copy: ", sourcePath, " to: ", stOrgItem.storageBucket, ":", targetPath)
 
 	params := s3.CopyObjectInput{
 		Bucket:     aws.String(stOrgItem.storageBucket),

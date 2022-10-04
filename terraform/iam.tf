@@ -143,7 +143,6 @@ data "aws_iam_policy_document" "upload_service_v2_iam_policy_document" {
     effect = "Allow"
     actions = [
       "rds-db:connect",
-      "logs:CreateLogGroup",
       "logs:CreateLogStream",
       "logs:PutDestination",
       "logs:PutLogEvents",

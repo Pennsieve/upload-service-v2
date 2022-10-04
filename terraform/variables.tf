@@ -49,7 +49,9 @@ variable "tier" {
   default = "upload-move"
 }
 
-
+variable "send_logs_to_datadog" {
+  default = false
+}
 
 locals {
   domain_name = data.terraform_remote_state.account.outputs.domain_name

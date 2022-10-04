@@ -19,16 +19,24 @@ import (
 	"github.com/pennsieve/pennsieve-go-api/pkg/models/manifest/manifestFile"
 	"github.com/pennsieve/pennsieve-go-api/pkg/models/packageInfo/packageType"
 	"github.com/pennsieve/pennsieve-go-api/pkg/models/uploadFile"
-	"log"
+	log "github.com/sirupsen/logrus"
 	"os"
 	"regexp"
-	"strings"
 )
 
 var manifestSession manifestPkg.ManifestSession
 
 // init runs on cold start of lambda and gets jwt keysets from Cognito user pools.
 func init() {
+
+	log.SetFormatter(&log.JSONFormatter{})
+	ll, err := log.ParseLevel(os.Getenv("LOG_LEVEL"))
+	if err != nil {
+		log.SetLevel(log.InfoLevel)
+	} else {
+		log.SetLevel(ll)
+	}
+
 	cfg, err := config.LoadDefaultConfig(context.Background())
 	if err != nil {
 		log.Fatalf("LoadDefaultConfig: %v\n", err)
@@ -63,7 +71,10 @@ func Handler(ctx context.Context, sqsEvent events.SQSEvent) error {
 	}
 
 	// 2. Match against Manifest and create uploadFiles
-	uploadFiles, _ := GetUploadFiles(uploadEntries)
+	uploadFiles, err := GetUploadFiles(uploadEntries)
+	if err != nil {
+		log.Error("Error with GetUploadFiles: ", err)
+	}
 
 	// 3. Map by uploadSessionID
 	var fileByManifest = map[string][]uploadFile.UploadFile{}
@@ -81,13 +92,13 @@ func Handler(ctx context.Context, sqsEvent events.SQSEvent) error {
 		// Create upload session (with DB access) and import files
 		session, err := s.CreateUploadSession(manifest)
 		if err != nil {
-			log.Println("Unable to create upload session.", err)
+			log.Error("Unable to create upload session.", err)
 			continue
 		}
 		err = session.ImportFiles(uploadFilesForManifest, manifest)
 
 		if err != nil {
-			log.Println("Unable to create packages: ", err)
+			log.Error("Unable to create packages: ", err)
 			continue
 		}
 
@@ -143,7 +154,7 @@ func GetUploadEntries(fileEvents []events.SQSMessage) ([]uploadEntry, error) {
 
 		entry, err := uploadEntryFromS3Event(&parsedS3Event)
 		if err != nil {
-			log.Println("Unable to parse s3-key: ", err)
+			log.Error("Unable to parse s3-key: ", err)
 			continue
 		}
 
@@ -163,21 +174,14 @@ func GetUploadFiles(entries []uploadEntry) ([]uploadFile.UploadFile, error) {
 	for _, item := range entries {
 		entryMap[item.uploadId] = item
 
-		if item.isStandard {
-
-			data, err := attributevalue.MarshalMap(dbTable.ManifestFilePrimaryKey{
-				ManifestId: item.manifestId,
-				UploadId:   item.uploadId,
-			})
-			if err != nil {
-				log.Fatalf("MarshalMap: %v\n", err)
-			}
-			getItems = append(getItems, data)
-
-		} else {
-			continue
-			// TODO: Remove non-compliant uploads
+		data, err := attributevalue.MarshalMap(dbTable.ManifestFilePrimaryKey{
+			ManifestId: item.manifestId,
+			UploadId:   item.uploadId,
+		})
+		if err != nil {
+			log.Fatalf("MarshalMap: %v\n", err)
 		}
+		getItems = append(getItems, data)
 
 	}
 
@@ -212,7 +216,7 @@ func GetUploadFiles(entries []uploadEntry) ([]uploadFile.UploadFile, error) {
 			fileEntry := dbTable.ManifestFileTable{}
 			err := attributevalue.UnmarshalMap(dbItem, &fileEntry)
 			if err != nil {
-				fmt.Println("Unable to UnMarshall unprocessed items. ", err)
+				log.Error("Unable to UnMarshall unprocessed items. ", err)
 				return nil, err
 			}
 
@@ -233,7 +237,6 @@ func GetUploadFiles(entries []uploadEntry) ([]uploadFile.UploadFile, error) {
 				s3Bucket:       inputUploadEntry.s3Bucket,
 				s3Key:          inputUploadEntry.s3Key,
 				size:           inputUploadEntry.size,
-				isStandard:     true,
 				path:           fileEntry.FilePath,
 				name:           fileEntry.FileName,
 				extension:      pathParts[r.SubexpIndex("Extension")],
@@ -241,12 +244,17 @@ func GetUploadFiles(entries []uploadEntry) ([]uploadFile.UploadFile, error) {
 				fileType:       fileEntry.FileType,
 			})
 
-			fmt.Println("GetUploadFiles: uploadID ", fileEntry.UploadId)
+			log.WithFields(
+				log.Fields{
+					"manifest_id": fileEntry.ManifestId,
+					"upload_id":   fileEntry.UploadId,
+				},
+			).Debug("GetUploadFiles: uploadID ", fileEntry.UploadId)
 		}
 	}
 
 	if len(verifiedFiles) != len(entries) {
-		log.Println("MISMATCH BETWEEN UPLOADED ENTRIES AND RETURN FROM DYNAMOBD.")
+		log.Error("MISMATCH BETWEEN UPLOADED ENTRIES AND RETURN FROM DYNAMOBD.")
 	}
 
 	var uploadFiles []uploadFile.UploadFile
@@ -272,7 +280,12 @@ func GetUploadFiles(entries []uploadEntry) ([]uploadFile.UploadFile, error) {
 			MergePackageId: f.mergePackageId,
 		}
 
-		log.Println("uploadFile: ", file.Name, "merge: ", file.MergePackageId)
+		log.WithFields(
+			log.Fields{
+				"manifest_id": file.ManifestId,
+				"upload_id":   file.UploadId,
+			},
+		).Debug("uploadFile: ", file.Name, " || merge: ", file.MergePackageId)
 
 		uploadFiles = append(uploadFiles, file)
 	}
@@ -289,70 +302,30 @@ func uploadEntryFromS3Event(event *events.S3Event) (*uploadEntry, error) {
 	r := regexp.MustCompile(`(?P<Manifest>[a-z0-9]{8}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{12})\/(?P<UploadId>[a-z0-9]{8}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{12})`)
 	res := r.FindStringSubmatch(event.Records[0].S3.Object.Key)
 
-	if res != nil {
-		// Found standard upload manifest/key combination
-		manifestId := res[r.SubexpIndex("Manifest")]
-		uploadId := res[r.SubexpIndex("UploadId")]
-		response := uploadEntry{
-			s3Bucket:   event.Records[0].S3.Bucket.Name,
-			s3Key:      event.Records[0].S3.Object.Key,
-			manifestId: manifestId,
-			uploadId:   uploadId,
-			isStandard: true,
-			eTag:       event.Records[0].S3.Object.ETag,
-			size:       event.Records[0].S3.Object.Size,
-		}
-
-		fmt.Println("uploadEntry:", response.s3Bucket, response.s3Key)
-		return &response, nil
-	}
-
-	// Check if this entry is valid manifest ID and filename path.
-	r = regexp.MustCompile(`(?P<Manifest>[a-z0-9]{8}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{12})\/(?P<Key>.*)`)
-	res = r.FindStringSubmatch(event.Records[0].S3.Object.Key)
 	if res == nil {
-		// File does not contain the required s3key components
-		return nil, errors.New(fmt.Sprintf("File does not contain the required s3key components: %s",
+		return nil, errors.New(fmt.Sprintf("File does not contain the required S3-Key components: %s",
 			event.Records[0].S3.Object.Key))
 	}
 
-	// 2. Split Path into name and path
-	/*
-		Match path as 0+ segments that end with a /
-		Match Filename as set of characters up to the first .
-		Match optional Extension as everything after the first . in Filename
-	*/
+	// Found standard upload manifest/key combination
 	manifestId := res[r.SubexpIndex("Manifest")]
-	path := res[r.SubexpIndex("Key")]
-	r2 := regexp.MustCompile(`(?P<Path>([^\/]*\/)*)(?P<FileName>[^\.]*)?\.?(?P<Extension>.*)`)
-	pathParts := r2.FindStringSubmatch(path)
-	if pathParts == nil {
-		// File does not contain the required s3key components
-		return nil, errors.New(fmt.Sprintf("File path does not contain the required s3key components: %s",
-			path))
-	}
-
-	fileExtension := pathParts[r2.SubexpIndex("Extension")]
-	fileName := pathParts[r2.SubexpIndex("FileName")]
-	if fileExtension != "" {
-		str := []string{pathParts[r2.SubexpIndex("FileName")], fileExtension}
-		fileName = strings.Join(str, ".")
-	}
-
+	uploadId := res[r.SubexpIndex("UploadId")]
 	response := uploadEntry{
 		s3Bucket:   event.Records[0].S3.Bucket.Name,
 		s3Key:      event.Records[0].S3.Object.Key,
 		manifestId: manifestId,
-		isStandard: false,
-		path:       pathParts[r2.SubexpIndex("Path")],
-		name:       fileName,
-		extension:  fileExtension,
+		uploadId:   uploadId,
 		eTag:       event.Records[0].S3.Object.ETag,
 		size:       event.Records[0].S3.Object.Size,
 	}
 
+	log.WithFields(
+		log.Fields{
+			"manifest_id": response.manifestId,
+			"upload_id":   response.uploadId,
+		},
+	).Debugf("UploadEntry created in %s / %s", response.s3Bucket, response.s3Key)
 	return &response, nil
-
 }
 
 // getFileInfo returns a FileType and PackageType.Info object based on filetype string.
@@ -362,7 +335,7 @@ func getFileInfo(fileTypeStr string) (fileType.Type, packageType.Info) {
 
 	pType, exists := packageType.FileTypeToInfoDict[fType]
 	if !exists {
-		log.Println("Unmatched filetype. ?!?:", fType)
+		log.Warn("Unmatched filetype. ?!?:", fType)
 		pType = packageType.FileTypeToInfoDict[fileType.GenericData]
 	}
 
