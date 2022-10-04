@@ -289,7 +289,8 @@ func moveFile(workerId int32, items <-chan Item) error {
 			log.Fields{
 				"manifest_id": item.ManifestId,
 				"upload_id":   item.UploadId,
-			}).Info("Item %q successfully copied from %s to %s\n", item, sourcePath, targetPath)
+				"s3_target":   targetPath,
+			}).Infof("%s copied to storage bin.", item.UploadId)
 
 		var f dbTable.File
 		err = f.UpdateBucket(Session.pgClient, item.UploadId, stOrgItem.storageBucket, stOrgItem.organizationId)
