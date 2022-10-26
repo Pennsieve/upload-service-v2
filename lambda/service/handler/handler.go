@@ -101,5 +101,6 @@ func ManifestHandler(request events.APIGatewayV2HTTPRequest) (*events.APIGateway
 	if err != nil {
 		log.Fatalln("Something is wrong with creating the response", err)
 	}
+
 	return apiResponse, nil
 }

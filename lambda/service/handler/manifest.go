@@ -170,6 +170,8 @@ func postManifestRoute(request events.APIGatewayV2HTTPRequest, claims *authorize
 	}
 
 	// MERGE PACKAGES FOR SPECIFIC FILETYPES
+	// TODO: Improve this functionality to handle situation where part of the merged package is previously added to the manifest.
+	// Currently, the merge only happens within the files included in the call.
 	s.PackageTypeResolver(res.Files)
 
 	// ADDING FILES TO MANIFEST
