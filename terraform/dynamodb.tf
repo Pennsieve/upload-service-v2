@@ -111,7 +111,7 @@ resource "aws_dynamodb_table" "manifest_files_dynamo_table" {
   }
 
   point_in_time_recovery {
-    enabled = false
+    enabled = var.enable_dynamodb_backup
   }
 
   server_side_encryption {

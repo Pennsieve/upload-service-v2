@@ -53,6 +53,9 @@ variable "send_logs_to_datadog" {
   default = false
 }
 
+variable "enable_dynamodb_backup" {
+}
+
 locals {
   domain_name = data.terraform_remote_state.account.outputs.domain_name
   hosted_zone = data.terraform_remote_state.account.outputs.public_hosted_zone_id
