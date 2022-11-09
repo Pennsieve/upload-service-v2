@@ -57,7 +57,7 @@ func Handler(ctx context.Context, sqsEvent events.SQSEvent) error {
 	/*
 		Messages can be from multiple upload sessions --> multiple organizations.
 		We need to:
-			1. Separate by upload-session
+			1. Separate by manifest-session
 			2. Create/get the folders from postgres for each upload session
 			3. Create Packages
 			4. Create Files in Packages

@@ -27,7 +27,7 @@ resource "aws_dynamodb_table" "manifest_dynamo_table" {
   }
 
   point_in_time_recovery {
-    enabled = false
+    enabled = true
   }
 
   server_side_encryption {
@@ -111,7 +111,7 @@ resource "aws_dynamodb_table" "manifest_files_dynamo_table" {
   }
 
   point_in_time_recovery {
-    enabled = false
+    enabled = true
   }
 
   server_side_encryption {
