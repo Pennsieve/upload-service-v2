@@ -240,6 +240,7 @@ func GetUploadFiles(entries []uploadEntry) ([]uploadFile.UploadFile, error) {
 				path:           fileEntry.FilePath,
 				name:           fileEntry.FileName,
 				extension:      pathParts[r.SubexpIndex("Extension")],
+				eTag:           inputUploadEntry.eTag,
 				mergePackageId: fileEntry.MergePackageId,
 				fileType:       fileEntry.FileType,
 			})
