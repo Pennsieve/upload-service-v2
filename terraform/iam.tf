@@ -591,7 +591,8 @@ data "aws_iam_policy_document" "cognito_upload_identity_policy_document" {
       "s3:PutObject",
       "s3:ListBucketMultipartUploads",
       "s3:AbortMultipartUpload",
-      "s3:ListMultipartUploadParts"
+      "s3:ListMultipartUploadParts",
+      "s3:PutBucketTagging"
     ]
 
     resources = [

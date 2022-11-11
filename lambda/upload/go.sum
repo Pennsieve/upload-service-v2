@@ -58,10 +58,8 @@ github.com/jmespath/go-jmespath/internal/testify v1.5.1 h1:shLQSRRSCCPj3f2gpwzGw
 github.com/jmespath/go-jmespath/internal/testify v1.5.1/go.mod h1:L3OGu8Wl2/fWfCI6z80xFu9LTZmf1ZRjMHUOPmWr69U=
 github.com/lib/pq v1.10.6 h1:jbk+ZieJ0D7EVGJYpL9QTz7/YW6UHbmdnZWYyK5cdBs=
 github.com/lib/pq v1.10.6/go.mod h1:AlVN5x4E4T544tWzH6hKfbfQvm3HdbOxrmggDNAPY9o=
-github.com/pennsieve/pennsieve-go-api v1.2.2 h1:Hrq9fI5tZveelwp6X3nabVpbru7iypztpc+Qqt7Z+5M=
-github.com/pennsieve/pennsieve-go-api v1.2.2/go.mod h1:ioMPtx+kYyS8Fs1m41zu2rzH7l6BVhxRtl3QMR5efoY=
-github.com/pennsieve/pennsieve-go-api v1.3.1 h1:CJkZF+FDVdSg0CX/mhv/3HUrqjdL/AyNvsXL3JJub48=
-github.com/pennsieve/pennsieve-go-api v1.3.1/go.mod h1:kW7JQkTJ+7zwBco5jOnDFWfHx0RDBeGgaPh40+75G9g=
+github.com/pennsieve/pennsieve-go-api v1.4.1 h1:IIqf6CvVBNS5oU/rvlGJpm4VqstqXfGpe1+L2NuftKI=
+github.com/pennsieve/pennsieve-go-api v1.4.1/go.mod h1:kW7JQkTJ+7zwBco5jOnDFWfHx0RDBeGgaPh40+75G9g=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/sirupsen/logrus v1.9.0 h1:trlNQbNUG3OdDrDil03MCb1H2o9nJ1x4/5LYw7byDE0=
