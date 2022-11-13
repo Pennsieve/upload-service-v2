@@ -124,6 +124,36 @@ resource "aws_iam_policy" "upload_service_v2_lambda_iam_policy" {
 data "aws_iam_policy_document" "upload_service_v2_iam_policy_document" {
 
   statement {
+    sid    = "UploadsBucketAccess"
+    effect = "Allow"
+
+    actions = [
+      "s3:ListBucket",
+      "s3:GetObject",
+      "s3:GetObjectAttributes",
+    ]
+
+    resources = [
+      aws_s3_bucket.uploads_s3_bucket.arn,
+      "${aws_s3_bucket.uploads_s3_bucket.arn}/*"
+    ]
+  }
+
+  // Allow upload handler to decrypt the SHA256 checksum on s3 objects
+  statement {
+    sid    = "AwsKmsKeyAccess"
+    effect = "Allow"
+
+    actions = [
+      "kms:Decrypt"
+    ]
+
+    resources = [
+      "arn:aws:kms:*:${data.terraform_remote_state.account.outputs.aws_account_id}:key/*",
+    ]
+  }
+
+  statement {
     sid    = "SecretsManagerPermissions"
     effect = "Allow"
 

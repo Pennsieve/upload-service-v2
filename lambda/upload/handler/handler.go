@@ -7,10 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"github.com/aws/aws-lambda-go/events"
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	s3Types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/aws-sdk-go-v2/service/sns"
 	manifestPkg "github.com/pennsieve/pennsieve-go-api/pkg/manifest"
 	"github.com/pennsieve/pennsieve-go-api/pkg/models/dbTable"
@@ -37,7 +40,7 @@ func init() {
 		log.SetLevel(ll)
 	}
 
-	cfg, err := config.LoadDefaultConfig(context.Background())
+	cfg, err := config.LoadDefaultConfig(context.Background(), config.WithRegion("us-east-1"))
 	if err != nil {
 		log.Fatalf("LoadDefaultConfig: %v\n", err)
 	}
@@ -48,6 +51,7 @@ func init() {
 		Client:        dynamodb.NewFromConfig(cfg),
 		SNSClient:     sns.NewFromConfig(cfg),
 		SNSTopic:      os.Getenv("IMPORTED_SNS_TOPIC"),
+		S3Client:      s3.NewFromConfig(cfg),
 	}
 }
 
@@ -243,6 +247,7 @@ func GetUploadFiles(entries []uploadEntry) ([]uploadFile.UploadFile, error) {
 				eTag:           inputUploadEntry.eTag,
 				mergePackageId: fileEntry.MergePackageId,
 				fileType:       fileEntry.FileType,
+				sha256:         inputUploadEntry.sha256,
 			})
 
 			log.WithFields(
@@ -279,6 +284,7 @@ func GetUploadFiles(entries []uploadEntry) ([]uploadFile.UploadFile, error) {
 			Size:           f.size,
 			ETag:           f.eTag,
 			MergePackageId: f.mergePackageId,
+			Sha256:         f.sha256,
 		}
 
 		log.WithFields(
@@ -311,13 +317,35 @@ func uploadEntryFromS3Event(event *events.S3Event) (*uploadEntry, error) {
 	// Found standard upload manifest/key combination
 	manifestId := res[r.SubexpIndex("Manifest")]
 	uploadId := res[r.SubexpIndex("UploadId")]
+
+	s3Bucket := event.Records[0].S3.Bucket.Name
+	s3Key := event.Records[0].S3.Object.Key
+
+	// Get File Size
+	headObj := s3.HeadObjectInput{
+		Bucket:       aws.String(s3Bucket),
+		Key:          aws.String(s3Key),
+		ChecksumMode: s3Types.ChecksumModeEnabled,
+	}
+	result, err := manifestSession.S3Client.HeadObject(context.Background(), &headObj)
+	if err != nil {
+		log.Println(err)
+		log.WithFields(
+			log.Fields{
+				"manifest_id": manifestId,
+				"upload_id":   uploadId,
+			},
+		).Warn("Unable to get HEAD object %s / %s", s3Bucket, s3Key)
+	}
+
 	response := uploadEntry{
-		s3Bucket:   event.Records[0].S3.Bucket.Name,
-		s3Key:      event.Records[0].S3.Object.Key,
+		s3Bucket:   s3Bucket,
+		s3Key:      s3Key,
 		manifestId: manifestId,
 		uploadId:   uploadId,
 		eTag:       event.Records[0].S3.Object.ETag,
 		size:       event.Records[0].S3.Object.Size,
+		sha256:     checkSumOrEmpty(result.ChecksumSHA256),
 	}
 
 	log.WithFields(
@@ -327,6 +355,13 @@ func uploadEntryFromS3Event(event *events.S3Event) (*uploadEntry, error) {
 		},
 	).Debugf("UploadEntry created in %s / %s", response.s3Bucket, response.s3Key)
 	return &response, nil
+}
+
+func checkSumOrEmpty(checkSum *string) string {
+	if checkSum != nil {
+		return *checkSum
+	}
+	return ""
 }
 
 // getFileInfo returns a FileType and PackageType.Info object based on filetype string.
