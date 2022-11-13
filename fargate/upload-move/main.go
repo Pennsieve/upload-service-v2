@@ -56,7 +56,7 @@ type awsSession struct {
 // main entry method for the task.
 func main() {
 
-	log.SetLevel(log.DebugLevel)
+	log.SetLevel(log.InfoLevel)
 
 	// Initialize logger
 	log.SetFormatter(&log.JSONFormatter{})
