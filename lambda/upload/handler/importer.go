@@ -97,8 +97,6 @@ func (s *UploadSession) ImportFiles(files []uploadFile.UploadFile, manifest *dbT
 	// 3. Create Package Params to add files to packages table.
 	pkgParams, _ := s.GetPackageParams(files, folderPackageMap)
 
-	log.Println(pkgParams)
-
 	var packageTable dbTable.Package
 	packages, err := packageTable.Add(s.db, pkgParams)
 	if err != nil {
