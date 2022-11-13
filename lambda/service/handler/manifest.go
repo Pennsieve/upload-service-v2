@@ -379,7 +379,7 @@ func getManifestFilesStatusRoute(request events.APIGatewayV2HTTPRequest, claims 
 	// Update status for returned items to "Verified"
 	if updateStatus {
 		for _, f := range UploadIds {
-			err = dbTable.UpdateFileTableStatus(client, manifestFileTableName, manifestId, f, manifestFile.Verified)
+			err = dbTable.UpdateFileTableStatus(client, manifestFileTableName, manifestId, f, manifestFile.Verified, "")
 			if err != nil {
 				fmt.Println("Error updating table: ", err)
 			}

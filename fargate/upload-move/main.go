@@ -32,6 +32,7 @@ type Item struct {
 type storageOrgItem struct {
 	organizationId int64
 	storageBucket  string
+	datasetId      int64
 }
 
 type fileWalk chan Item
@@ -55,7 +56,7 @@ type awsSession struct {
 // main entry method for the task.
 func main() {
 
-	log.SetLevel(log.InfoLevel)
+	log.SetLevel(log.DebugLevel)
 
 	// Initialize logger
 	log.SetFormatter(&log.JSONFormatter{})
@@ -141,8 +142,6 @@ func getManifestStorageBucket(manifestId string) (*storageOrgItem, error) {
 		return nil, err
 	}
 
-	log.Println(org)
-
 	// Return storagebucket if defined, or default bucket.
 	sbName := defaultStorageBucket
 	if org.StorageBucket.Valid {
@@ -152,6 +151,7 @@ func getManifestStorageBucket(manifestId string) (*storageOrgItem, error) {
 	si := storageOrgItem{
 		organizationId: manifest.OrganizationId,
 		storageBucket:  sbName,
+		datasetId:      manifest.DatasetId,
 	}
 
 	storageBucketMap[manifestId] = si
@@ -232,7 +232,7 @@ func moveFile(workerId int32, items <-chan Item) error {
 
 		sourceKey := fmt.Sprintf("%s/%s", item.ManifestId, item.UploadId)
 		sourcePath := fmt.Sprintf("%s/%s/%s", uploadBucket, item.ManifestId, item.UploadId)
-		targetPath := fmt.Sprintf("%s/%s", item.ManifestId, item.UploadId)
+		targetPath := fmt.Sprintf("O%d/D%d/%s/%s", stOrgItem.organizationId, stOrgItem.datasetId, item.ManifestId, item.UploadId)
 
 		// Get File Size
 		headObj := s3.HeadObjectInput{
@@ -246,7 +246,7 @@ func moveFile(workerId int32, items <-chan Item) error {
 					"upload_bucket": uploadBucket,
 					"s3_key":        sourceKey,
 				}).Error("moveFile: Cannot get size of S3 object.")
-			err = dbTable.UpdateFileTableStatus(Session.DynamodbClient, Session.FileTableName, item.ManifestId, item.UploadId, manifestFile.Failed)
+			err = dbTable.UpdateFileTableStatus(Session.DynamodbClient, Session.FileTableName, item.ManifestId, item.UploadId, manifestFile.Failed, err.Error())
 			if err != nil {
 				log.Println("Error updating Dynamodb status: ", err)
 				continue
@@ -261,7 +261,7 @@ func moveFile(workerId int32, items <-chan Item) error {
 			err = simpleCopyFile(stOrgItem, sourcePath, targetPath)
 			if err != nil {
 				log.Error("Unable to copy item from  %s to %s, %v\n", sourcePath, targetPath, err)
-				err = dbTable.UpdateFileTableStatus(Session.DynamodbClient, Session.FileTableName, item.ManifestId, item.UploadId, manifestFile.Failed)
+				err = dbTable.UpdateFileTableStatus(Session.DynamodbClient, Session.FileTableName, item.ManifestId, item.UploadId, manifestFile.Failed, err.Error())
 				if err != nil {
 					log.Error("Error updating Dynamodb status: ", err)
 					continue
@@ -274,7 +274,7 @@ func moveFile(workerId int32, items <-chan Item) error {
 			err = pkg.MultiPartCopy(Session.S3Client, fileSize, uploadBucket, sourceKey, stOrgItem.storageBucket, targetPath)
 			if err != nil {
 				log.Error("Unable to copy item from  %s to %s, %v\n", sourcePath, targetPath, err)
-				err = dbTable.UpdateFileTableStatus(Session.DynamodbClient, Session.FileTableName, item.ManifestId, item.UploadId, manifestFile.Failed)
+				err = dbTable.UpdateFileTableStatus(Session.DynamodbClient, Session.FileTableName, item.ManifestId, item.UploadId, manifestFile.Failed, err.Error())
 				if err != nil {
 					log.Error("Error updating Dynamodb status: ", err)
 					continue
@@ -292,46 +292,43 @@ func moveFile(workerId int32, items <-chan Item) error {
 				"s3_target":   targetPath,
 			}).Infof("%s copied to storage bin.", item.UploadId)
 
+		updatedStatus := manifestFile.Finalized
+		updatedMessage := ""
 		var f dbTable.File
-		err = f.UpdateBucket(Session.pgClient, item.UploadId, stOrgItem.storageBucket, stOrgItem.organizationId)
-		if err != nil {
+
+		switch err := f.UpdateBucket(Session.pgClient, item.UploadId, stOrgItem.storageBucket, targetPath, stOrgItem.organizationId); err.(type) {
+		case nil:
+			break
+		case *dbTable.ErrFileNotFound:
 			log.WithFields(
 				log.Fields{
 					"manifest_id": item.ManifestId,
 					"upload_id":   item.UploadId,
-				}).Error("Could not update the bucket for ", item.UploadId)
+				}).Info(err.Error())
 
-			// Update status of files in dynamoDB
-			err = dbTable.UpdateFileTableStatus(Session.DynamodbClient, Session.FileTableName, item.ManifestId, item.UploadId, manifestFile.Failed)
-			if err != nil {
-				log.WithFields(
-					log.Fields{
-						"manifest_id": item.ManifestId,
-						"upload_id":   item.UploadId,
-					}).Error("Error updating Dynamodb status: ", err)
-				continue
-			}
-			continue
-		}
+			updatedStatus = manifestFile.Failed
+			updatedMessage = err.Error()
 
-		// Update status of files in dynamoDB
-		err = dbTable.UpdateFileTableStatus(Session.DynamodbClient, Session.FileTableName, item.ManifestId, item.UploadId, manifestFile.Finalized)
-		if err != nil {
+		case *dbTable.ErrMultipleRowsAffected:
 			log.WithFields(
 				log.Fields{
 					"manifest_id": item.ManifestId,
 					"upload_id":   item.UploadId,
-				}).Error("Error updating Dynamodb status: ", err)
-			err = dbTable.UpdateFileTableStatus(Session.DynamodbClient, Session.FileTableName, item.ManifestId, item.UploadId, manifestFile.Failed)
-			if err != nil {
-				log.WithFields(
-					log.Fields{
-						"manifest_id": item.ManifestId,
-						"upload_id":   item.UploadId,
-					}).Error("Error updating Dynamodb status: ", err)
-				continue
-			}
-			continue
+				}).Error(err.Error())
+
+			updatedStatus = manifestFile.Failed
+			updatedMessage = err.Error()
+
+		default:
+			log.WithFields(
+				log.Fields{
+					"manifest_id": item.ManifestId,
+					"upload_id":   item.UploadId,
+				}).Error(err.Error())
+
+			updatedStatus = manifestFile.Failed
+			updatedMessage = err.Error()
+			moveSuccess = false
 		}
 
 		// Deleting item in Uploads Folder if successfully moved to final location.
@@ -349,6 +346,16 @@ func moveFile(workerId int32, items <-chan Item) error {
 					}).Error("Unable to delete file.")
 				continue
 			}
+		}
+
+		// Update status of files in dynamoDB
+		err = dbTable.UpdateFileTableStatus(Session.DynamodbClient, Session.FileTableName, item.ManifestId, item.UploadId, updatedStatus, updatedMessage)
+		if err != nil {
+			log.WithFields(
+				log.Fields{
+					"manifest_id": item.ManifestId,
+					"upload_id":   item.UploadId,
+				}).Error("Error updating Dynamodb status: ", err)
 		}
 
 	}

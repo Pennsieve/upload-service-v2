@@ -35,6 +35,7 @@ type uploadEntry struct {
 	size           int64
 	mergePackageId string
 	fileType       string
+	sha256         string
 }
 
 // UploadSession contains the information that is shared based on the manifest ID
@@ -135,6 +136,7 @@ func (s *UploadSession) ImportFiles(files []uploadFile.UploadFile, manifest *dbT
 			Size:       files[i].Size,
 			CheckSum:   files[i].ETag,
 			UUID:       uuid.MustParse(files[i].UploadId),
+			Sha256:     files[i].Sha256,
 		}
 
 		allFileParams = append(allFileParams, file)
