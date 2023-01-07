@@ -260,7 +260,7 @@ func moveFile(workerId int32, items <-chan Item) error {
 		if fileSize < maxFileSize {
 			err = simpleCopyFile(stOrgItem, sourcePath, targetPath)
 			if err != nil {
-				log.Error("Unable to copy item from  %s to %s, %v\n", sourcePath, targetPath, err)
+				log.Error(fmt.Sprintf("Unable to copy item from  %s to %s, %v\n", sourcePath, targetPath, err))
 				err = dbTable.UpdateFileTableStatus(Session.DynamodbClient, Session.FileTableName, item.ManifestId, item.UploadId, manifestFile.Failed, err.Error())
 				if err != nil {
 					log.Error("Error updating Dynamodb status: ", err)
@@ -273,7 +273,7 @@ func moveFile(workerId int32, items <-chan Item) error {
 		} else {
 			err = pkg.MultiPartCopy(Session.S3Client, fileSize, uploadBucket, sourceKey, stOrgItem.storageBucket, targetPath)
 			if err != nil {
-				log.Error("Unable to copy item from  %s to %s, %v\n", sourcePath, targetPath, err)
+				log.Error(fmt.Sprintf("Unable to copy item from  %s to %s, %v\n", sourcePath, targetPath, err))
 				err = dbTable.UpdateFileTableStatus(Session.DynamodbClient, Session.FileTableName, item.ManifestId, item.UploadId, manifestFile.Failed, err.Error())
 				if err != nil {
 					log.Error("Error updating Dynamodb status: ", err)
