@@ -97,18 +97,18 @@ publish:
 	@echo "*************************"
 	@echo ""
 	aws s3 cp $(WORKING_DIR)/lambda/bin/service/$(SERVICE_PACKAGE_NAME) s3://$(LAMBDA_BUCKET)/$(SERVICE_PACKAGE_NAME)/
-	rm -rf $(WORKING_DIR)/lambda/bin/modelService/$(SERVICE_PACKAGE_NAME)
+	rm -rf $(WORKING_DIR)/lambda/bin/service/$(SERVICE_PACKAGE_NAME)
 	@echo ""
 	@echo "*************************"
 	@echo "*   Publishing Upload lambda   *"
 	@echo "*************************"
 	@echo ""
-	aws s3 cp $(WORKING_DIR)/lambda/bin/modelService/$(UPLOADHANDLER_PACKAGE_NAME) s3://$(LAMBDA_BUCKET)/$(UPLOADHANDLER_PACKAGE_NAME)/
-	rm -rf $(WORKING_DIR)/lambda/bin/modelService/$(UPLOADHANDLER_PACKAGE_NAME)
+	aws s3 cp $(WORKING_DIR)/lambda/bin/upload/$(UPLOADHANDLER_PACKAGE_NAME) s3://$(LAMBDA_BUCKET)/$(UPLOADHANDLER_PACKAGE_NAME)/
+	rm -rf $(WORKING_DIR)/lambda/bin/upload/$(UPLOADHANDLER_PACKAGE_NAME)
 	@echo ""
 	@echo "*************************"
 	@echo "*   Publishing Move Trigger lambda   *"
 	@echo "*************************"
 	@echo ""
-	aws s3 cp $(WORKING_DIR)/lambda/bin/modelService/$(MOVETRIGGER_PACKAGE_NAME) s3://$(LAMBDA_BUCKET)/$(MOVETRIGGER_PACKAGE_NAME)/
-	rm -rf $(WORKING_DIR)/lambda/bin/modelService/$(MOVETRIGGER_PACKAGE_NAME)
+	aws s3 cp $(WORKING_DIR)/lambda/bin/moveTrigger/$(MOVETRIGGER_PACKAGE_NAME) s3://$(LAMBDA_BUCKET)/$(MOVETRIGGER_PACKAGE_NAME)/
+	rm -rf $(WORKING_DIR)/lambda/bin/moveTrigger/$(MOVETRIGGER_PACKAGE_NAME)
