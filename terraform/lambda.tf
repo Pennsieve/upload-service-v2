@@ -9,7 +9,8 @@ resource "aws_lambda_function" "upload_lambda" {
   memory_size      = 128
   source_code_hash = data.archive_file.upload_trigger_lambda_archive.output_base64sha256
   filename         = "${path.module}/../lambda/bin/pennsieve_upload_handler.zip"
-  publish = true
+  publish          = true
+  reserved_concurrent_executions = 1
 
   vpc_config {
     subnet_ids         = tolist(data.terraform_remote_state.vpc.outputs.private_subnet_ids)

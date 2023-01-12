@@ -10,7 +10,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue v1.9.4
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.15.7
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.29.2
-	github.com/pennsieve/pennsieve-go-api v1.4.2
+	github.com/pennsieve/pennsieve-go-api v1.4.3
 	github.com/sirupsen/logrus v1.9.0
 )
 
