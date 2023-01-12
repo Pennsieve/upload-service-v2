@@ -56,8 +56,6 @@ variable "send_logs_to_datadog" {
 variable "enable_dynamodb_backup" {
 }
 
-variable "version_number" {}
-
 variable "lambda_bucket" {
   default = "pennsieve-cc-lambda-functions-use1"
 }

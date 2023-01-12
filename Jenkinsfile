@@ -24,7 +24,7 @@ ansiColor('xterm') {
         stage("Deploy") {
           build job: "service-deploy/pennsieve-non-prod/us-east-1/dev-vpc-use1/dev/${serviceName}",
           parameters: [
-            string(name: 'VERSION_NUMBER', value: version),
+            string(name: 'IMAGE_TAG', value: version),
             string(name: 'TERRAFORM_ACTION', value: 'apply')
           ]
         }
