@@ -7,9 +7,8 @@ resource "aws_lambda_function" "upload_lambda" {
   role             = aws_iam_role.upload_service_v2_lambda_role.arn
   timeout          = 300
   memory_size      = 128
-  source_code_hash = data.archive_file.upload_trigger_lambda_archive.output_base64sha256
-  filename         = "${path.module}/../lambda/bin/pennsieve_upload_handler.zip"
-  publish = true
+  s3_bucket         = var.lambda_bucket
+  s3_key            = "${var.service_name}/upload-v2-handler-${var.version_number}.zip"
 
   vpc_config {
     subnet_ids         = tolist(data.terraform_remote_state.vpc.outputs.private_subnet_ids)
@@ -28,16 +27,7 @@ resource "aws_lambda_function" "upload_lambda" {
       LOG_LEVEL = "info",
     }
   }
-
 }
-
-
-data "archive_file" "upload_trigger_lambda_archive" {
-  type        = "zip"
-  source_dir  = "${path.module}/../lambda/bin/handler"
-  output_path = "${path.module}/../lambda/bin/pennsieve_upload_handler.zip"
-}
-
 
 ### SERVICE LAMBDA
 
@@ -50,8 +40,8 @@ resource "aws_lambda_function" "service_lambda" {
   role             = aws_iam_role.upload_service_v2_lambda_role.arn
   timeout          = 300
   memory_size      = 128
-  source_code_hash = data.archive_file.upload_service_lambda_archive.output_base64sha256
-  filename         = "${path.module}/../lambda/bin/pennsieve_service_handler.zip"
+  s3_bucket         = var.lambda_bucket
+  s3_key            = "${var.service_name}/upload-v2-service-${var.version_number}.zip"
 
   vpc_config {
     subnet_ids         = tolist(data.terraform_remote_state.vpc.outputs.private_subnet_ids)
@@ -69,12 +59,6 @@ resource "aws_lambda_function" "service_lambda" {
       LOG_LEVEL = "info",
     }
   }
-}
-
-data "archive_file" "upload_service_lambda_archive" {
-  type        = "zip"
-  source_dir  = "${path.module}/../lambda/bin/service"
-  output_path = "${path.module}/../lambda/bin/pennsieve_service_handler.zip"
 }
 
 #
@@ -102,8 +86,8 @@ resource "aws_lambda_function" "fargate_trigger_lambda" {
   role             = aws_iam_role.move_trigger_lambda_role.arn
   timeout          = 300
   memory_size      = 128
-  source_code_hash = data.archive_file.move_trigger_lambda_archive.output_base64sha256
-  filename         = "${path.module}/../lambda/bin/pennsieve_move_trigger_handler.zip"
+  s3_bucket         = var.lambda_bucket
+  s3_key            = "${var.service_name}/upload-v2-move-trigger-${var.version_number}.zip"
 
   vpc_config {
     subnet_ids         = tolist(data.terraform_remote_state.vpc.outputs.private_subnet_ids)
@@ -122,10 +106,4 @@ resource "aws_lambda_function" "fargate_trigger_lambda" {
       LOG_LEVEL = "info",
     }
   }
-}
-
-data "archive_file" "move_trigger_lambda_archive" {
-  type        = "zip"
-  source_dir  = "${path.module}/../lambda/bin/moveTrigger"
-  output_path = "${path.module}/../lambda/bin/pennsieve_move_trigger_handler.zip"
 }
