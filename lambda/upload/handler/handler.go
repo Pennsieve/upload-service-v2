@@ -335,7 +335,7 @@ func uploadEntryFromS3Event(event *events.S3Event) (*uploadEntry, error) {
 				"manifest_id": manifestId,
 				"upload_id":   uploadId,
 			},
-		).Warn("Unable to get HEAD object %s / %s", s3Bucket, s3Key)
+		).Warn(fmt.Sprintf("Unable to get HEAD object %s / %s", s3Bucket, s3Key))
 	}
 
 	response := uploadEntry{
