@@ -8,7 +8,7 @@ resource "aws_lambda_function" "upload_lambda" {
   timeout          = 300
   memory_size      = 128
   s3_bucket         = var.lambda_bucket
-  s3_key            = "${var.service_name}/upload-v2-handler-${var.image_tag}.zip"
+  s3_key            = "${var.service_name}/upload/upload-v2-handler-${var.image_tag}.zip"
   reserved_concurrent_executions = 1
 
   vpc_config {
@@ -42,7 +42,7 @@ resource "aws_lambda_function" "service_lambda" {
   timeout          = 300
   memory_size      = 128
   s3_bucket         = var.lambda_bucket
-  s3_key            = "${var.service_name}/upload-v2-service-${var.image_tag}.zip"
+  s3_key            = "${var.service_name}/service/upload-v2-service-${var.image_tag}.zip"
 
   vpc_config {
     subnet_ids         = tolist(data.terraform_remote_state.vpc.outputs.private_subnet_ids)
@@ -88,7 +88,7 @@ resource "aws_lambda_function" "fargate_trigger_lambda" {
   timeout          = 300
   memory_size      = 128
   s3_bucket         = var.lambda_bucket
-  s3_key            = "${var.service_name}/upload-v2-move-trigger-${var.image_tag}.zip"
+  s3_key            = "${var.service_name}/trigger/upload-v2-move-trigger-${var.image_tag}.zip"
 
   vpc_config {
     subnet_ids         = tolist(data.terraform_remote_state.vpc.outputs.private_subnet_ids)
