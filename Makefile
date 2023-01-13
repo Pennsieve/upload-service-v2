@@ -84,7 +84,7 @@ package:
 	@echo "***********************"
 	@echo ""
 	cd $(WORKING_DIR)/fargate/upload-move; \
-		env GOOS=linux GOARCH=amd64 go build -o $(WORKING_DIR)/fargate/bin/uploadMove/$(SERVICE_NAME)-$(VERSION); \
+		env GOOS=linux GOARCH=amd64 go build -o app/upload-move-files; \
 		docker buildx build --platform linux/amd64 -t pennsieve/upload_move_files:${VERSION} -t pennsieve/upload_move_files:latest . ;\
 		docker push pennsieve/upload_move_files:${VERSION}
 		docker push pennsieve/upload_move_files:latest
