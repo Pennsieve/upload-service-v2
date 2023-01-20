@@ -4,4 +4,4 @@ WORKDIR /app
 
 COPY app/upload-move-files /app/
 
-CMD [ "/app/upload-move-files" ]
+CMD [ "upload-move-files" ]
