@@ -65,7 +65,7 @@ package:
 	@echo "*   Building Upload lambda   *"
 	@echo "***********************"
 	@echo ""
-	cd $(WORKING_DIR)/lambda/service; \
+	cd $(WORKING_DIR)/lambda/upload; \
 		env GOOS=linux GOARCH=amd64 go build -o $(WORKING_DIR)/lambda/bin/upload/pennsieve_upload_handler; \
 		cd $(WORKING_DIR)/lambda/bin/upload/ ; \
 			zip -r $(WORKING_DIR)/lambda/bin/upload/$(UPLOADHANDLER_PACKAGE_NAME) .
@@ -74,7 +74,7 @@ package:
 	@echo "*   Building Move Trigger lambda   *"
 	@echo "***********************"
 	@echo ""
-	cd $(WORKING_DIR)/lambda/service; \
+	cd $(WORKING_DIR)/lambda/moveTrigger; \
   		env GOOS=linux GOARCH=amd64 go build -o $(WORKING_DIR)/lambda/bin/moveTrigger/pennsieve_move_trigger; \
 		cd $(WORKING_DIR)/lambda/bin/moveTrigger/ ; \
 			zip -r $(WORKING_DIR)/lambda/bin/moveTrigger/$(MOVETRIGGER_PACKAGE_NAME) .
