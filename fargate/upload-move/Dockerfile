@@ -1,7 +1,7 @@
 FROM golang:1.18-alpine
 
-WORKDIR .
+WORKDIR /app
 
-COPY app/upload-move-files .
+COPY app/upload-move-files ./app/
 
-CMD [ "./upload-move-files" ]
+CMD [ "app/upload-move-files" ]
