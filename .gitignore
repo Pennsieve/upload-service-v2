@@ -23,6 +23,7 @@
 # Lambda Binaries Zip files
 lambda/bin/*
 fargate/bin/*
+fargate/upload-move/app/*
 
 # Mac
 .DS_Store

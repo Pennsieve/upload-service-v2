@@ -1,7 +1,23 @@
 FROM golang:1.18-alpine
 
-WORKDIR /app
+#COPY  go.mod ./
+#COPY  go.sum ./
+#RUN go mod download
 
-COPY --chown=ubuntu:ubuntu app/upload-move-files /usr/local/bin/upload-move-files
+#COPY *.go ./
 
-CMD ["upload-move-files"]
+#COPY app/upload-move-files ./app/
+
+WORKDIR /usr/src/app
+
+COPY go.mod go.sum ./
+RUN go mod download && go mod verify
+
+COPY . .
+RUN go build -v -o /usr/local/bin/app .
+
+#COPY --chown=pennsieve:pennsieve publish/ ./publish/
+#
+#ENV PATH "/home/pennsieve/.local/bin:$PATH"
+
+CMD [ "app" ]

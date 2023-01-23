@@ -83,11 +83,9 @@ package:
 	@echo "***********************"
 	@echo ""
 	cd $(WORKING_DIR)/fargate/upload-move; \
-		env GOOS=linux GOARCH=amd64 go build -o app/upload-move-files; \
-		chmod 777 app/upload-move-files; \
-		DOCKER_BUILDKIT=1 docker buildx build --platform linux/amd64 -t pennsieve/upload_move_files:${VERSION} -t pennsieve/upload_move_files:latest . ;\
+#		env GOOS=linux GOARCH=amd64 go build -o app/upload-move-files; \
+		docker build -t pennsieve/upload_move_files:${VERSION} . ;\
 		docker push pennsieve/upload_move_files:${VERSION} ;\
-		docker push pennsieve/upload_move_files:latest
 
 publish:
 	@make package
