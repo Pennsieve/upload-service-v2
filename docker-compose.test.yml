@@ -1,0 +1,57 @@
+version: '3'
+
+networks:
+  upload-tests:
+    driver: bridge
+
+services:
+  # Test Container for running tests locally
+  local_tests:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    depends_on:
+      - dynamodb
+    environment:
+      - DYNAMODB_URL=http://dynamodb:8000
+    volumes:
+      - $PWD:/go/src/github.com/pennsieve/upload-service-v2
+    networks:
+      - upload-tests
+
+  # CI Container for running tests on Jenkins
+  ci_tests:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    depends_on:
+      - dynamodb-ci
+    environment:
+      - DYNAMODB_URL=http://dynamodb-ci:8000
+    volumes:
+      - $PWD:/go/src/github.com/pennsieve/upload-service-v2
+    networks:
+      - upload-tests
+
+  dynamodb:
+    image: amazon/dynamodb-local
+    restart: always
+    volumes:
+      - ./test-dynamodb-data:/home/dynamodblocal/data
+    ports:
+      - "8000:8000"
+    command: "-jar DynamoDBLocal.jar -sharedDb -dbPath /home/dynamodblocal/data/"
+    networks:
+      - upload-tests
+
+  dynamodb-ci:
+    image: amazon/dynamodb-local
+    restart: always
+    volumes:
+      - ./test-dynamodb-data:/home/dynamodblocal/data
+    command: "-jar DynamoDBLocal.jar -sharedDb -dbPath /home/dynamodblocal/data/"
+    networks:
+      - upload-tests
+
+
+
