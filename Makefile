@@ -29,11 +29,6 @@ test-ci:
 	docker-compose -f docker-compose.test.yml down --remove-orphans
 	docker-compose -f docker-compose.test.yml up --exit-code-from ci_tests ci_tests
 
-# Start a clean DynamoDB container for local testing
-start-dynamodb: docker-clean
-	docker-compose -f docker-compose.test.yml up dynamodb
-
-
 # Spin down active docker containers.
 docker-clean:
 	docker-compose -f docker-compose.test.yml down
