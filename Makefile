@@ -1,4 +1,4 @@
-.PHONY: help clean test package publish
+.PHONY: help clean test package publish test-ci
 
 LAMBDA_BUCKET ?= "pennsieve-cc-lambda-functions-use1"
 WORKING_DIR   ?= "$(shell pwd)"
@@ -20,34 +20,22 @@ help:
 	@echo "make publish - package and publish lambda function"
 
 test:
-	@echo ""
-	@echo "**********************************"
-	@echo "*   Testing MoveTrigger Lambda   *"
-	@echo "**********************************"
-	@echo ""
-	@cd $(WORKING_DIR)/lambda/moveTrigger; \
-		go test ./... ;
-	@echo ""
-	@echo "*******************************"
-	@echo "*   Testing Service Lambda    *"
-	@echo "*******************************"
-	@echo ""
-	@cd $(WORKING_DIR)/lambda/service; \
-		go test ./... ;
-	@echo ""
-	@echo "******************************"
-	@echo "*   Testing Upload Lambda    *"
-	@echo "******************************"
-	@echo ""
-	@cd $(WORKING_DIR)/lambda/upload; \
-		go test ./... ;
-	@echo ""
-	@echo "**********************************"
-	@echo "*   Testing Move Fargate Task	*"
-	@echo "**********************************"
-	@echo ""
-	@cd $(WORKING_DIR)/fargate/upload-move; \
-		go test ./... ;
+	docker-compose -f docker-compose.test.yml down --remove-orphans
+	docker-compose -f docker-compose.test.yml up --exit-code-from local_tests local_tests
+
+test-ci:
+	mkdir -p test-dynamodb-data
+	chmod -R 777 test-dynamodb-data
+	docker-compose -f docker-compose.test.yml down --remove-orphans
+	docker-compose -f docker-compose.test.yml up --exit-code-from ci_tests ci_tests
+
+# Spin down active docker containers.
+docker-clean:
+	docker-compose -f docker-compose.test.yml down
+
+# Remove dynamodb database
+clean: docker-clean
+	rm -rf test-dynamodb-data
 
 package:
 	@echo ""

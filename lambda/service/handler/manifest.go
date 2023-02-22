@@ -12,14 +12,14 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/google/uuid"
-	"github.com/pennsieve/pennsieve-go-api/pkg/authorizer"
-	manifestPkg "github.com/pennsieve/pennsieve-go-api/pkg/manifest"
-	"github.com/pennsieve/pennsieve-go-api/pkg/models/dbTable"
-	"github.com/pennsieve/pennsieve-go-api/pkg/models/fileInfo/fileType"
-	"github.com/pennsieve/pennsieve-go-api/pkg/models/gateway"
-	"github.com/pennsieve/pennsieve-go-api/pkg/models/manifest"
-	"github.com/pennsieve/pennsieve-go-api/pkg/models/manifest/manifestFile"
-	"github.com/pennsieve/pennsieve-go-api/pkg/models/packageInfo/packageType"
+	"github.com/pennsieve/pennsieve-go-core/pkg/authorizer"
+	"github.com/pennsieve/pennsieve-go-core/pkg/models/dbTable"
+	"github.com/pennsieve/pennsieve-go-core/pkg/models/fileInfo/fileType"
+	"github.com/pennsieve/pennsieve-go-core/pkg/models/gateway"
+	"github.com/pennsieve/pennsieve-go-core/pkg/models/manifest"
+	"github.com/pennsieve/pennsieve-go-core/pkg/models/manifest/manifestFile"
+	"github.com/pennsieve/pennsieve-go-core/pkg/models/packageInfo/packageType"
+	manifestPkg "github.com/pennsieve/pennsieve-go-core/pkg/upload"
 	log "github.com/sirupsen/logrus"
 	"github.com/valyala/fastjson"
 	"os"
@@ -175,7 +175,7 @@ func postManifestRoute(request events.APIGatewayV2HTTPRequest, claims *authorize
 	s.PackageTypeResolver(res.Files)
 
 	// ADDING FILES TO MANIFEST
-	addFilesResponse, err := s.AddFiles(activeManifest.ManifestId, res.Files, nil)
+	addFilesResponse := s.AddFiles(activeManifest.ManifestId, res.Files, nil)
 
 	// CREATING API RESPONSE
 	responseBody := manifest.PostResponse{

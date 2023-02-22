@@ -1,0 +1,11 @@
+FROM golang:1.18-alpine
+  
+  # Install gitdocker build -f Dockerfile .
+RUN set -ex; \
+apk update; \
+apk add --no-cache git
+  
+  # Set working directory 
+WORKDIR /go/src/github.com/pennsieve/upload-service-v2
+
+CMD CGO_ENABLED=0 sh run_tests.sh
