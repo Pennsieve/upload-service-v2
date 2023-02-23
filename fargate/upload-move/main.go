@@ -121,13 +121,15 @@ func main() {
 // getManifestStorageBucket returns the storage bucket associated with organization for manifest.
 func getManifestStorageBucket(manifestId string) (*storageOrgItem, error) {
 
+	var m *dbTable.ManifestTable
+
 	// If cached value exists, return cached value
 	if val, ok := storageBucketMap[manifestId]; ok {
 		return &val, nil
 	}
 
 	// Get manifest from dynamodb based on id
-	manifest, err := dbTable.GetFromManifest(Session.DynamodbClient, Session.TableName, manifestId)
+	manifest, err := m.GetFromManifest(Session.DynamodbClient, Session.TableName, manifestId)
 
 	// Get Organization associated with upload Manifest
 	db, err := core.ConnectRDS()
@@ -214,6 +216,8 @@ func moveFile(workerId int32, items <-chan Item) error {
 	// Iterate over items from the channel.
 	for item := range items {
 
+		var mf *dbTable.ManifestFileTable
+
 		// This check should be obsolete but want to add a double check to ensure we never remove files that have not
 		// been successfully copied to final location.
 		moveSuccess := false
@@ -246,7 +250,7 @@ func moveFile(workerId int32, items <-chan Item) error {
 					"upload_bucket": uploadBucket,
 					"s3_key":        sourceKey,
 				}).Error("moveFile: Cannot get size of S3 object.")
-			err = dbTable.UpdateFileTableStatus(Session.DynamodbClient, Session.FileTableName, item.ManifestId, item.UploadId, manifestFile.Failed, err.Error())
+			err = mf.UpdateFileTableStatus(Session.DynamodbClient, Session.FileTableName, item.ManifestId, item.UploadId, manifestFile.Failed, err.Error())
 			if err != nil {
 				log.Println("Error updating Dynamodb status: ", err)
 				continue
@@ -261,7 +265,7 @@ func moveFile(workerId int32, items <-chan Item) error {
 			err = simpleCopyFile(stOrgItem, sourcePath, targetPath)
 			if err != nil {
 				log.Error(fmt.Sprintf("Unable to copy item from  %s to %s, %v\n", sourcePath, targetPath, err))
-				err = dbTable.UpdateFileTableStatus(Session.DynamodbClient, Session.FileTableName, item.ManifestId, item.UploadId, manifestFile.Failed, err.Error())
+				err = mf.UpdateFileTableStatus(Session.DynamodbClient, Session.FileTableName, item.ManifestId, item.UploadId, manifestFile.Failed, err.Error())
 				if err != nil {
 					log.Error("Error updating Dynamodb status: ", err)
 					continue
@@ -274,7 +278,7 @@ func moveFile(workerId int32, items <-chan Item) error {
 			err = pkg.MultiPartCopy(Session.S3Client, fileSize, uploadBucket, sourceKey, stOrgItem.storageBucket, targetPath)
 			if err != nil {
 				log.Error(fmt.Sprintf("Unable to copy item from  %s to %s, %v\n", sourcePath, targetPath, err))
-				err = dbTable.UpdateFileTableStatus(Session.DynamodbClient, Session.FileTableName, item.ManifestId, item.UploadId, manifestFile.Failed, err.Error())
+				err = mf.UpdateFileTableStatus(Session.DynamodbClient, Session.FileTableName, item.ManifestId, item.UploadId, manifestFile.Failed, err.Error())
 				if err != nil {
 					log.Error("Error updating Dynamodb status: ", err)
 					continue
@@ -349,7 +353,7 @@ func moveFile(workerId int32, items <-chan Item) error {
 		}
 
 		// Update status of files in dynamoDB
-		err = dbTable.UpdateFileTableStatus(Session.DynamodbClient, Session.FileTableName, item.ManifestId, item.UploadId, updatedStatus, updatedMessage)
+		err = mf.UpdateFileTableStatus(Session.DynamodbClient, Session.FileTableName, item.ManifestId, item.UploadId, updatedStatus, updatedMessage)
 		if err != nil {
 			log.WithFields(
 				log.Fields{
