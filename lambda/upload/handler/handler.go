@@ -91,7 +91,9 @@ func Handler(ctx context.Context, sqsEvent events.SQSEvent) error {
 		var s UploadSession
 
 		// Get manifest from dynamodb
-		manifest, err := dbTable.GetFromManifest(manifestSession.Client, manifestSession.TableName, manifestId)
+		var m *dbTable.ManifestTable
+		var mf *dbTable.ManifestFileTable
+		manifest, err := m.GetFromManifest(manifestSession.Client, manifestSession.TableName, manifestId)
 
 		// Create upload session (with DB access) and import files
 		session, err := s.CreateUploadSession(manifest)
@@ -133,12 +135,12 @@ func Handler(ctx context.Context, sqsEvent events.SQSEvent) error {
 			String: "InProgress",
 			Valid:  true,
 		}
-		remaining, _, err := dbTable.GetFilesPaginated(manifestSession.Client, manifestSession.TableName,
+		remaining, _, err := mf.GetFilesPaginated(manifestSession.Client, manifestSession.TableName,
 			manifestId, reqStatus, 1, nil)
 		if len(remaining) == 0 {
-			dbTable.UpdateManifestStatus(manifestSession.Client, manifestSession.TableName, manifestId, manfestModels.Completed)
+			m.UpdateManifestStatus(manifestSession.Client, manifestSession.TableName, manifestId, manfestModels.Completed)
 		} else if manifest.Status == "Completed" {
-			dbTable.UpdateManifestStatus(manifestSession.Client, manifestSession.TableName, manifestId, manfestModels.Uploading)
+			m.UpdateManifestStatus(manifestSession.Client, manifestSession.TableName, manifestId, manfestModels.Uploading)
 		}
 
 	}

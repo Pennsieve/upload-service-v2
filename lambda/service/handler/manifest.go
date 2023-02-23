@@ -45,16 +45,10 @@ func getManifestRoute(request events.APIGatewayV2HTTPRequest, claims *authorizer
 
 	apiResponse := events.APIGatewayV2HTTPResponse{}
 
-	cfg, err := config.LoadDefaultConfig(context.Background())
-	if err != nil {
-		panic("unable to load SDK config, " + err.Error())
-	}
-
 	// Create an Amazon DynamoDB client.
-	client := dynamodb.NewFromConfig(cfg)
 	table := os.Getenv("MANIFEST_TABLE")
-
-	manifests, err := dbTable.GetManifestsForDataset(client, table, claims.DatasetClaim.NodeId)
+	var activeManifest *dbTable.ManifestTable
+	manifests, err := activeManifest.GetManifestsForDataset(client, table, claims.DatasetClaim.NodeId)
 	if err != nil {
 		message := "Error: Unable to get manifests for dataset: " + claims.DatasetClaim.NodeId + " ||| " + fmt.Sprint(err)
 		apiResponse = events.APIGatewayV2HTTPResponse{
@@ -63,6 +57,7 @@ func getManifestRoute(request events.APIGatewayV2HTTPRequest, claims *authorizer
 	}
 
 	// Build the input parameters for the request.
+
 	var manifestDTOs []manifest.ManifestDTO
 	for _, m := range manifests {
 		manifestDTOs = append(manifestDTOs, manifest.ManifestDTO{
@@ -145,21 +140,13 @@ func postManifestRoute(request events.APIGatewayV2HTTPRequest, claims *authorize
 			DateCreated:    time.Now().Unix(),
 		}
 
-		s.CreateManifest(*activeManifest)
+		activeManifest.CreateManifest(s.Client, s.TableName, *activeManifest)
 
 	} else {
 		// Check that manifest exists.
 		log.Debug("Has existing manifest")
 
-		cfg, err := config.LoadDefaultConfig(context.Background())
-		if err != nil {
-			return nil, fmt.Errorf("LoadDefaultConfig: %v\n", err)
-		}
-
-		// Create an Amazon DynamoDB client.
-		client := dynamodb.NewFromConfig(cfg)
-
-		activeManifest, err = dbTable.GetFromManifest(client, manifestTableName, res.ID)
+		activeManifest, err = activeManifest.GetFromManifest(s.Client, manifestTableName, res.ID)
 		if err != nil {
 			message := "Error: Invalid ManifestID |||| Manifest ID: " + res.ID
 			apiResponse = events.APIGatewayV2HTTPResponse{
@@ -252,7 +239,8 @@ func getManifestFilesRoute(request events.APIGatewayV2HTTPRequest, claims *autho
 		}
 	}
 
-	manifestFiles, lastKey, err := dbTable.GetFilesPaginated(client, table, manifestId, status, limit, startKey)
+	var mf *dbTable.ManifestFileTable
+	manifestFiles, lastKey, err := mf.GetFilesPaginated(client, table, manifestId, status, limit, startKey)
 	if err != nil {
 		message := "Error: Unable to get files for manifests: " + manifestId + " ||| " + fmt.Sprint(err)
 		apiResponse = events.APIGatewayV2HTTPResponse{
@@ -362,7 +350,8 @@ func getManifestFilesStatusRoute(request events.APIGatewayV2HTTPRequest, claims 
 	/*
 		Query table
 	*/
-	files, lastKey, err := dbTable.GetFilesPaginated(client, manifestFileTableName, manifestId, status, 500, startKey)
+	var mf *dbTable.ManifestFileTable
+	files, lastKey, err := mf.GetFilesPaginated(client, manifestFileTableName, manifestId, status, 500, startKey)
 	if err != nil {
 		message := "Error: Unable to get manifests for dataset: " + claims.DatasetClaim.NodeId + " ||| " + fmt.Sprint(err)
 		apiResponse = events.APIGatewayV2HTTPResponse{
@@ -379,7 +368,7 @@ func getManifestFilesStatusRoute(request events.APIGatewayV2HTTPRequest, claims 
 	// Update status for returned items to "Verified"
 	if updateStatus {
 		for _, f := range UploadIds {
-			err = dbTable.UpdateFileTableStatus(client, manifestFileTableName, manifestId, f, manifestFile.Verified, "")
+			err = mf.UpdateFileTableStatus(client, manifestFileTableName, manifestId, f, manifestFile.Verified, "")
 			if err != nil {
 				fmt.Println("Error updating table: ", err)
 			}
