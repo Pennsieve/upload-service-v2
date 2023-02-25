@@ -11,7 +11,6 @@ import (
 	"github.com/pennsieve/pennsieve-go-core/pkg/dynamodb/models"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/fileInfo/fileType"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/manifest/manifestFile"
-	"github.com/pennsieve/pennsieve-go-core/pkg/pgdb"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"os"
@@ -61,10 +60,10 @@ func TestMain(m *testing.M) {
 	var err error
 
 	orgId = 2
-	testDB, err = pgdb.ConnectENVWithOrg(orgId)
-	if err != nil {
-		log.Fatal("cannot connect to db:", err)
-	}
+	//testDB, err = pgdb.ConnectENVWithOrg(orgId)
+	//if err != nil {
+	//	log.Fatal("cannot connect to db:", err)
+	//}
 
 	svc := getClient()
 	svc.DeleteTable(context.Background(), &dynamodb.DeleteTableInput{TableName: aws.String("upload-table")})
@@ -342,13 +341,24 @@ func testAddFiles(t *testing.T, store *UploadHandlerStore) {
 		},
 	}
 
+	testFileUploadIds := map[string]any{}
+	for _, f := range testFileDTOs {
+		testFileUploadIds[f.UploadID] = nil
+	}
+
 	// Adding files to upload
 	manifestId := "1111"
 	result := store.dy.AddFiles(manifestId, testFileDTOs, nil, store.fileTableName)
 
 	// Checking returned status
+	// Checking returned status
 	assert.Equal(t, manifestFile.Unknown, result.FileStatus[0].Status)
-	assert.Equal(t, testFileDTOs[0].UploadID, result.FileStatus[0].UploadId)
+
+	resultUploadIds := map[string]any{}
+	for _, f := range result.FileStatus {
+		resultUploadIds[f.UploadId] = nil
+	}
+	assert.Equal(t, testFileUploadIds, resultUploadIds)
 
 }
 
