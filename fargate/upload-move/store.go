@@ -1,27 +1,300 @@
 package main
 
 import (
+	"context"
 	"database/sql"
+	"fmt"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	dynamo2 "github.com/pennsieve/pennsieve-go-core/pkg/dynamodb"
+	"github.com/pennsieve/pennsieve-go-core/pkg/models/manifest/manifestFile"
 	"github.com/pennsieve/pennsieve-go-core/pkg/pgdb"
+	"github.com/pennsieve/pennsieve-go-core/pkg/pgdb/models"
+	"github.com/pennsieve/pennsieve-upload-service-v2/upload-move-files/pkg"
+	log "github.com/sirupsen/logrus"
 )
 
 // UploadMoveStore provides the Queries interface and a db instance.
 type UploadMoveStore struct {
-	pg *pgdb.Queries
-	dy *dynamo2.Queries
-	db *sql.DB
-	s3 *s3.Client
+	pg   *pgdb.Queries
+	dy   *dynamo2.Queries
+	db   *sql.DB
+	dydb *dynamodb.Client
+	s3   *s3.Client
 }
 
 // NewUploadMoveStore returns a NewUploadMoveStore object which implements the Queries
 func NewUploadMoveStore(db *sql.DB, dydb *dynamodb.Client, s3 *s3.Client) *UploadMoveStore {
 	return &UploadMoveStore{
-		db: db,
-		pg: pgdb.New(db),
-		dy: dynamo2.New(dydb),
-		s3: s3,
+		db:   db,
+		dydb: dydb,
+		pg:   pgdb.New(db),
+		dy:   dynamo2.New(dydb),
+		s3:   s3,
 	}
+}
+
+// GetManifestStorageBucket returns the storage bucket associated with organization for manifest.
+func (s *UploadMoveStore) GetManifestStorageBucket(manifestId string) (*storageOrgItem, error) {
+
+	//var m *dbTable.ManifestTable
+
+	// If cached value exists, return cached value
+	if val, ok := storageBucketMap[manifestId]; ok {
+		return &val, nil
+	}
+
+	// Get manifest from dynamodb based on id
+	manifest, err := s.dy.GetFromManifest(context.Background(), TableName, manifestId)
+
+	//var o dbTable.Organization
+	org, err := s.pg.GetOrganization(context.Background(), manifest.OrganizationId)
+	if err != nil {
+		log.Println("Error getting organization: ", err)
+		return nil, err
+	}
+
+	// Return storagebucket if defined, or default bucket.
+	sbName := defaultStorageBucket
+	if org.StorageBucket.Valid {
+		sbName = org.StorageBucket.String
+	}
+
+	si := storageOrgItem{
+		organizationId: manifest.OrganizationId,
+		storageBucket:  sbName,
+		datasetId:      manifest.DatasetId,
+	}
+
+	storageBucketMap[manifestId] = si
+
+	return &si, nil
+}
+
+// manifestFileWalk paginates results from dynamodb manifest files table and put items on channel.
+func (s *UploadMoveStore) manifestFileWalk(walker fileWalk) error {
+
+	p := dynamodb.NewQueryPaginator(s.dydb, &dynamodb.QueryInput{
+		TableName:              aws.String(FileTableName),
+		IndexName:              aws.String("StatusIndex"),
+		Limit:                  aws.Int32(5),
+		KeyConditionExpression: aws.String("#status = :hashKey"),
+		ExpressionAttributeValues: map[string]types.AttributeValue{
+			":hashKey": &types.AttributeValueMemberS{Value: "Imported"},
+		},
+		ExpressionAttributeNames: map[string]string{
+			"#status": "Status",
+		},
+	})
+
+	log.Println("In manifest file walk")
+
+	for p.HasMorePages() {
+		log.Println("Getting page from dynamodb")
+
+		out, err := p.NextPage(context.TODO())
+		if err != nil {
+			panic(err)
+		}
+
+		var pItems []Item
+		err = attributevalue.UnmarshalListOfMaps(out.Items, &pItems)
+		if err != nil {
+			panic(err)
+		}
+
+		// Add items to the channel
+		for _, item := range pItems {
+			walker <- item
+		}
+
+	}
+
+	return nil
+}
+
+// moveFile accepts an item from the channel and implements the move workflow for that item.
+func (s *UploadMoveStore) moveFile(workerId int32, items <-chan Item) error {
+
+	// Close worker after it completes.
+	// This happens when the items channel closes.
+	defer func() {
+		log.Debug("Closing Worker: ", workerId)
+		processWg.Done()
+	}()
+
+	// Iterate over items from the channel.
+	for item := range items {
+
+		//var mf *dbTable.ManifestFileTable
+
+		// This check should be obsolete but want to add a double check to ensure we never remove files that have not
+		// been successfully copied to final location.
+		moveSuccess := false
+
+		stOrgItem, err := s.GetManifestStorageBucket(item.ManifestId)
+		if err != nil {
+			log.WithFields(
+				log.Fields{
+					"manifest_id": item.ManifestId,
+					"upload_id":   item.UploadId,
+				}).Error("Error getting storage bucket for manifest: ", err)
+			return err
+		}
+
+		log.Debug(fmt.Sprintf("%d - %s - %s", workerId, item.UploadId, stOrgItem.storageBucket))
+
+		sourceKey := fmt.Sprintf("%s/%s", item.ManifestId, item.UploadId)
+		sourcePath := fmt.Sprintf("%s/%s/%s", uploadBucket, item.ManifestId, item.UploadId)
+		targetPath := fmt.Sprintf("O%d/D%d/%s/%s", stOrgItem.organizationId, stOrgItem.datasetId, item.ManifestId, item.UploadId)
+
+		// Get File Size
+		headObj := s3.HeadObjectInput{
+			Bucket: aws.String(uploadBucket),
+			Key:    aws.String(sourceKey),
+		}
+		result, err := s.s3.HeadObject(context.Background(), &headObj)
+		if err != nil {
+			log.WithFields(
+				log.Fields{
+					"upload_bucket": uploadBucket,
+					"s3_key":        sourceKey,
+				}).Error("moveFile: Cannot get size of S3 object.")
+			err = s.dy.UpdateFileTableStatus(context.Background(), FileTableName, item.ManifestId, item.UploadId, manifestFile.Failed, err.Error())
+			if err != nil {
+				log.Println("Error updating Dynamodb status: ", err)
+				continue
+			}
+			continue
+		}
+
+		// Copy File
+		fileSize := result.ContentLength           // size in bytes
+		const maxFileSize = 5 * 1000 * 1000 * 1000 // 5GiB (real limit is 5GB but want to be conservative)
+		if fileSize < maxFileSize {
+			err = s.simpleCopyFile(stOrgItem, sourcePath, targetPath)
+			if err != nil {
+				log.Error(fmt.Sprintf("Unable to copy item from  %s to %s, %v\n", sourcePath, targetPath, err))
+				err = s.dy.UpdateFileTableStatus(context.Background(), FileTableName, item.ManifestId, item.UploadId, manifestFile.Failed, err.Error())
+				if err != nil {
+					log.Error("Error updating Dynamodb status: ", err)
+					continue
+				}
+				continue
+			} else {
+				moveSuccess = true
+			}
+		} else {
+			err = pkg.MultiPartCopy(s.s3, fileSize, uploadBucket, sourceKey, stOrgItem.storageBucket, targetPath)
+			if err != nil {
+				log.Error(fmt.Sprintf("Unable to copy item from  %s to %s, %v\n", sourcePath, targetPath, err))
+				err = s.dy.UpdateFileTableStatus(context.Background(), FileTableName, item.ManifestId, item.UploadId, manifestFile.Failed, err.Error())
+				if err != nil {
+					log.Error("Error updating Dynamodb status: ", err)
+					continue
+				}
+				continue
+			} else {
+				moveSuccess = true
+			}
+		}
+
+		log.WithFields(
+			log.Fields{
+				"manifest_id": item.ManifestId,
+				"upload_id":   item.UploadId,
+				"s3_target":   targetPath,
+			}).Infof("%s copied to storage bin.", item.UploadId)
+
+		updatedStatus := manifestFile.Finalized
+		updatedMessage := ""
+		//var f dbTable.File
+
+		switch err := s.pg.UpdateBucketForFile(context.Background(), item.UploadId, stOrgItem.storageBucket, targetPath, stOrgItem.organizationId); err.(type) {
+		case nil:
+			break
+		case *models.ErrFileNotFound:
+			log.WithFields(
+				log.Fields{
+					"manifest_id": item.ManifestId,
+					"upload_id":   item.UploadId,
+				}).Info(err.Error())
+
+			updatedStatus = manifestFile.Failed
+			updatedMessage = err.Error()
+
+		case *models.ErrMultipleRowsAffected:
+			log.WithFields(
+				log.Fields{
+					"manifest_id": item.ManifestId,
+					"upload_id":   item.UploadId,
+				}).Error(err.Error())
+
+			updatedStatus = manifestFile.Failed
+			updatedMessage = err.Error()
+
+		default:
+			log.WithFields(
+				log.Fields{
+					"manifest_id": item.ManifestId,
+					"upload_id":   item.UploadId,
+				}).Error(err.Error())
+
+			updatedStatus = manifestFile.Failed
+			updatedMessage = err.Error()
+			moveSuccess = false
+		}
+
+		// Deleting item in Uploads Folder if successfully moved to final location.
+		if moveSuccess == true {
+			deleteParams := s3.DeleteObjectInput{
+				Bucket: aws.String(uploadBucket),
+				Key:    aws.String(fmt.Sprintf("%s/%s", item.ManifestId, item.UploadId)),
+			}
+			_, err = s.s3.DeleteObject(context.Background(), &deleteParams)
+			if err != nil {
+				log.WithFields(
+					log.Fields{
+						"manifest_id": item.ManifestId,
+						"upload_id":   item.UploadId,
+					}).Error("Unable to delete file.")
+				continue
+			}
+		}
+
+		// Update status of files in dynamoDB
+		err = s.dy.UpdateFileTableStatus(context.Background(), FileTableName, item.ManifestId, item.UploadId, updatedStatus, updatedMessage)
+		if err != nil {
+			log.WithFields(
+				log.Fields{
+					"manifest_id": item.ManifestId,
+					"upload_id":   item.UploadId,
+				}).Error("Error updating Dynamodb status: ", err)
+		}
+
+	}
+
+	return nil
+}
+
+func (s *UploadMoveStore) simpleCopyFile(stOrgItem *storageOrgItem, sourcePath string, targetPath string) error {
+	// Copy the item
+
+	log.Debug("Simple copy: ", sourcePath, " to: ", stOrgItem.storageBucket, ":", targetPath)
+
+	params := s3.CopyObjectInput{
+		Bucket:     aws.String(stOrgItem.storageBucket),
+		CopySource: aws.String(sourcePath),
+		Key:        aws.String(targetPath),
+	}
+
+	_, err := s.s3.CopyObject(context.Background(), &params)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
