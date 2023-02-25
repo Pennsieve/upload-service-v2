@@ -2,9 +2,9 @@ module github.com/pennsieve/pennsieve-upload-service-v2/service
 
 go 1.18
 
-//replace (
-//	github.com/pennsieve/pennsieve-go-core => ../../../pennsieve-go-core
-//)
+replace (
+	github.com/pennsieve/pennsieve-go-core => ../../../pennsieve-go-core
+)
 require (
 	github.com/aws/aws-lambda-go v1.32.0
 	github.com/aws/aws-sdk-go-v2 v1.17.5

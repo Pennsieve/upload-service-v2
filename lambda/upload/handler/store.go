@@ -26,22 +26,38 @@ import (
 
 // UploadHandlerStore provides the Queries interface and a db instance.
 type UploadHandlerStore struct {
-	pg        *pgdb.Queries
-	dy        *dynamoStore.Queries
-	pgdb      *sql.DB
-	dynamodb  *dynamodb.Client
-	SNSClient domain.SnsAPI
-	SNSTopic  string
+	pg            *pgdb.Queries
+	dy            *dynamoStore.Queries
+	pgdb          *sql.DB
+	dynamodb      *dynamodb.Client
+	SNSClient     domain.SnsAPI
+	SNSTopic      string
+	fileTableName string
+	tableName     string
 }
 
 // NewUploadHandlerStore returns a UploadHandlerStore object which implements the Queires
-func NewUploadHandlerStore(db *sql.DB, dy *dynamodb.Client, sns domain.SnsAPI) *UploadHandlerStore {
+func NewUploadHandlerStore(db *sql.DB, dy *dynamodb.Client, sns domain.SnsAPI, fileTableName string, tableName string) *UploadHandlerStore {
 	return &UploadHandlerStore{
-		pgdb:      db,
-		dynamodb:  dy,
-		SNSClient: sns,
-		pg:        pgdb.New(db),
-		dy:        dynamoStore.New(dy),
+		pgdb:          db,
+		dynamodb:      dy,
+		SNSClient:     sns,
+		pg:            pgdb.New(db),
+		dy:            dynamoStore.New(dy),
+		fileTableName: fileTableName,
+		tableName:     tableName,
+	}
+}
+
+func (s *UploadHandlerStore) WithDB(db *sql.DB) *UploadHandlerStore {
+	return &UploadHandlerStore{
+		pgdb:          db,
+		dynamodb:      s.dynamodb,
+		SNSClient:     s.SNSClient,
+		pg:            s.pg,
+		dy:            s.dy,
+		fileTableName: s.fileTableName,
+		tableName:     s.tableName,
 	}
 }
 
@@ -281,7 +297,7 @@ func (s *UploadHandlerStore) UpdateStorage(files []models.FileParams, packages [
 		return err
 	}
 	defer dbOrg.Close()
-	PennsieveStore := NewUploadHandlerStore(dbOrg, s.dynamodb, s.SNSClient)
+	PennsieveStore := NewUploadHandlerStore(dbOrg, s.dynamodb, s.SNSClient, manifestSession.FileTableName, manifestSession.TableName)
 
 	// Update all packageSize
 	for _, f := range files {

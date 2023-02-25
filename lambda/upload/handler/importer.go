@@ -28,63 +28,6 @@ type uploadEntry struct {
 	sha256         string
 }
 
-//// UploadSession contains the information that is shared based on the manifest ID
-//type UploadSession struct {
-//	organizationId  int
-//	datasetId       int
-//	datasetNodeId   string
-//	ownerId         int
-//	targetPackageId string
-//	db              *sql.DB
-//}
-
-// PublishToSNS publishes messages to SNS after files are imported.
-//func (s *UploadSession) PublishToSNS(files []models.File) error {
-//
-//	const batchSize = 10
-//	var snsEntries []types.PublishBatchRequestEntry
-//	for _, f := range files {
-//		e := types.PublishBatchRequestEntry{
-//			Id:      aws.String(f.UUID.String()),
-//			Message: aws.String(fmt.Sprintf("%d", f.PackageId)),
-//		}
-//		snsEntries = append(snsEntries, e)
-//
-//		// Send SNS messages in blocks of batchSize
-//		if len(snsEntries) == batchSize {
-//			err := sendSNSMessages(snsEntries)
-//			if err != nil {
-//				return err
-//			}
-//			snsEntries = nil
-//		}
-//	}
-//
-//	// send remaining entries
-//	err := sendSNSMessages(snsEntries)
-//
-//	return err
-//}
-
-//func sendSNSMessages(snsEntries []types.PublishBatchRequestEntry) error {
-//	log.Debug("Number of SNS messages: ", len(snsEntries))
-//
-//	if len(snsEntries) > 0 {
-//		params := sns.PublishBatchInput{
-//			PublishBatchRequestEntries: snsEntries,
-//			TopicArn:                   aws.String(manifestSession.SNSTopic),
-//		}
-//		_, err := manifestSession.SNSClient.PublishBatch(context.Background(), &params)
-//		if err != nil {
-//			log.Error("Error publishing to SNS: ", err)
-//			return err
-//		}
-//	}
-//
-//	return nil
-//
-//}
-
 // getPackageParams returns an array of PackageParams to insert in the Packages Table.
 func getPackageParams(datasetId int, ownerId int, uploadFiles []uploadFile.UploadFile, pathToFolderMap models.PackageMap) ([]models.PackageParams, error) {
 	var pkgParams []models.PackageParams

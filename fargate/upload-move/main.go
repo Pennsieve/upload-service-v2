@@ -10,9 +10,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/pennsieve/pennsieve-go-core/pkg/core"
-	"github.com/pennsieve/pennsieve-go-core/pkg/models/dbTable"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/manifest/manifestFile"
+	"github.com/pennsieve/pennsieve-go-core/pkg/pgdb"
+	"github.com/pennsieve/pennsieve-go-core/pkg/pgdb/models"
 	"github.com/pennsieve/pennsieve-upload-service-v2/upload-move-files/pkg"
 	log "github.com/sirupsen/logrus"
 	"os"
@@ -22,6 +22,7 @@ import (
 var Session awsSession
 var uploadBucket string
 var defaultStorageBucket string
+var store *UploadMoveStore
 
 type Item struct {
 	ManifestId string `dynamodbav:"ManifestId"`
@@ -75,12 +76,14 @@ func main() {
 	}
 
 	// Get Postgres connection
-	db, err := core.ConnectRDS()
+	db, err := pgdb.ConnectRDS()
 	Session.pgClient = db
 	if err != nil {
 		log.Fatalf("Cannot connect to the Pennsieve Postgres Proxy.")
 	}
 	defer Session.pgClient.Close()
+
+	store = NewUploadMoveStore(db, dynamodb.NewFromConfig(cfg), s3.NewFromConfig(cfg))
 
 	uploadBucket = os.Getenv("UPLOAD_BUCKET")
 	defaultStorageBucket = os.Getenv("STORAGE_BUCKET")
@@ -121,7 +124,7 @@ func main() {
 // getManifestStorageBucket returns the storage bucket associated with organization for manifest.
 func getManifestStorageBucket(manifestId string) (*storageOrgItem, error) {
 
-	var m *dbTable.ManifestTable
+	//var m *dbTable.ManifestTable
 
 	// If cached value exists, return cached value
 	if val, ok := storageBucketMap[manifestId]; ok {
@@ -129,16 +132,10 @@ func getManifestStorageBucket(manifestId string) (*storageOrgItem, error) {
 	}
 
 	// Get manifest from dynamodb based on id
-	manifest, err := m.GetFromManifest(Session.DynamodbClient, Session.TableName, manifestId)
+	manifest, err := store.dy.GetFromManifest(context.Background(), Session.TableName, manifestId)
 
-	// Get Organization associated with upload Manifest
-	db, err := core.ConnectRDS()
-	if err != nil {
-		return nil, err
-	}
-
-	var o dbTable.Organization
-	org, err := o.Get(db, manifest.OrganizationId)
+	//var o dbTable.Organization
+	org, err := store.pg.GetOrganization(context.Background(), manifest.OrganizationId)
 	if err != nil {
 		log.Println("Error getting organization: ", err)
 		return nil, err
@@ -216,7 +213,7 @@ func moveFile(workerId int32, items <-chan Item) error {
 	// Iterate over items from the channel.
 	for item := range items {
 
-		var mf *dbTable.ManifestFileTable
+		//var mf *dbTable.ManifestFileTable
 
 		// This check should be obsolete but want to add a double check to ensure we never remove files that have not
 		// been successfully copied to final location.
@@ -250,7 +247,7 @@ func moveFile(workerId int32, items <-chan Item) error {
 					"upload_bucket": uploadBucket,
 					"s3_key":        sourceKey,
 				}).Error("moveFile: Cannot get size of S3 object.")
-			err = mf.UpdateFileTableStatus(Session.DynamodbClient, Session.FileTableName, item.ManifestId, item.UploadId, manifestFile.Failed, err.Error())
+			err = store.dy.UpdateFileTableStatus(context.Background(), Session.FileTableName, item.ManifestId, item.UploadId, manifestFile.Failed, err.Error())
 			if err != nil {
 				log.Println("Error updating Dynamodb status: ", err)
 				continue
@@ -265,7 +262,7 @@ func moveFile(workerId int32, items <-chan Item) error {
 			err = simpleCopyFile(stOrgItem, sourcePath, targetPath)
 			if err != nil {
 				log.Error(fmt.Sprintf("Unable to copy item from  %s to %s, %v\n", sourcePath, targetPath, err))
-				err = mf.UpdateFileTableStatus(Session.DynamodbClient, Session.FileTableName, item.ManifestId, item.UploadId, manifestFile.Failed, err.Error())
+				err = store.dy.UpdateFileTableStatus(context.Background(), Session.FileTableName, item.ManifestId, item.UploadId, manifestFile.Failed, err.Error())
 				if err != nil {
 					log.Error("Error updating Dynamodb status: ", err)
 					continue
@@ -278,7 +275,7 @@ func moveFile(workerId int32, items <-chan Item) error {
 			err = pkg.MultiPartCopy(Session.S3Client, fileSize, uploadBucket, sourceKey, stOrgItem.storageBucket, targetPath)
 			if err != nil {
 				log.Error(fmt.Sprintf("Unable to copy item from  %s to %s, %v\n", sourcePath, targetPath, err))
-				err = mf.UpdateFileTableStatus(Session.DynamodbClient, Session.FileTableName, item.ManifestId, item.UploadId, manifestFile.Failed, err.Error())
+				err = store.dy.UpdateFileTableStatus(context.Background(), Session.FileTableName, item.ManifestId, item.UploadId, manifestFile.Failed, err.Error())
 				if err != nil {
 					log.Error("Error updating Dynamodb status: ", err)
 					continue
@@ -298,12 +295,12 @@ func moveFile(workerId int32, items <-chan Item) error {
 
 		updatedStatus := manifestFile.Finalized
 		updatedMessage := ""
-		var f dbTable.File
+		//var f dbTable.File
 
-		switch err := f.UpdateBucket(Session.pgClient, item.UploadId, stOrgItem.storageBucket, targetPath, stOrgItem.organizationId); err.(type) {
+		switch err := store.pg.UpdateBucketForFile(context.Background(), item.UploadId, stOrgItem.storageBucket, targetPath, stOrgItem.organizationId); err.(type) {
 		case nil:
 			break
-		case *dbTable.ErrFileNotFound:
+		case *models.ErrFileNotFound:
 			log.WithFields(
 				log.Fields{
 					"manifest_id": item.ManifestId,
@@ -313,7 +310,7 @@ func moveFile(workerId int32, items <-chan Item) error {
 			updatedStatus = manifestFile.Failed
 			updatedMessage = err.Error()
 
-		case *dbTable.ErrMultipleRowsAffected:
+		case *models.ErrMultipleRowsAffected:
 			log.WithFields(
 				log.Fields{
 					"manifest_id": item.ManifestId,
@@ -353,7 +350,7 @@ func moveFile(workerId int32, items <-chan Item) error {
 		}
 
 		// Update status of files in dynamoDB
-		err = mf.UpdateFileTableStatus(Session.DynamodbClient, Session.FileTableName, item.ManifestId, item.UploadId, updatedStatus, updatedMessage)
+		err = store.dy.UpdateFileTableStatus(context.Background(), Session.FileTableName, item.ManifestId, item.UploadId, updatedStatus, updatedMessage)
 		if err != nil {
 			log.WithFields(
 				log.Fields{

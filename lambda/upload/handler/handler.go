@@ -15,18 +15,19 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3Types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/aws-sdk-go-v2/service/sns"
+	dynamoModels "github.com/pennsieve/pennsieve-go-core/pkg/dynamodb/models"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/fileInfo/fileType"
 	manfestModels "github.com/pennsieve/pennsieve-go-core/pkg/models/manifest"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/manifest/manifestFile"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/packageInfo/packageType"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/uploadFile"
-	manifestPkg "github.com/pennsieve/pennsieve-go-core/pkg/upload"
+	"github.com/pennsieve/pennsieve-go-core/pkg/pgdb"
 	log "github.com/sirupsen/logrus"
 	"os"
 	"regexp"
 )
 
-var manifestSession manifestPkg.ManifestSession
+var manifestSession ManifestSession
 
 // init runs on cold start of lambda and gets jwt keysets from Cognito user pools.
 func init() {
@@ -44,7 +45,7 @@ func init() {
 		log.Fatalf("LoadDefaultConfig: %v\n", err)
 	}
 
-	manifestSession = manifestPkg.ManifestSession{
+	manifestSession = ManifestSession{
 		FileTableName: os.Getenv("MANIFEST_FILE_TABLE"),
 		TableName:     os.Getenv("MANIFEST_TABLE"),
 		Client:        dynamodb.NewFromConfig(cfg),
@@ -87,20 +88,29 @@ func Handler(ctx context.Context, sqsEvent events.SQSEvent) error {
 
 	// 4. Iterate over different import sessions and import files.
 	for manifestId, uploadFilesForManifest := range fileByManifest {
-		var s UploadSession
+		//var s UploadSession
+
+		s := NewUploadHandlerStore(nil, manifestSession.Client, manifestSession.SNSClient, manifestSession.FileTableName, manifestSession.TableName)
 
 		// Get manifest from dynamodb
-		var m *dbTable.ManifestTable
-		var mf *dbTable.ManifestFileTable
-		manifest, err := m.GetFromManifest(manifestSession.Client, manifestSession.TableName, manifestId)
+		//var m *dbTable.ManifestTable
+		//var mf *dbTable.ManifestFileTable
+		manifest, err := s.dy.GetFromManifest(ctx, manifestSession.TableName, manifestId)
+		db, err := pgdb.ConnectRDSWithOrg(int(manifest.OrganizationId))
+		if err != nil {
+			return err
+		}
+
+		s = s.WithDB(db)
 
 		// Create upload session (with DB access) and import files
-		session, err := s.CreateUploadSession(manifest)
+		//session, err := store.dy.CreateUploadSession(manifest)
+
 		if err != nil {
 			log.Error("Unable to create upload session.", err)
 			continue
 		}
-		err = session.ImportFiles(uploadFilesForManifest, manifest)
+		err = s.ImportFiles(ctx, int(manifest.DatasetId), int(manifest.OrganizationId), uploadFilesForManifest, manifest)
 
 		if err != nil {
 			log.Error("Unable to create packages: ", err)
@@ -126,7 +136,7 @@ func Handler(ctx context.Context, sqsEvent events.SQSEvent) error {
 		// this is the only way we can batch update, and we also update the name in
 		// case that we need to append index (on name conflict).
 		setStatus := manifestFile.Imported
-		manifestSession.AddFiles(manifestId, fileDTOs, &setStatus)
+		s.dy.AddFiles(manifestId, fileDTOs, &setStatus, s.fileTableName)
 
 		// Check if there are any remaining items for manifest and
 		// set manifest status if not
@@ -134,12 +144,12 @@ func Handler(ctx context.Context, sqsEvent events.SQSEvent) error {
 			String: "InProgress",
 			Valid:  true,
 		}
-		remaining, _, err := mf.GetFilesPaginated(manifestSession.Client, manifestSession.TableName,
+		remaining, _, err := s.dy.GetFilesPaginated(ctx, manifestSession.TableName,
 			manifestId, reqStatus, 1, nil)
 		if len(remaining) == 0 {
-			m.UpdateManifestStatus(manifestSession.Client, manifestSession.TableName, manifestId, manfestModels.Completed)
+			s.dy.UpdateManifestStatus(ctx, manifestSession.TableName, manifestId, manfestModels.Completed)
 		} else if manifest.Status == "Completed" {
-			m.UpdateManifestStatus(manifestSession.Client, manifestSession.TableName, manifestId, manfestModels.Uploading)
+			s.dy.UpdateManifestStatus(ctx, manifestSession.TableName, manifestId, manfestModels.Uploading)
 		}
 
 	}
@@ -179,7 +189,7 @@ func GetUploadFiles(entries []uploadEntry) ([]uploadFile.UploadFile, error) {
 	for _, item := range entries {
 		entryMap[item.uploadId] = item
 
-		data, err := attributevalue.MarshalMap(dbTable.ManifestFilePrimaryKey{
+		data, err := attributevalue.MarshalMap(dynamoModels.ManifestFilePrimaryKey{
 			ManifestId: item.manifestId,
 			UploadId:   item.uploadId,
 		})
@@ -218,7 +228,7 @@ func GetUploadFiles(entries []uploadEntry) ([]uploadFile.UploadFile, error) {
 		dbItems := dbResults.Responses[manifestSession.FileTableName]
 
 		for _, dbItem := range dbItems {
-			fileEntry := dbTable.ManifestFileTable{}
+			fileEntry := dynamoModels.ManifestFileTable{}
 			err := attributevalue.UnmarshalMap(dbItem, &fileEntry)
 			if err != nil {
 				log.Error("Unable to UnMarshall unprocessed items. ", err)

@@ -12,9 +12,11 @@ import (
 	"regexp"
 )
 
-var manifestFileTableName string
-var manifestTableName string
-var client *dynamodb.Client
+//var manifestFileTableName string
+//var manifestTableName string
+//var client *dynamodb.Client
+
+var store *UploadServiceStore
 
 // init runs on cold start of lambda and gets jwt keysets from Cognito user pools.
 func init() {
@@ -27,15 +29,18 @@ func init() {
 		log.SetLevel(ll)
 	}
 
-	manifestFileTableName = os.Getenv("MANIFEST_FILE_TABLE")
-	manifestTableName = os.Getenv("MANIFEST_TABLE")
+	manifestFileTableName := os.Getenv("MANIFEST_FILE_TABLE")
+	manifestTableName := os.Getenv("MANIFEST_TABLE")
 
 	cfg, err := config.LoadDefaultConfig(context.Background())
 	if err != nil {
 		log.Fatalf("LoadDefaultConfig: %v\n", err)
 	}
 
-	client = dynamodb.NewFromConfig(cfg)
+	client := dynamodb.NewFromConfig(cfg)
+
+	store = NewUploadServiceStore(client, manifestFileTableName, manifestTableName)
+
 }
 
 // ManifestHandler handles requests to the API V2 /manifest endpoints.
@@ -50,6 +55,7 @@ func ManifestHandler(request events.APIGatewayV2HTTPRequest) (*events.APIGateway
 
 	claims := authorizer.ParseClaims(request.RequestContext.Authorizer.Lambda)
 	authorized := false
+
 	switch routeKey {
 	case "/manifest":
 		switch request.RequestContext.HTTP.Method {
