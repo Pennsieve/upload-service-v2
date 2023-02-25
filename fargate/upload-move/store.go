@@ -37,6 +37,24 @@ func NewUploadMoveStore(db *sql.DB, dydb *dynamodb.Client, s3 *s3.Client) *Uploa
 	}
 }
 
+func (s *UploadMoveStore) execPgTx(ctx context.Context, fn func(*pgdb.Queries) error) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+
+	q := pgdb.New(tx)
+	err = fn(q)
+	if err != nil {
+		if rbErr := tx.Rollback(); rbErr != nil {
+			return fmt.Errorf("tx err: %v, rb err: %v", err, rbErr)
+		}
+		return err
+	}
+
+	return tx.Commit()
+}
+
 // GetManifestStorageBucket returns the storage bucket associated with organization for manifest.
 func (s *UploadMoveStore) GetManifestStorageBucket(manifestId string) (*storageOrgItem, error) {
 
