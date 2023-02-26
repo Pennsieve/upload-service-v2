@@ -2,12 +2,12 @@ package handler
 
 import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
-	dynamoStore "github.com/pennsieve/pennsieve-go-core/pkg/dynamodb"
+	"github.com/pennsieve/pennsieve-go-core/pkg/queries/dydb"
 )
 
 // UploadServiceStore provides the Queries interface and a db instance.
 type UploadServiceStore struct {
-	*dynamoStore.Queries
+	*dydb.Queries
 	dynamodb      *dynamodb.Client
 	fileTableName string
 	tableName     string
@@ -17,7 +17,7 @@ type UploadServiceStore struct {
 func NewUploadServiceStore(dy *dynamodb.Client, fileTableName string, tableName string) *UploadServiceStore {
 	return &UploadServiceStore{
 		dynamodb:      dy,
-		Queries:       dynamoStore.New(dy),
+		Queries:       dydb.New(dy),
 		fileTableName: fileTableName,
 		tableName:     tableName,
 	}

@@ -9,18 +9,18 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	dynamo2 "github.com/pennsieve/pennsieve-go-core/pkg/dynamodb"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/manifest/manifestFile"
-	"github.com/pennsieve/pennsieve-go-core/pkg/pgdb"
-	"github.com/pennsieve/pennsieve-go-core/pkg/pgdb/models"
+	"github.com/pennsieve/pennsieve-go-core/pkg/models/pgdb"
+	dyQueries "github.com/pennsieve/pennsieve-go-core/pkg/queries/dydb"
+	pgQeuries "github.com/pennsieve/pennsieve-go-core/pkg/queries/pgdb"
 	"github.com/pennsieve/pennsieve-upload-service-v2/upload-move-files/pkg"
 	log "github.com/sirupsen/logrus"
 )
 
 // UploadMoveStore provides the Queries interface and a db instance.
 type UploadMoveStore struct {
-	pg   *pgdb.Queries
-	dy   *dynamo2.Queries
+	pg   *pgQeuries.Queries
+	dy   *dyQueries.Queries
 	db   *sql.DB
 	dydb *dynamodb.Client
 	s3   *s3.Client
@@ -31,19 +31,19 @@ func NewUploadMoveStore(db *sql.DB, dydb *dynamodb.Client, s3 *s3.Client) *Uploa
 	return &UploadMoveStore{
 		db:   db,
 		dydb: dydb,
-		pg:   pgdb.New(db),
-		dy:   dynamo2.New(dydb),
+		pg:   pgQeuries.New(db),
+		dy:   dyQueries.New(dydb),
 		s3:   s3,
 	}
 }
 
-func (s *UploadMoveStore) execPgTx(ctx context.Context, fn func(*pgdb.Queries) error) error {
+func (s *UploadMoveStore) execPgTx(ctx context.Context, fn func(*pgQeuries.Queries) error) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 
-	q := pgdb.New(tx)
+	q := pgQeuries.New(tx)
 	err = fn(q)
 	if err != nil {
 		if rbErr := tx.Rollback(); rbErr != nil {
@@ -234,7 +234,7 @@ func (s *UploadMoveStore) moveFile(workerId int32, items <-chan Item) error {
 		switch err := s.pg.UpdateBucketForFile(context.Background(), item.UploadId, stOrgItem.storageBucket, targetPath, stOrgItem.organizationId); err.(type) {
 		case nil:
 			break
-		case *models.ErrFileNotFound:
+		case *pgdb.ErrFileNotFound:
 			log.WithFields(
 				log.Fields{
 					"manifest_id": item.ManifestId,
@@ -244,7 +244,7 @@ func (s *UploadMoveStore) moveFile(workerId int32, items <-chan Item) error {
 			updatedStatus = manifestFile.Failed
 			updatedMessage = err.Error()
 
-		case *models.ErrMultipleRowsAffected:
+		case *pgdb.ErrMultipleRowsAffected:
 			log.WithFields(
 				log.Fields{
 					"manifest_id": item.ManifestId,

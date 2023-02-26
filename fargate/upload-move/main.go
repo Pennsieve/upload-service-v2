@@ -5,7 +5,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/pennsieve/pennsieve-go-core/pkg/pgdb"
+	pgQueries "github.com/pennsieve/pennsieve-go-core/pkg/queries/pgdb"
 	log "github.com/sirupsen/logrus"
 	"os"
 	"sync"
@@ -56,7 +56,7 @@ func main() {
 	TableName = os.Getenv("MANIFEST_TABLE")
 
 	// Get Postgres connection
-	db, err := pgdb.ConnectRDS()
+	db, err := pgQueries.ConnectRDS()
 	//Session.pgClient = db
 	if err != nil {
 		log.Fatalf("Cannot connect to the Pennsieve Postgres Proxy.")

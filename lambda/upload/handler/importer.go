@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/packageInfo"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/packageInfo/packageState"
+	"github.com/pennsieve/pennsieve-go-core/pkg/models/pgdb"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/uploadFile"
-	"github.com/pennsieve/pennsieve-go-core/pkg/pgdb/models"
 	log "github.com/sirupsen/logrus"
 	"regexp"
 )
@@ -29,13 +29,13 @@ type uploadEntry struct {
 }
 
 // getPackageParams returns an array of PackageParams to insert in the Packages Table.
-func getPackageParams(datasetId int, ownerId int, uploadFiles []uploadFile.UploadFile, pathToFolderMap models.PackageMap) ([]models.PackageParams, error) {
-	var pkgParams []models.PackageParams
+func getPackageParams(datasetId int, ownerId int, uploadFiles []uploadFile.UploadFile, pathToFolderMap pgdb.PackageMap) ([]pgdb.PackageParams, error) {
+	var pkgParams []pgdb.PackageParams
 
 	// First create a map of params. As there can be upload-files that should be mapped to the same package,
 	// we want to ensure we are not creating duplicate packages (as this will cause an error when inserting in db).
 	// Then we turn map into array and return the array.
-	pkgParamsMap := map[string]models.PackageParams{}
+	pkgParamsMap := map[string]pgdb.PackageParams{}
 	for _, file := range uploadFiles {
 
 		// Create the packageID based on the uploadID or the mergePackageID if it exists
@@ -73,7 +73,7 @@ func getPackageParams(datasetId int, ownerId int, uploadFiles []uploadFile.Uploa
 			DataType: "string",
 		})
 
-		pkgParam := models.PackageParams{
+		pkgParam := pgdb.PackageParams{
 			Name:         packageName,
 			PackageType:  file.Type,
 			PackageState: packageState.Uploaded,

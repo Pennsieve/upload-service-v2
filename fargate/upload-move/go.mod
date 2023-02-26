@@ -2,16 +2,16 @@ module github.com/pennsieve/pennsieve-upload-service-v2/upload-move-files
 
 go 1.18
 
-replace (
-	github.com/pennsieve/pennsieve-go-core => ../../../pennsieve-go-core
-)
+//replace (
+//	github.com/pennsieve/pennsieve-go-core => ../../../pennsieve-go-core
+//)
 require (
 	github.com/aws/aws-sdk-go-v2 v1.17.5
 	github.com/aws/aws-sdk-go-v2/config v1.18.14
 	github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue v1.10.14
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.18.4
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.30.4
-	github.com/pennsieve/pennsieve-go-core v1.2.1
+	github.com/pennsieve/pennsieve-go-core v1.2.3
 	github.com/sirupsen/logrus v1.9.0
 )
 
@@ -30,7 +30,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/internal/endpoint-discovery v1.7.23 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.9.23 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.13.23 // indirect
-	github.com/aws/aws-sdk-go-v2/service/sns v1.20.3 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sso v1.12.3 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.14.3 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.18.4 // indirect

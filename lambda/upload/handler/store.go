@@ -10,24 +10,23 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sns/types"
 	"github.com/google/uuid"
 	"github.com/pennsieve/pennsieve-go-core/pkg/domain"
-	dynamoStore "github.com/pennsieve/pennsieve-go-core/pkg/dynamodb"
-	//"github.com/pennsieve/pennsieve-go-core/pkg/dynamodb"
-	dynamoModels "github.com/pennsieve/pennsieve-go-core/pkg/dynamodb/models"
+	"github.com/pennsieve/pennsieve-go-core/pkg/models/dydb"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/fileInfo/objectType"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/packageInfo/packageState"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/packageInfo/packageType"
+	"github.com/pennsieve/pennsieve-go-core/pkg/models/pgdb"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/uploadFile"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/uploadFolder"
-	"github.com/pennsieve/pennsieve-go-core/pkg/pgdb"
-	"github.com/pennsieve/pennsieve-go-core/pkg/pgdb/models"
+	dyQueries "github.com/pennsieve/pennsieve-go-core/pkg/queries/dydb"
+	pgQueries "github.com/pennsieve/pennsieve-go-core/pkg/queries/pgdb"
 	log "github.com/sirupsen/logrus"
 	"sort"
 )
 
 // UploadHandlerStore provides the Queries interface and a db instance.
 type UploadHandlerStore struct {
-	pg            *pgdb.Queries
-	dy            *dynamoStore.Queries
+	pg            *pgQueries.Queries
+	dy            *dyQueries.Queries
 	pgdb          *sql.DB
 	dynamodb      *dynamodb.Client
 	SNSClient     domain.SnsAPI
@@ -36,14 +35,14 @@ type UploadHandlerStore struct {
 	tableName     string
 }
 
-// NewUploadHandlerStore returns a UploadHandlerStore object which implements the Queires
+// NewUploadHandlerStore returns a UploadHandlerStore object which implements the Queries
 func NewUploadHandlerStore(db *sql.DB, dy *dynamodb.Client, sns domain.SnsAPI, fileTableName string, tableName string) *UploadHandlerStore {
 	return &UploadHandlerStore{
 		pgdb:          db,
 		dynamodb:      dy,
 		SNSClient:     sns,
-		pg:            pgdb.New(db),
-		dy:            dynamoStore.New(dy),
+		pg:            pgQueries.New(db),
+		dy:            dyQueries.New(dy),
 		fileTableName: fileTableName,
 		tableName:     tableName,
 	}
@@ -61,13 +60,13 @@ func (s *UploadHandlerStore) WithDB(db *sql.DB) *UploadHandlerStore {
 	}
 }
 
-func (s *UploadHandlerStore) execTx(ctx context.Context, fn func(*pgdb.Queries) error) error {
+func (s *UploadHandlerStore) execTx(ctx context.Context, fn func(*pgQueries.Queries) error) error {
 	tx, err := s.pgdb.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 
-	q := pgdb.New(tx)
+	q := pgQueries.New(tx)
 	err = fn(q)
 	if err != nil {
 		if rbErr := tx.Rollback(); rbErr != nil {
@@ -82,19 +81,19 @@ func (s *UploadHandlerStore) execTx(ctx context.Context, fn func(*pgdb.Queries) 
 // GetCreateUploadFolders creates new folders in the organization.
 // It updates UploadFolders with real folder ID for folders that already exist.
 // Assumes map keys are absolute paths in the dataset
-func (s *UploadHandlerStore) GetCreateUploadFolders(datasetId int, ownerId int, folders uploadFolder.UploadFolderMap) models.PackageMap {
+func (s *UploadHandlerStore) GetCreateUploadFolders(datasetId int, ownerId int, folders uploadFolder.UploadFolderMap) pgdb.PackageMap {
 
 	// Get Root Folders
-	p := models.Package{}
+	p := pgdb.Package{}
 	rootChildren, _ := s.pg.GetPackageChildren(context.Background(), &p, datasetId, true)
 
 	// Map NodeId to Packages for folders that exist in DB
-	existingFolders := models.PackageMap{}
+	existingFolders := pgdb.PackageMap{}
 	for _, k := range rootChildren {
 		existingFolders[k.Name] = k
 	}
 
-	// Sort the keys of the map so we can iterate over the sorted map
+	// Sort the keys of the map, so we can iterate over the sorted map
 	pathKeys := make([]string, 0)
 	for k := range folders {
 		pathKeys = append(pathKeys, k)
@@ -125,7 +124,7 @@ func (s *UploadHandlerStore) GetCreateUploadFolders(datasetId int, ownerId int, 
 
 		} else {
 			// Create folder
-			pkgParams := models.PackageParams{
+			pkgParams := pgdb.PackageParams{
 				Name:         folders[path].Name,
 				PackageType:  packageType.Collection,
 				PackageState: packageState.Ready,
@@ -137,7 +136,7 @@ func (s *UploadHandlerStore) GetCreateUploadFolders(datasetId int, ownerId int, 
 				Attributes:   nil,
 			}
 
-			result, _ := s.pg.AddPackages(context.Background(), []models.PackageParams{pkgParams})
+			result, _ := s.pg.AddPackages(context.Background(), []pgdb.PackageParams{pkgParams})
 			folders[path].Id = result[0].Id
 			existingFolders[path] = result[0]
 
@@ -153,7 +152,7 @@ func (s *UploadHandlerStore) GetCreateUploadFolders(datasetId int, ownerId int, 
 }
 
 // PublishToSNS publishes messages to SNS after files are imported.
-func (s *UploadHandlerStore) PublishToSNS(files []models.File) error {
+func (s *UploadHandlerStore) PublishToSNS(files []pgdb.File) error {
 
 	const batchSize = 10
 	var snsEntries []types.PublishBatchRequestEntry
@@ -199,20 +198,20 @@ func (s *UploadHandlerStore) sendSNSMessages(snsEntries []types.PublishBatchRequ
 }
 
 // ImportFiles creates rows for uploaded files in Packages and Files tables as a transaction
-func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, ownerId int, files []uploadFile.UploadFile, manifest *dynamoModels.ManifestTable) error {
+func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, ownerId int, files []uploadFile.UploadFile, manifest *dydb.ManifestTable) error {
 
-	err := s.execTx(ctx, func(q *pgdb.Queries) error {
+	err := s.execTx(ctx, func(q *pgQueries.Queries) error {
 		// TODO: add packages
 		var f uploadFile.UploadFile
 		f.Sort(files)
 
-		// 1. Iterate over files and return map of folders and subfolders
+		// 1. Iterate over files and return map of folders and sub-folders
 		folderMap := f.GetUploadFolderMap(files, "")
 
 		// 2. Iterate over folders and create them if they do not exist in organization
 		folderPackageMap := s.GetCreateUploadFolders(datasetId, ownerId, folderMap)
 
-		// 3. Create Package Params to add files to packages table.
+		// 3. Create Package Params to add files to "packages" table.
 		pkgParams, _ := getPackageParams(datasetId, ownerId, files, folderPackageMap)
 
 		packages, err := s.pg.AddPackages(context.Background(), pkgParams)
@@ -220,7 +219,7 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, own
 			log.Error("Error creating a package: ", err)
 			// Some error in creating packages --> none of the packages are imported.
 
-			// This should not really happen but we see this when adding packages causes a constraint violation.
+			// This should not really happen, but we see this when adding packages causes a constraint violation.
 			// such as importing an already imported package. (upload id)
 
 			// TODO should we retry packages individually? or send SNS message for import lambda to handle?
@@ -230,12 +229,12 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, own
 		}
 
 		// 4. Associate Files with Packages
-		packageMap := map[string]models.Package{}
+		packageMap := map[string]pgdb.Package{}
 		for _, p := range packages {
 			packageMap[p.NodeId] = p
 		}
 
-		var allFileParams []models.FileParams
+		var allFileParams []pgdb.FileParams
 		for i, f := range files {
 			packageNodeId := fmt.Sprintf("N:package:%s", f.UploadId)
 			if len(files[i].MergePackageId) > 0 {
@@ -243,7 +242,7 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, own
 				packageNodeId = fmt.Sprintf("N:package:%s", files[i].MergePackageId)
 			}
 
-			file := models.FileParams{
+			file := pgdb.FileParams{
 				PackageId:  int(packageMap[packageNodeId].Id),
 				Name:       files[i].Name,
 				FileType:   files[i].FileType,
@@ -271,7 +270,10 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, own
 		}
 
 		// Update storage for packages, datasets, and org
-		s.UpdateStorage(allFileParams, packages, manifest)
+		err = s.UpdateStorage(allFileParams, packages, manifest)
+		if err != nil {
+			return err
+		}
 
 		// TODO: add files
 		return nil
@@ -281,9 +283,9 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, own
 }
 
 // UpdateStorage updates storage in packages, dataset and organization for uploaded package
-func (s *UploadHandlerStore) UpdateStorage(files []models.FileParams, packages []models.Package, manifest *dynamoModels.ManifestTable) error {
+func (s *UploadHandlerStore) UpdateStorage(files []pgdb.FileParams, packages []pgdb.Package, manifest *dydb.ManifestTable) error {
 
-	packageMap := map[int]models.Package{}
+	packageMap := map[int]pgdb.Package{}
 	for _, p := range packages {
 		packageMap[int(p.Id)] = p
 	}
@@ -291,11 +293,12 @@ func (s *UploadHandlerStore) UpdateStorage(files []models.FileParams, packages [
 	ctx := context.Background()
 
 	// Create new store for Pennsieve (non-org schema)
-	dbOrg, err := pgdb.ConnectRDS()
+	dbOrg, err := pgQueries.ConnectRDS()
 	if err != nil {
 		log.Error("Error connecting to database.")
 		return err
 	}
+	//goland:noinspection GoUnhandledErrorResult
 	defer dbOrg.Close()
 	PennsieveStore := NewUploadHandlerStore(dbOrg, s.dynamodb, s.SNSClient, manifestSession.FileTableName, manifestSession.TableName)
 
@@ -310,7 +313,7 @@ func (s *UploadHandlerStore) UpdateStorage(files []models.FileParams, packages [
 
 		pkg := packageMap[f.PackageId]
 		if pkg.ParentId.Valid {
-			s.pg.IncrementPackageStorageAncestors(ctx, pkg.ParentId.Int64, f.Size)
+			err = s.pg.IncrementPackageStorageAncestors(ctx, pkg.ParentId.Int64, f.Size)
 			if err != nil {
 				log.Error("Error incrementing package ancestors")
 				return err

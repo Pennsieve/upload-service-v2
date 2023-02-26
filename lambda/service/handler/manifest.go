@@ -13,7 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/google/uuid"
 	"github.com/pennsieve/pennsieve-go-core/pkg/authorizer"
-	"github.com/pennsieve/pennsieve-go-core/pkg/dynamodb/models"
+	"github.com/pennsieve/pennsieve-go-core/pkg/models/dydb"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/fileInfo/fileType"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/gateway"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/manifest"
@@ -116,7 +116,7 @@ func postManifestRoute(request events.APIGatewayV2HTTPRequest, claims *authorize
 	//}
 
 	// ADDING MANIFEST IF NEEDED
-	var activeManifest *models.ManifestTable
+	var activeManifest *dydb.ManifestTable
 	if res.ID == "" {
 
 		manifestId := uuid.New().String()
@@ -130,7 +130,7 @@ func postManifestRoute(request events.APIGatewayV2HTTPRequest, claims *authorize
 		).Info("Creating new manifest.")
 
 		// Create new manifest
-		activeManifest = &models.ManifestTable{
+		activeManifest = &dydb.ManifestTable{
 			ManifestId:     manifestId,
 			DatasetId:      claims.DatasetClaim.IntId,
 			DatasetNodeId:  claims.DatasetClaim.NodeId,

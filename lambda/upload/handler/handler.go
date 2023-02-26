@@ -15,13 +15,13 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3Types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/aws-sdk-go-v2/service/sns"
-	dynamoModels "github.com/pennsieve/pennsieve-go-core/pkg/dynamodb/models"
+	"github.com/pennsieve/pennsieve-go-core/pkg/models/dydb"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/fileInfo/fileType"
-	manfestModels "github.com/pennsieve/pennsieve-go-core/pkg/models/manifest"
+	manifestModels "github.com/pennsieve/pennsieve-go-core/pkg/models/manifest"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/manifest/manifestFile"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/packageInfo/packageType"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/uploadFile"
-	"github.com/pennsieve/pennsieve-go-core/pkg/pgdb"
+	pgQueries "github.com/pennsieve/pennsieve-go-core/pkg/queries/pgdb"
 	log "github.com/sirupsen/logrus"
 	"os"
 	"regexp"
@@ -29,7 +29,7 @@ import (
 
 var manifestSession ManifestSession
 
-// init runs on cold start of lambda and gets jwt keysets from Cognito user pools.
+// init runs on cold start of lambda and gets jwt key-sets from Cognito user pools.
 func init() {
 
 	log.SetFormatter(&log.JSONFormatter{})
@@ -96,7 +96,7 @@ func Handler(ctx context.Context, sqsEvent events.SQSEvent) error {
 		//var m *dbTable.ManifestTable
 		//var mf *dbTable.ManifestFileTable
 		manifest, err := s.dy.GetFromManifest(ctx, manifestSession.TableName, manifestId)
-		db, err := pgdb.ConnectRDSWithOrg(int(manifest.OrganizationId))
+		db, err := pgQueries.ConnectRDSWithOrg(int(manifest.OrganizationId))
 		if err != nil {
 			return err
 		}
@@ -147,9 +147,15 @@ func Handler(ctx context.Context, sqsEvent events.SQSEvent) error {
 		remaining, _, err := s.dy.GetFilesPaginated(ctx, manifestSession.TableName,
 			manifestId, reqStatus, 1, nil)
 		if len(remaining) == 0 {
-			s.dy.UpdateManifestStatus(ctx, manifestSession.TableName, manifestId, manfestModels.Completed)
+			err = s.dy.UpdateManifestStatus(ctx, manifestSession.TableName, manifestId, manifestModels.Completed)
+			if err != nil {
+				return err
+			}
 		} else if manifest.Status == "Completed" {
-			s.dy.UpdateManifestStatus(ctx, manifestSession.TableName, manifestId, manfestModels.Uploading)
+			err = s.dy.UpdateManifestStatus(ctx, manifestSession.TableName, manifestId, manifestModels.Uploading)
+			if err != nil {
+				return err
+			}
 		}
 
 	}
@@ -189,7 +195,7 @@ func GetUploadFiles(entries []uploadEntry) ([]uploadFile.UploadFile, error) {
 	for _, item := range entries {
 		entryMap[item.uploadId] = item
 
-		data, err := attributevalue.MarshalMap(dynamoModels.ManifestFilePrimaryKey{
+		data, err := attributevalue.MarshalMap(dydb.ManifestFilePrimaryKey{
 			ManifestId: item.manifestId,
 			UploadId:   item.uploadId,
 		})
@@ -228,7 +234,7 @@ func GetUploadFiles(entries []uploadEntry) ([]uploadFile.UploadFile, error) {
 		dbItems := dbResults.Responses[manifestSession.FileTableName]
 
 		for _, dbItem := range dbItems {
-			fileEntry := dynamoModels.ManifestFileTable{}
+			fileEntry := dydb.ManifestFileTable{}
 			err := attributevalue.UnmarshalMap(dbItem, &fileEntry)
 			if err != nil {
 				log.Error("Unable to UnMarshall unprocessed items. ", err)
@@ -271,7 +277,7 @@ func GetUploadFiles(entries []uploadEntry) ([]uploadFile.UploadFile, error) {
 	}
 
 	if len(verifiedFiles) != len(entries) {
-		log.Error("MISMATCH BETWEEN UPLOADED ENTRIES AND RETURN FROM DYNAMOBD.")
+		log.Error("MISMATCH BETWEEN UPLOADED ENTRIES AND RETURN FROM DYNAMO-BD.")
 	}
 
 	var uploadFiles []uploadFile.UploadFile

@@ -8,7 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
-	"github.com/pennsieve/pennsieve-go-core/pkg/dynamodb/models"
+	"github.com/pennsieve/pennsieve-go-core/pkg/models/dydb"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/fileInfo/fileType"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/manifest/manifestFile"
 	log "github.com/sirupsen/logrus"
@@ -259,7 +259,7 @@ func TestManifest(t *testing.T) {
 
 func testCreateGetManifest(t *testing.T, store *UploadHandlerStore) {
 
-	tb := models.ManifestTable{
+	tb := dydb.ManifestTable{
 		ManifestId:     "1111",
 		DatasetId:      1,
 		DatasetNodeId:  "N:Dataset:1234",
@@ -275,7 +275,7 @@ func testCreateGetManifest(t *testing.T, store *UploadHandlerStore) {
 	assert.Nil(t, err, "Manifest 1 could not be created")
 
 	// Create second upload
-	tb2 := models.ManifestTable{
+	tb2 := dydb.ManifestTable{
 		ManifestId:     "2222",
 		DatasetId:      2,
 		DatasetNodeId:  "N:Dataset:5678",
@@ -289,7 +289,7 @@ func testCreateGetManifest(t *testing.T, store *UploadHandlerStore) {
 	assert.Nil(t, err, "Manifest 2 could not be created")
 
 	// Create second upload
-	tb3 := models.ManifestTable{
+	tb3 := dydb.ManifestTable{
 		ManifestId:     "3333",
 		DatasetId:      2,
 		DatasetNodeId:  "N:Dataset:5678",
