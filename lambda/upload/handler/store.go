@@ -31,17 +31,19 @@ type UploadHandlerStore struct {
 	pgdb          *sql.DB
 	dynamodb      *dynamodb.Client
 	SNSClient     domain.SnsAPI
+	S3Client      domain.S3API
 	SNSTopic      string
 	fileTableName string
 	tableName     string
 }
 
 // NewUploadHandlerStore returns a UploadHandlerStore object which implements the Queries
-func NewUploadHandlerStore(db *sql.DB, dy *dynamodb.Client, sns domain.SnsAPI, fileTableName string, tableName string) *UploadHandlerStore {
+func NewUploadHandlerStore(db *sql.DB, dy *dynamodb.Client, sns domain.SnsAPI, s3 domain.S3API, fileTableName string, tableName string) *UploadHandlerStore {
 	return &UploadHandlerStore{
 		pgdb:          db,
 		dynamodb:      dy,
 		SNSClient:     sns,
+		S3Client:      s3,
 		pg:            pgQueries.New(db),
 		dy:            dyQueries.New(dy),
 		fileTableName: fileTableName,
@@ -309,7 +311,6 @@ func (s *UploadHandlerStore) UpdateStorage(files []pgdb.FileParams, packages []p
 	}
 	//goland:noinspection GoUnhandledErrorResult
 	defer dbOrg.Close()
-	PennsieveStore := NewUploadHandlerStore(dbOrg, s.dynamodb, s.SNSClient, manifestSession.FileTableName, manifestSession.TableName)
 
 	// Update all packageSize
 	for _, f := range files {
@@ -335,7 +336,7 @@ func (s *UploadHandlerStore) UpdateStorage(files []pgdb.FileParams, packages []p
 			return err
 		}
 
-		err = PennsieveStore.pg.IncrementOrganizationStorage(ctx, manifest.OrganizationId, f.Size)
+		err = s.pg.IncrementOrganizationStorage(ctx, manifest.OrganizationId, f.Size)
 		if err != nil {
 			log.Error("Error incrementing organization")
 			return err

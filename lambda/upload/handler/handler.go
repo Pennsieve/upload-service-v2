@@ -67,15 +67,19 @@ func Handler(ctx context.Context, sqsEvent events.SQSEvent) error {
 			4. Create Files in Packages
 	*/
 
+	// Define store without Postgres connection (as this is different depending on the manifest/org)
+	s := NewUploadHandlerStore(nil, manifestSession.Client, manifestSession.SNSClient,
+		manifestSession.S3Client, manifestSession.FileTableName, manifestSession.TableName)
+
 	// 1. Parse UploadEntries
-	uploadEntries, err := GetUploadEntries(sqsEvent.Records)
+	uploadEntries, err := s.GetUploadEntries(sqsEvent.Records)
 	if err != nil {
 		// This really should never happen --> Somehow the SQS queue received a non-S3 message.
 		log.Fatalf(err.Error())
 	}
 
 	// 2. Match against Manifest and create uploadFiles
-	uploadFiles, err := GetUploadFiles(uploadEntries)
+	uploadFiles, err := s.GetUploadFiles(uploadEntries)
 	if err != nil {
 		log.Error("Error with GetUploadFiles: ", err)
 	}
@@ -88,7 +92,6 @@ func Handler(ctx context.Context, sqsEvent events.SQSEvent) error {
 
 	// 4. Iterate over different import sessions and import files.
 	for manifestId, uploadFilesForManifest := range fileByManifest {
-		s := NewUploadHandlerStore(nil, manifestSession.Client, manifestSession.SNSClient, manifestSession.FileTableName, manifestSession.TableName)
 
 		// Get manifest from dynamodb
 		manifest, err := s.dy.GetFromManifest(ctx, manifestSession.TableName, manifestId)
@@ -138,15 +141,15 @@ func Handler(ctx context.Context, sqsEvent events.SQSEvent) error {
 			String: "InProgress",
 			Valid:  true,
 		}
-		remaining, _, err := s.dy.GetFilesPaginated(ctx, manifestSession.TableName,
+		remaining, _, err := s.dy.GetFilesPaginated(ctx, s.tableName,
 			manifestId, reqStatus, 1, nil)
 		if len(remaining) == 0 {
-			err = s.dy.UpdateManifestStatus(ctx, manifestSession.TableName, manifestId, manifestModels.Completed)
+			err = s.dy.UpdateManifestStatus(ctx, s.tableName, manifestId, manifestModels.Completed)
 			if err != nil {
 				return err
 			}
 		} else if manifest.Status == "Completed" {
-			err = s.dy.UpdateManifestStatus(ctx, manifestSession.TableName, manifestId, manifestModels.Uploading)
+			err = s.dy.UpdateManifestStatus(ctx, s.tableName, manifestId, manifestModels.Uploading)
 			if err != nil {
 				return err
 			}
@@ -158,7 +161,7 @@ func Handler(ctx context.Context, sqsEvent events.SQSEvent) error {
 }
 
 // GetUploadEntries parses the events from SQS into meaningful objects
-func GetUploadEntries(fileEvents []events.SQSMessage) ([]uploadEntry, error) {
+func (s *UploadHandlerStore) GetUploadEntries(fileEvents []events.SQSMessage) ([]uploadEntry, error) {
 
 	var entries []uploadEntry
 	for _, message := range fileEvents {
@@ -167,7 +170,7 @@ func GetUploadEntries(fileEvents []events.SQSMessage) ([]uploadEntry, error) {
 			return nil, fmt.Errorf("failed to unmarshal message, %v", err)
 		}
 
-		entry, err := uploadEntryFromS3Event(&parsedS3Event)
+		entry, err := s.uploadEntryFromS3Event(&parsedS3Event)
 		if err != nil {
 			log.Error("Unable to parse s3-key: ", err)
 			continue
@@ -181,7 +184,7 @@ func GetUploadEntries(fileEvents []events.SQSMessage) ([]uploadEntry, error) {
 }
 
 // GetUploadFiles returns a set of UploadFiles from a set of UploadEntries by verifying against DynamoDB
-func GetUploadFiles(entries []uploadEntry) ([]uploadFile.UploadFile, error) {
+func (s *UploadHandlerStore) GetUploadFiles(entries []uploadEntry) ([]uploadFile.UploadFile, error) {
 
 	// 1. Check all standard uploadEntities against dynamodb
 	var getItems []map[string]types.AttributeValue
@@ -211,7 +214,7 @@ func GetUploadFiles(entries []uploadEntry) ([]uploadFile.UploadFile, error) {
 		}
 
 		getTableItems := map[string]types.KeysAndAttributes{
-			manifestSession.FileTableName: keysAndAttributes,
+			s.fileTableName: keysAndAttributes,
 		}
 
 		batchItemInput := dynamodb.BatchGetItemInput{
@@ -219,12 +222,12 @@ func GetUploadFiles(entries []uploadEntry) ([]uploadFile.UploadFile, error) {
 			ReturnConsumedCapacity: "",
 		}
 
-		dbResults, err := manifestSession.Client.BatchGetItem(context.Background(), &batchItemInput)
+		dbResults, err := s.dynamodb.BatchGetItem(context.Background(), &batchItemInput)
 		if err != nil {
 			log.Fatalln("Unable to get dbItems.")
 		}
 
-		dbItems := dbResults.Responses[manifestSession.FileTableName]
+		dbItems := dbResults.Responses[s.fileTableName]
 
 		for _, dbItem := range dbItems {
 			fileEntry := dydb.ManifestFileTable{}
@@ -315,7 +318,7 @@ func GetUploadFiles(entries []uploadEntry) ([]uploadFile.UploadFile, error) {
 }
 
 // uploadEntryFromS3Event returns an object representing an uploaded file from an S3 Event.
-func uploadEntryFromS3Event(event *events.S3Event) (*uploadEntry, error) {
+func (s *UploadHandlerStore) uploadEntryFromS3Event(event *events.S3Event) (*uploadEntry, error) {
 	r := regexp.MustCompile(`(?P<Manifest>[a-z0-9]{8}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{12})\/(?P<UploadId>[a-z0-9]{8}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{12})`)
 	res := r.FindStringSubmatch(event.Records[0].S3.Object.Key)
 
@@ -337,7 +340,7 @@ func uploadEntryFromS3Event(event *events.S3Event) (*uploadEntry, error) {
 		Key:          aws.String(s3Key),
 		ChecksumMode: s3Types.ChecksumModeEnabled,
 	}
-	result, err := manifestSession.S3Client.HeadObject(context.Background(), &headObj)
+	result, err := s.S3Client.HeadObject(context.Background(), &headObj)
 	if err != nil {
 		log.Println(err)
 		log.WithFields(
