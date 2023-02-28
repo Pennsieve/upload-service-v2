@@ -2,7 +2,6 @@ package handler
 
 import (
 	"context"
-	"database/sql"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
@@ -20,9 +19,6 @@ import (
 
 const manifestTableName = "upload-table"
 const manifestFileTableName = "upload-file-table"
-
-var testDB *sql.DB
-var orgId int
 
 func getEnv(key, fallback string) string {
 	if value, ok := os.LookupEnv(key); ok {
@@ -59,15 +55,14 @@ func TestMain(m *testing.M) {
 
 	var err error
 
-	orgId = 2
 	//testDB, err = pgdb.ConnectENVWithOrg(orgId)
 	//if err != nil {
 	//	log.Fatal("cannot connect to db:", err)
 	//}
 
 	svc := getClient()
-	svc.DeleteTable(context.Background(), &dynamodb.DeleteTableInput{TableName: aws.String("upload-table")})
-	svc.DeleteTable(context.Background(), &dynamodb.DeleteTableInput{TableName: aws.String("upload-file-table")})
+	_, _ = svc.DeleteTable(context.Background(), &dynamodb.DeleteTableInput{TableName: aws.String("upload-table")})
+	_, _ = svc.DeleteTable(context.Background(), &dynamodb.DeleteTableInput{TableName: aws.String("upload-file-table")})
 
 	_, err = svc.CreateTable(context.TODO(), &dynamodb.CreateTableInput{
 		AttributeDefinitions: []types.AttributeDefinition{
@@ -242,7 +237,7 @@ func TestMain(m *testing.M) {
 
 func TestManifest(t *testing.T) {
 	for scenario, fn := range map[string]func(
-		tt *testing.T, store *UploadHandlerStore,
+		tt *testing.T, store *UploadServiceStore,
 	){
 		"create and get upload": testCreateGetManifest,
 		"Add files to upload":   testAddFiles,
@@ -250,14 +245,14 @@ func TestManifest(t *testing.T) {
 		t.Run(scenario, func(t *testing.T) {
 			client := getClient()
 
-			store := NewUploadHandlerStore(testDB, client, nil, manifestFileTableName, manifestTableName)
+			store := NewUploadServiceStore(client, manifestFileTableName, manifestTableName)
 
 			fn(t, store)
 		})
 	}
 }
 
-func testCreateGetManifest(t *testing.T, store *UploadHandlerStore) {
+func testCreateGetManifest(t *testing.T, store *UploadServiceStore) {
 
 	tb := dydb.ManifestTable{
 		ManifestId:     "1111",
@@ -271,7 +266,7 @@ func testCreateGetManifest(t *testing.T, store *UploadHandlerStore) {
 
 	// Create Manifest
 	ctx := context.Background()
-	err := store.dy.CreateManifest(ctx, manifestTableName, tb)
+	err := store.CreateManifest(ctx, manifestTableName, tb)
 	assert.Nil(t, err, "Manifest 1 could not be created")
 
 	// Create second upload
@@ -285,7 +280,7 @@ func testCreateGetManifest(t *testing.T, store *UploadHandlerStore) {
 		DateCreated:    time.Now().Unix(),
 	}
 
-	err = store.dy.CreateManifest(ctx, manifestTableName, tb2)
+	err = store.CreateManifest(ctx, manifestTableName, tb2)
 	assert.Nil(t, err, "Manifest 2 could not be created")
 
 	// Create second upload
@@ -299,11 +294,11 @@ func testCreateGetManifest(t *testing.T, store *UploadHandlerStore) {
 		DateCreated:    time.Now().Unix(),
 	}
 
-	err = store.dy.CreateManifest(ctx, manifestTableName, tb3)
+	err = store.CreateManifest(ctx, manifestTableName, tb3)
 	assert.Nil(t, err, "Manifest 3 could not be created")
 
 	// Get Manifest
-	out, err := store.dy.GetManifestsForDataset(ctx, "upload-table", "N:Dataset:1234")
+	out, err := store.GetManifestsForDataset(ctx, "upload-table", "N:Dataset:1234")
 	assert.Nil(t, err, "Manifest could not be fetched")
 	assert.Equal(t, 1, len(out))
 	assert.Equal(t, "1111", out[0].ManifestId)
@@ -311,14 +306,14 @@ func testCreateGetManifest(t *testing.T, store *UploadHandlerStore) {
 	assert.Equal(t, int64(1), out[0].UserId)
 
 	// Check that there are two manifests for N:Dataset:5678
-	out, err = store.dy.GetManifestsForDataset(ctx, "upload-table", "N:Dataset:5678")
+	out, err = store.GetManifestsForDataset(ctx, "upload-table", "N:Dataset:5678")
 	assert.Nil(t, err, "Manifest could not be fetched")
 	assert.Equal(t, 2, len(out))
 	assert.Equal(t, "2222", out[0].ManifestId)
 	assert.Equal(t, "3333", out[1].ManifestId)
 }
 
-func testAddFiles(t *testing.T, store *UploadHandlerStore) {
+func testAddFiles(t *testing.T, store *UploadServiceStore) {
 
 	testFileDTOs := []manifestFile.FileDTO{
 		{
@@ -348,7 +343,7 @@ func testAddFiles(t *testing.T, store *UploadHandlerStore) {
 
 	// Adding files to upload
 	manifestId := "1111"
-	result := store.dy.AddFiles(manifestId, testFileDTOs, nil, store.fileTableName)
+	result := store.AddFiles(manifestId, testFileDTOs, nil, store.fileTableName)
 
 	// Checking returned status
 	// Checking returned status
@@ -361,9 +356,3 @@ func testAddFiles(t *testing.T, store *UploadHandlerStore) {
 	assert.Equal(t, testFileUploadIds, resultUploadIds)
 
 }
-
-//func testGetAction(t *testing.T, svc *dynamodb.Client) {
-//
-//	getAction(manifestId string, file manifestFile.FileDTO, curStatus manifestFile.Status)
-//
-//}
