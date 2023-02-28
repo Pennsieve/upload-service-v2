@@ -18,7 +18,7 @@ import (
 
 var store *UploadServiceStore
 
-// init runs on cold start of lambda and gets jwt keysets from Cognito user pools.
+// init runs on cold start of lambda and gets jwt key-sets from Cognito user pools.
 func init() {
 
 	log.SetFormatter(&log.JSONFormatter{})

@@ -70,7 +70,7 @@ func Handler(ctx context.Context, sqsEvent events.SQSEvent) error {
 	// 1. Parse UploadEntries
 	uploadEntries, err := GetUploadEntries(sqsEvent.Records)
 	if err != nil {
-		// This really should never happen.
+		// This really should never happen --> Somehow the SQS queue received a non-S3 message.
 		log.Fatalf(err.Error())
 	}
 
@@ -88,23 +88,17 @@ func Handler(ctx context.Context, sqsEvent events.SQSEvent) error {
 
 	// 4. Iterate over different import sessions and import files.
 	for manifestId, uploadFilesForManifest := range fileByManifest {
-		//var s UploadSession
-
 		s := NewUploadHandlerStore(nil, manifestSession.Client, manifestSession.SNSClient, manifestSession.FileTableName, manifestSession.TableName)
 
 		// Get manifest from dynamodb
-		//var m *dbTable.ManifestTable
-		//var mf *dbTable.ManifestFileTable
 		manifest, err := s.dy.GetFromManifest(ctx, manifestSession.TableName, manifestId)
 		db, err := pgQueries.ConnectRDSWithOrg(int(manifest.OrganizationId))
 		if err != nil {
 			return err
 		}
 
+		// Create postgres session with organization associated with manifest.
 		s = s.WithDB(db)
-
-		// Create upload session (with DB access) and import files
-		//session, err := store.dy.CreateUploadSession(manifest)
 
 		if err != nil {
 			log.Error("Unable to create upload session.", err)
@@ -186,7 +180,7 @@ func GetUploadEntries(fileEvents []events.SQSMessage) ([]uploadEntry, error) {
 	return entries, nil
 }
 
-// GetUploadFiles returns a set of UploadFiles from a set of UploadEntries by verifying against
+// GetUploadFiles returns a set of UploadFiles from a set of UploadEntries by verifying against DynamoDB
 func GetUploadFiles(entries []uploadEntry) ([]uploadFile.UploadFile, error) {
 
 	// 1. Check all standard uploadEntities against dynamodb
@@ -203,7 +197,6 @@ func GetUploadFiles(entries []uploadEntry) ([]uploadFile.UploadFile, error) {
 			log.Fatalf("MarshalMap: %v\n", err)
 		}
 		getItems = append(getItems, data)
-
 	}
 
 	var verifiedFiles []uploadEntry

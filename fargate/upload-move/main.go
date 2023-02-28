@@ -61,9 +61,9 @@ func main() {
 	if err != nil {
 		log.Fatalf("Cannot connect to the Pennsieve Postgres Proxy.")
 	}
-	//defer Session.pgClient.Close()
 
 	store := NewUploadMoveStore(db, dynamodb.NewFromConfig(cfg), s3.NewFromConfig(cfg))
+	//goland:noinspection GoUnhandledErrorResult
 	defer store.db.Close()
 
 	uploadBucket = os.Getenv("UPLOAD_BUCKET")

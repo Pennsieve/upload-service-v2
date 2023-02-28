@@ -54,7 +54,7 @@ func MultiPartCopy(svc *s3.Client, fileSize int64, sourceBucket string, sourceKe
 		return errors.New("no upload id found in start upload request")
 	}
 
-	numUploads := fileSize / maxPartSize
+	//numUploads := fileSize / maxPartSize
 	//log.Printf("Will attempt upload in %d number of parts to %s\n", numUploads, destKey)
 
 	// Walk over all files in IMPORTED status and make available on channel for processors.
@@ -65,7 +65,7 @@ func MultiPartCopy(svc *s3.Client, fileSize int64, sourceBucket string, sourceKe
 	go aggregateResult(done, &parts, results)
 
 	// Wait until all processors are completed.
-	createWorkerPool(ctx, svc, nrCopyWorkers, numUploads, uploadId, partWalker, results)
+	createWorkerPool(ctx, svc, nrCopyWorkers, uploadId, partWalker, results)
 
 	// Wait until done channel has a value
 	<-done
@@ -132,7 +132,7 @@ func allocate(uploadId string, fileSize int64, sourceBucket string, sourceKey st
 }
 
 // createWorkerPool creates a worker pool for uploading parts
-func createWorkerPool(ctx context.Context, svc *s3.Client, nrWorkers int, nrUploads int64, uploadId string,
+func createWorkerPool(ctx context.Context, svc *s3.Client, nrWorkers int, uploadId string,
 	partWalker chan s3.UploadPartCopyInput, results chan s3types.CompletedPart) {
 
 	defer func() {
@@ -143,7 +143,7 @@ func createWorkerPool(ctx context.Context, svc *s3.Client, nrWorkers int, nrUplo
 	workerFailed := false
 	for w := 1; w <= nrWorkers; w++ {
 		copyWg.Add(1)
-		log.Println("starting uploadpart worker:", w)
+		log.Println("starting upload-part worker:", w)
 		w := int32(w)
 		go func() {
 			err := worker(ctx, svc, &copyWg, w, partWalker, results)
@@ -173,7 +173,7 @@ func createWorkerPool(ctx context.Context, svc *s3.Client, nrWorkers int, nrUplo
 	log.Println("Finished checking status of workers.")
 }
 
-// aggregateResult grabs the etags from results channel and aggregates in array
+// aggregateResult grabs the e-tags from results channel and aggregates in array
 func aggregateResult(done chan bool, parts *[]s3types.CompletedPart, results chan s3types.CompletedPart) {
 
 	for cPart := range results {

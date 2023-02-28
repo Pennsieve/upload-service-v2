@@ -41,7 +41,7 @@ func GetTableInfo(c context.Context, api DynamoDBDescribeTableAPI, input *dynamo
 }
 
 // getManifestRoute returns a list of manifests for a given dataset
-func getManifestRoute(request events.APIGatewayV2HTTPRequest, claims *authorizer.Claims) (*events.APIGatewayV2HTTPResponse, error) {
+func getManifestRoute(_ events.APIGatewayV2HTTPRequest, claims *authorizer.Claims) (*events.APIGatewayV2HTTPResponse, error) {
 
 	apiResponse := events.APIGatewayV2HTTPResponse{}
 
@@ -98,14 +98,20 @@ func postManifestRoute(request events.APIGatewayV2HTTPRequest, claims *authorize
 	if err != nil {
 		message := "Error: Invalid JSON payload ||| " + fmt.Sprint(err) + " Body Obtained" + "||||" + request.Body
 		apiResponse = events.APIGatewayV2HTTPResponse{
-			Body: gateway.CreateErrorMessage(message, 500), StatusCode: 500}
+			Body: gateway.CreateErrorMessage(message, 400), StatusCode: 400}
 		return &apiResponse, nil
 	}
 
 	// Unmarshal JSON into Manifest DTOs
 	bytes := []byte(request.Body)
 	var res manifest.DTO
-	json.Unmarshal(bytes, &res)
+	err = json.Unmarshal(bytes, &res)
+	if err != nil {
+		message := "Error: Invalid JSON payload ||| " + fmt.Sprint(err) + " Body Obtained" + "||||" + request.Body
+		apiResponse = events.APIGatewayV2HTTPResponse{
+			Body: gateway.CreateErrorMessage(message, 400), StatusCode: 400}
+		return &apiResponse, nil
+	}
 
 	fmt.Println("SessionID: ", res.ID, " NrFiles: ", len(res.Files))
 
@@ -282,8 +288,8 @@ func getManifestFilesRoute(request events.APIGatewayV2HTTPRequest, claims *autho
 //
 // This method returns a list of file ids for the given manifest and status.
 // If the "verify" flag is set in the request, then the requested status is always set to "Finalized" and the status
-// for the returned files is updated to "Verfied". This enables the workflow for the agent to verify completed uploads
-// and indicate that they uploads were verified by the client.
+// for the returned files is updated to "Verified". This enables the workflow for the agent to verify completed uploads
+// and indicate that the uploads were verified by the client.
 func getManifestFilesStatusRoute(request events.APIGatewayV2HTTPRequest, claims *authorizer.Claims) (*events.APIGatewayV2HTTPResponse, error) {
 
 	/*

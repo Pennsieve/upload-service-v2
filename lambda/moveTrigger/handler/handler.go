@@ -19,7 +19,6 @@ type AppConfig struct {
 	Region            string `json:"region"`
 }
 
-var configJson []byte
 var TaskDefinitionArn string
 var SubNetIds []string
 var SecurityGroup string
@@ -34,9 +33,9 @@ func init() {
 }
 
 // MoveTriggerHandler starts the upload-move fargate task if task is not running.
-func MoveTriggerHandler(ctx context.Context, sqsEvent events.SQSEvent) error {
+func MoveTriggerHandler(ctx context.Context, _ events.SQSEvent) error {
 
-	cfg, err := config.LoadDefaultConfig(context.Background())
+	cfg, err := config.LoadDefaultConfig(ctx)
 	if err != nil {
 		log.Fatalf("LoadDefaultConfig: %v\n", err)
 	}

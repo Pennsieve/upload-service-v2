@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
@@ -198,10 +199,18 @@ func (s *UploadHandlerStore) sendSNSMessages(snsEntries []types.PublishBatchRequ
 }
 
 // ImportFiles creates rows for uploaded files in Packages and Files tables as a transaction
+// All files belong to a single manifest, and therefor single dataset in a single organization.
 func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, ownerId int, files []uploadFile.UploadFile, manifest *dydb.ManifestTable) error {
 
 	err := s.execTx(ctx, func(q *pgQueries.Queries) error {
-		// TODO: add packages
+
+		// Verify assumptions
+		for _, f := range files {
+			if f.ManifestId != manifest.ManifestId {
+				return errors.New("not all files belong to the same manifest (required for ImportFiles method)")
+			}
+		}
+
 		var f uploadFile.UploadFile
 		f.Sort(files)
 
