@@ -146,7 +146,7 @@ func postManifestRoute(request events.APIGatewayV2HTTPRequest, claims *authorize
 		// Check that manifest exists.
 		log.Debug("Has existing manifest")
 
-		activeManifest, err = activeManifest.GetFromManifest(s.Client, manifestTableName, res.ID)
+		//activeManifest, err = store.GetFromManifest(context.Background(), store.tableName, res.ID)
 		if err != nil {
 			message := "Error: Invalid ManifestID |||| Manifest ID: " + res.ID
 			apiResponse = events.APIGatewayV2HTTPResponse{

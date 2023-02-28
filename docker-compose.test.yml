@@ -12,8 +12,10 @@ services:
       dockerfile: Dockerfile.test
     depends_on:
       - dynamodb
+      - pennsievedb
     environment:
       - DYNAMODB_URL=http://dynamodb:8000
+      - POSTGRES_HOST=pennsievedb
     volumes:
       - $PWD:/go/src/github.com/pennsieve/upload-service-v2
     networks:
@@ -26,8 +28,10 @@ services:
       dockerfile: Dockerfile.test
     depends_on:
       - dynamodb-ci
+      - pennsievedb-ci
     environment:
       - DYNAMODB_URL=http://dynamodb-ci:8000
+      - POSTGRES_HOST=pennsievedb-ci
     volumes:
       - $PWD:/go/src/github.com/pennsieve/upload-service-v2
     networks:
@@ -53,5 +57,18 @@ services:
     networks:
       - upload-tests
 
+  pennsievedb:
+    image: pennsieve/pennsievedb:V20221102133799-seed
+    restart: always
+    ports:
+      - "5432:5432"
+    networks:
+      - upload-tests
+
+  pennsievedb-ci:
+    image: pennsieve/pennsievedb:V20221102133799-seed
+    restart: always
+    networks:
+      - upload-tests
 
 
