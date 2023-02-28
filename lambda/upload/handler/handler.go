@@ -15,21 +15,21 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3Types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/aws-sdk-go-v2/service/sns"
-	"github.com/pennsieve/pennsieve-go-core/pkg/models/dbTable"
+	"github.com/pennsieve/pennsieve-go-core/pkg/models/dydb"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/fileInfo/fileType"
-	manfestModels "github.com/pennsieve/pennsieve-go-core/pkg/models/manifest"
+	manifestModels "github.com/pennsieve/pennsieve-go-core/pkg/models/manifest"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/manifest/manifestFile"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/packageInfo/packageType"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/uploadFile"
-	manifestPkg "github.com/pennsieve/pennsieve-go-core/pkg/upload"
+	pgQueries "github.com/pennsieve/pennsieve-go-core/pkg/queries/pgdb"
 	log "github.com/sirupsen/logrus"
 	"os"
 	"regexp"
 )
 
-var manifestSession manifestPkg.ManifestSession
+var manifestSession ManifestSession
 
-// init runs on cold start of lambda and gets jwt keysets from Cognito user pools.
+// init runs on cold start of lambda and gets jwt key-sets from Cognito user pools.
 func init() {
 
 	log.SetFormatter(&log.JSONFormatter{})
@@ -45,7 +45,7 @@ func init() {
 		log.Fatalf("LoadDefaultConfig: %v\n", err)
 	}
 
-	manifestSession = manifestPkg.ManifestSession{
+	manifestSession = ManifestSession{
 		FileTableName: os.Getenv("MANIFEST_FILE_TABLE"),
 		TableName:     os.Getenv("MANIFEST_TABLE"),
 		Client:        dynamodb.NewFromConfig(cfg),
@@ -70,7 +70,7 @@ func Handler(ctx context.Context, sqsEvent events.SQSEvent) error {
 	// 1. Parse UploadEntries
 	uploadEntries, err := GetUploadEntries(sqsEvent.Records)
 	if err != nil {
-		// This really should never happen.
+		// This really should never happen --> Somehow the SQS queue received a non-S3 message.
 		log.Fatalf(err.Error())
 	}
 
@@ -88,20 +88,23 @@ func Handler(ctx context.Context, sqsEvent events.SQSEvent) error {
 
 	// 4. Iterate over different import sessions and import files.
 	for manifestId, uploadFilesForManifest := range fileByManifest {
-		var s UploadSession
+		s := NewUploadHandlerStore(nil, manifestSession.Client, manifestSession.SNSClient, manifestSession.FileTableName, manifestSession.TableName)
 
 		// Get manifest from dynamodb
-		var m *dbTable.ManifestTable
-		var mf *dbTable.ManifestFileTable
-		manifest, err := m.GetFromManifest(manifestSession.Client, manifestSession.TableName, manifestId)
+		manifest, err := s.dy.GetFromManifest(ctx, manifestSession.TableName, manifestId)
+		db, err := pgQueries.ConnectRDSWithOrg(int(manifest.OrganizationId))
+		if err != nil {
+			return err
+		}
 
-		// Create upload session (with DB access) and import files
-		session, err := s.CreateUploadSession(manifest)
+		// Create postgres session with organization associated with manifest.
+		s = s.WithDB(db)
+
 		if err != nil {
 			log.Error("Unable to create upload session.", err)
 			continue
 		}
-		err = session.ImportFiles(uploadFilesForManifest, manifest)
+		err = s.ImportFiles(ctx, int(manifest.DatasetId), int(manifest.OrganizationId), uploadFilesForManifest, manifest)
 
 		if err != nil {
 			log.Error("Unable to create packages: ", err)
@@ -127,7 +130,7 @@ func Handler(ctx context.Context, sqsEvent events.SQSEvent) error {
 		// this is the only way we can batch update, and we also update the name in
 		// case that we need to append index (on name conflict).
 		setStatus := manifestFile.Imported
-		manifestSession.AddFiles(manifestId, fileDTOs, &setStatus)
+		s.dy.AddFiles(manifestId, fileDTOs, &setStatus, s.fileTableName)
 
 		// Check if there are any remaining items for manifest and
 		// set manifest status if not
@@ -135,12 +138,18 @@ func Handler(ctx context.Context, sqsEvent events.SQSEvent) error {
 			String: "InProgress",
 			Valid:  true,
 		}
-		remaining, _, err := mf.GetFilesPaginated(manifestSession.Client, manifestSession.TableName,
+		remaining, _, err := s.dy.GetFilesPaginated(ctx, manifestSession.TableName,
 			manifestId, reqStatus, 1, nil)
 		if len(remaining) == 0 {
-			m.UpdateManifestStatus(manifestSession.Client, manifestSession.TableName, manifestId, manfestModels.Completed)
+			err = s.dy.UpdateManifestStatus(ctx, manifestSession.TableName, manifestId, manifestModels.Completed)
+			if err != nil {
+				return err
+			}
 		} else if manifest.Status == "Completed" {
-			m.UpdateManifestStatus(manifestSession.Client, manifestSession.TableName, manifestId, manfestModels.Uploading)
+			err = s.dy.UpdateManifestStatus(ctx, manifestSession.TableName, manifestId, manifestModels.Uploading)
+			if err != nil {
+				return err
+			}
 		}
 
 	}
@@ -171,7 +180,7 @@ func GetUploadEntries(fileEvents []events.SQSMessage) ([]uploadEntry, error) {
 	return entries, nil
 }
 
-// GetUploadFiles returns a set of UploadFiles from a set of UploadEntries by verifying against
+// GetUploadFiles returns a set of UploadFiles from a set of UploadEntries by verifying against DynamoDB
 func GetUploadFiles(entries []uploadEntry) ([]uploadFile.UploadFile, error) {
 
 	// 1. Check all standard uploadEntities against dynamodb
@@ -180,7 +189,7 @@ func GetUploadFiles(entries []uploadEntry) ([]uploadFile.UploadFile, error) {
 	for _, item := range entries {
 		entryMap[item.uploadId] = item
 
-		data, err := attributevalue.MarshalMap(dbTable.ManifestFilePrimaryKey{
+		data, err := attributevalue.MarshalMap(dydb.ManifestFilePrimaryKey{
 			ManifestId: item.manifestId,
 			UploadId:   item.uploadId,
 		})
@@ -188,7 +197,6 @@ func GetUploadFiles(entries []uploadEntry) ([]uploadFile.UploadFile, error) {
 			log.Fatalf("MarshalMap: %v\n", err)
 		}
 		getItems = append(getItems, data)
-
 	}
 
 	var verifiedFiles []uploadEntry
@@ -219,7 +227,7 @@ func GetUploadFiles(entries []uploadEntry) ([]uploadFile.UploadFile, error) {
 		dbItems := dbResults.Responses[manifestSession.FileTableName]
 
 		for _, dbItem := range dbItems {
-			fileEntry := dbTable.ManifestFileTable{}
+			fileEntry := dydb.ManifestFileTable{}
 			err := attributevalue.UnmarshalMap(dbItem, &fileEntry)
 			if err != nil {
 				log.Error("Unable to UnMarshall unprocessed items. ", err)
@@ -262,7 +270,7 @@ func GetUploadFiles(entries []uploadEntry) ([]uploadFile.UploadFile, error) {
 	}
 
 	if len(verifiedFiles) != len(entries) {
-		log.Error("MISMATCH BETWEEN UPLOADED ENTRIES AND RETURN FROM DYNAMOBD.")
+		log.Error("MISMATCH BETWEEN UPLOADED ENTRIES AND RETURN FROM DYNAMO-BD.")
 	}
 
 	var uploadFiles []uploadFile.UploadFile
