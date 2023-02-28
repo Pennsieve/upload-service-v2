@@ -13,13 +13,13 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/google/uuid"
 	"github.com/pennsieve/pennsieve-go-core/pkg/authorizer"
-	"github.com/pennsieve/pennsieve-go-core/pkg/models/dbTable"
+	"github.com/pennsieve/pennsieve-go-core/pkg/models/dydb"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/fileInfo/fileType"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/gateway"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/manifest"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/manifest/manifestFile"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/packageInfo/packageType"
-	manifestPkg "github.com/pennsieve/pennsieve-go-core/pkg/upload"
+	"github.com/pennsieve/pennsieve-go-core/pkg/upload"
 	log "github.com/sirupsen/logrus"
 	"github.com/valyala/fastjson"
 	"os"
@@ -41,14 +41,14 @@ func GetTableInfo(c context.Context, api DynamoDBDescribeTableAPI, input *dynamo
 }
 
 // getManifestRoute returns a list of manifests for a given dataset
-func getManifestRoute(request events.APIGatewayV2HTTPRequest, claims *authorizer.Claims) (*events.APIGatewayV2HTTPResponse, error) {
+func getManifestRoute(_ events.APIGatewayV2HTTPRequest, claims *authorizer.Claims) (*events.APIGatewayV2HTTPResponse, error) {
 
 	apiResponse := events.APIGatewayV2HTTPResponse{}
 
 	// Create an Amazon DynamoDB client.
 	table := os.Getenv("MANIFEST_TABLE")
-	var activeManifest *dbTable.ManifestTable
-	manifests, err := activeManifest.GetManifestsForDataset(client, table, claims.DatasetClaim.NodeId)
+	ctx := context.Background()
+	manifests, err := store.GetManifestsForDataset(ctx, table, claims.DatasetClaim.NodeId)
 	if err != nil {
 		message := "Error: Unable to get manifests for dataset: " + claims.DatasetClaim.NodeId + " ||| " + fmt.Sprint(err)
 		apiResponse = events.APIGatewayV2HTTPResponse{
@@ -98,25 +98,31 @@ func postManifestRoute(request events.APIGatewayV2HTTPRequest, claims *authorize
 	if err != nil {
 		message := "Error: Invalid JSON payload ||| " + fmt.Sprint(err) + " Body Obtained" + "||||" + request.Body
 		apiResponse = events.APIGatewayV2HTTPResponse{
-			Body: gateway.CreateErrorMessage(message, 500), StatusCode: 500}
+			Body: gateway.CreateErrorMessage(message, 400), StatusCode: 400}
 		return &apiResponse, nil
 	}
 
 	// Unmarshal JSON into Manifest DTOs
 	bytes := []byte(request.Body)
 	var res manifest.DTO
-	json.Unmarshal(bytes, &res)
+	err = json.Unmarshal(bytes, &res)
+	if err != nil {
+		message := "Error: Invalid JSON payload ||| " + fmt.Sprint(err) + " Body Obtained" + "||||" + request.Body
+		apiResponse = events.APIGatewayV2HTTPResponse{
+			Body: gateway.CreateErrorMessage(message, 400), StatusCode: 400}
+		return &apiResponse, nil
+	}
 
 	fmt.Println("SessionID: ", res.ID, " NrFiles: ", len(res.Files))
 
-	s := manifestPkg.ManifestSession{
-		FileTableName: manifestFileTableName,
-		TableName:     manifestTableName,
-		Client:        client,
-	}
+	//s := manifestPkg.ManifestSession{
+	//	FileTableName: manifestFileTableName,
+	//	TableName:     manifestTableName,
+	//	Client:        client,
+	//}
 
 	// ADDING MANIFEST IF NEEDED
-	var activeManifest *dbTable.ManifestTable
+	var activeManifest *dydb.ManifestTable
 	if res.ID == "" {
 
 		manifestId := uuid.New().String()
@@ -130,7 +136,7 @@ func postManifestRoute(request events.APIGatewayV2HTTPRequest, claims *authorize
 		).Info("Creating new manifest.")
 
 		// Create new manifest
-		activeManifest = &dbTable.ManifestTable{
+		activeManifest = &dydb.ManifestTable{
 			ManifestId:     manifestId,
 			DatasetId:      claims.DatasetClaim.IntId,
 			DatasetNodeId:  claims.DatasetClaim.NodeId,
@@ -140,13 +146,13 @@ func postManifestRoute(request events.APIGatewayV2HTTPRequest, claims *authorize
 			DateCreated:    time.Now().Unix(),
 		}
 
-		activeManifest.CreateManifest(s.Client, s.TableName, *activeManifest)
+		store.CreateManifest(context.Background(), store.tableName, *activeManifest)
 
 	} else {
 		// Check that manifest exists.
 		log.Debug("Has existing manifest")
 
-		//activeManifest, err = store.GetFromManifest(context.Background(), store.tableName, res.ID)
+		activeManifest, err = store.GetFromManifest(context.Background(), store.tableName, res.ID)
 		if err != nil {
 			message := "Error: Invalid ManifestID |||| Manifest ID: " + res.ID
 			apiResponse = events.APIGatewayV2HTTPResponse{
@@ -159,10 +165,10 @@ func postManifestRoute(request events.APIGatewayV2HTTPRequest, claims *authorize
 	// MERGE PACKAGES FOR SPECIFIC FILETYPES
 	// TODO: Improve this functionality to handle situation where part of the merged package is previously added to the manifest.
 	// Currently, the merge only happens within the files included in the call.
-	s.PackageTypeResolver(res.Files)
+	upload.PackageTypeResolver(res.Files)
 
 	// ADDING FILES TO MANIFEST
-	addFilesResponse := s.AddFiles(activeManifest.ManifestId, res.Files, nil)
+	addFilesResponse := store.AddFiles(activeManifest.ManifestId, res.Files, nil, store.fileTableName)
 
 	// CREATING API RESPONSE
 	responseBody := manifest.PostResponse{
@@ -194,13 +200,13 @@ func getManifestFilesRoute(request events.APIGatewayV2HTTPRequest, claims *autho
 		return &apiResponse, nil
 	}
 
-	cfg, err := config.LoadDefaultConfig(context.Background())
-	if err != nil {
-		panic("unable to load SDK config, " + err.Error())
-	}
+	//cfg, err := config.LoadDefaultConfig(context.Background())
+	//if err != nil {
+	//	panic("unable to load SDK config, " + err.Error())
+	//}
 
 	// Create an Amazon DynamoDB client.
-	client := dynamodb.NewFromConfig(cfg)
+	//client := dynamodb.NewFromConfig(cfg)
 
 	table := os.Getenv("MANIFEST_FILE_TABLE")
 
@@ -239,8 +245,8 @@ func getManifestFilesRoute(request events.APIGatewayV2HTTPRequest, claims *autho
 		}
 	}
 
-	var mf *dbTable.ManifestFileTable
-	manifestFiles, lastKey, err := mf.GetFilesPaginated(client, table, manifestId, status, limit, startKey)
+	//var mf *dbTable.ManifestFileTable
+	manifestFiles, lastKey, err := store.GetFilesPaginated(context.Background(), table, manifestId, status, limit, startKey)
 	if err != nil {
 		message := "Error: Unable to get files for manifests: " + manifestId + " ||| " + fmt.Sprint(err)
 		apiResponse = events.APIGatewayV2HTTPResponse{
@@ -282,8 +288,8 @@ func getManifestFilesRoute(request events.APIGatewayV2HTTPRequest, claims *autho
 //
 // This method returns a list of file ids for the given manifest and status.
 // If the "verify" flag is set in the request, then the requested status is always set to "Finalized" and the status
-// for the returned files is updated to "Verfied". This enables the workflow for the agent to verify completed uploads
-// and indicate that they uploads were verified by the client.
+// for the returned files is updated to "Verified". This enables the workflow for the agent to verify completed uploads
+// and indicate that the uploads were verified by the client.
 func getManifestFilesStatusRoute(request events.APIGatewayV2HTTPRequest, claims *authorizer.Claims) (*events.APIGatewayV2HTTPResponse, error) {
 
 	/*
@@ -350,8 +356,8 @@ func getManifestFilesStatusRoute(request events.APIGatewayV2HTTPRequest, claims 
 	/*
 		Query table
 	*/
-	var mf *dbTable.ManifestFileTable
-	files, lastKey, err := mf.GetFilesPaginated(client, manifestFileTableName, manifestId, status, 500, startKey)
+	//var mf *dbTable.ManifestFileTable
+	files, lastKey, err := store.GetFilesPaginated(context.Background(), store.fileTableName, manifestId, status, 500, startKey)
 	if err != nil {
 		message := "Error: Unable to get manifests for dataset: " + claims.DatasetClaim.NodeId + " ||| " + fmt.Sprint(err)
 		apiResponse = events.APIGatewayV2HTTPResponse{
@@ -368,7 +374,7 @@ func getManifestFilesStatusRoute(request events.APIGatewayV2HTTPRequest, claims 
 	// Update status for returned items to "Verified"
 	if updateStatus {
 		for _, f := range UploadIds {
-			err = mf.UpdateFileTableStatus(client, manifestFileTableName, manifestId, f, manifestFile.Verified, "")
+			err = store.UpdateFileTableStatus(context.Background(), store.fileTableName, manifestId, f, manifestFile.Verified, "")
 			if err != nil {
 				fmt.Println("Error updating table: ", err)
 			}

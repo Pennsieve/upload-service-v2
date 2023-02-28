@@ -25,3 +25,6 @@ fargate/upload-move/app/*
 
 # Mac
 .DS_Store
+
+#dynamodb test data
+test-dynamodb-data/
