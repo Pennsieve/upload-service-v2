@@ -11,9 +11,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/aws/aws-sdk-go-v2/service/sns"
-	"github.com/aws/smithy-go/middleware"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/dydb"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/fileInfo/fileType"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/manifest"
@@ -27,77 +24,16 @@ import (
 	"time"
 )
 
-const manifestTableName = "upload-table"
-const manifestFileTableName = "upload-file-table"
-
-type mockSNS struct{}
-
-func (s mockSNS) PublishBatch(ctx context.Context, params *sns.PublishBatchInput, optFns ...func(*sns.Options)) (*sns.PublishBatchOutput, error) {
-	result := sns.PublishBatchOutput{
-		Failed:         nil,
-		Successful:     nil,
-		ResultMetadata: middleware.Metadata{},
-	}
-	return &result, nil
-}
-
-type mockS3 struct{}
-
-func (s mockS3) HeadObject(ctx context.Context, params *s3.HeadObjectInput, optFns ...func(*s3.Options)) (*s3.HeadObjectOutput, error) {
-	result := s3.HeadObjectOutput{
-		ChecksumSHA256: aws.String("fakeSHA"),
-	}
-
-	return &result, nil
-}
+var manifestTableName, manifestFileTableName string
 
 func testSQSMessageParser(t *testing.T, store *UploadHandlerStore) {
-	eventRecord1 := events.S3EventRecord{
-		S3: events.S3Entity{
-			Bucket: events.S3Bucket{
-				Name: "pennsieve-dev-uploads-v2-use1",
-			},
-			Object: events.S3Object{
-				Key:  "00000000-0000-0000-0000-000000000000/00000000-1111-1111-1111-000000000000",
-				Size: 99,
-				ETag: "fakeETag1",
-			},
-		},
-	}
-	event1 := events.S3Event{Records: []events.S3EventRecord{eventRecord1}}
-	eventJson1, err := json.Marshal(event1)
+
+	events, err := getTestS3SQSEvents()
 	assert.NoError(t, err)
-
-	eventRecord2 := events.S3EventRecord{
-		S3: events.S3Entity{
-			Bucket: events.S3Bucket{
-				Name: "pennsieve-dev-uploads-v2-use1",
-			},
-			Object: events.S3Object{
-				Key:  "00000000-0000-0000-0000-000000000000/00000000-1111-1111-1111-000000000001",
-				Size: 99,
-				ETag: "fakeETag2",
-			},
-		},
-	}
-
-	event2 := events.S3Event{Records: []events.S3EventRecord{eventRecord2}}
-	eventJson2, err := json.Marshal(event2)
-	assert.NoError(t, err)
-
-	events := []events.SQSMessage{
-		{
-			Body: string(eventJson1),
-		},
-		{
-			Body: string(eventJson2),
-		},
-	}
 
 	entries, err := store.GetUploadEntries(events)
 	assert.NoError(t, err)
 	assert.Equal(t, 2, len(entries))
-	fmt.Println(entries)
 
 }
 
@@ -133,12 +69,14 @@ func TestMain(m *testing.M) {
 	if _, ok := os.LookupEnv("DYNAMODB_URL"); ok {
 		time.Sleep(5 * time.Second)
 	}
+	manifestTableName, _ = os.LookupEnv("MANIFEST_TABLE")
+	manifestFileTableName, _ = os.LookupEnv("MANIFEST_FILE_TABLE")
 
 	var err error
 
 	svc := getDynamoDBClient()
-	_, _ = svc.DeleteTable(context.Background(), &dynamodb.DeleteTableInput{TableName: aws.String("upload-table")})
-	_, _ = svc.DeleteTable(context.Background(), &dynamodb.DeleteTableInput{TableName: aws.String("upload-file-table")})
+	_, _ = svc.DeleteTable(context.Background(), &dynamodb.DeleteTableInput{TableName: aws.String(manifestTableName)})
+	_, _ = svc.DeleteTable(context.Background(), &dynamodb.DeleteTableInput{TableName: aws.String(manifestFileTableName)})
 
 	_, err = svc.CreateTable(context.TODO(), &dynamodb.CreateTableInput{
 		AttributeDefinitions: []types.AttributeDefinition{
@@ -159,10 +97,6 @@ func TestMain(m *testing.M) {
 			{
 				AttributeName: aws.String("ManifestId"),
 				KeyType:       types.KeyTypeHash,
-			},
-			{
-				AttributeName: aws.String("UserId"),
-				KeyType:       types.KeyTypeRange,
 			},
 		},
 		GlobalSecondaryIndexes: []types.GlobalSecondaryIndex{
@@ -185,7 +119,7 @@ func TestMain(m *testing.M) {
 				ProvisionedThroughput: nil,
 			},
 		},
-		TableName:   aws.String("upload-table"),
+		TableName:   aws.String(manifestTableName),
 		BillingMode: types.BillingModePayPerRequest,
 	})
 
@@ -194,7 +128,7 @@ func TestMain(m *testing.M) {
 	} else {
 		waiter := dynamodb.NewTableExistsWaiter(svc)
 		err = waiter.Wait(context.TODO(), &dynamodb.DescribeTableInput{
-			TableName: aws.String("upload-table")}, 5*time.Minute)
+			TableName: aws.String(manifestTableName)}, 5*time.Minute)
 		if err != nil {
 			log.Printf("Wait for table exists failed. Here's why: %v\n", err)
 		}
@@ -289,7 +223,7 @@ func TestMain(m *testing.M) {
 				ProvisionedThroughput: nil,
 			},
 		},
-		TableName:   aws.String("upload-file-table"),
+		TableName:   aws.String(manifestFileTableName),
 		BillingMode: types.BillingModePayPerRequest,
 	})
 
@@ -298,15 +232,15 @@ func TestMain(m *testing.M) {
 	} else {
 		waiter := dynamodb.NewTableExistsWaiter(svc)
 		err = waiter.Wait(context.TODO(), &dynamodb.DescribeTableInput{
-			TableName: aws.String("upload-file-table")}, 5*time.Minute)
+			TableName: aws.String(manifestFileTableName)}, 5*time.Minute)
 		if err != nil {
 			log.Printf("Wait for table exists failed. Here's why: %v\n", err)
 		}
 	}
 
 	// pre-populate manifest tables
-	orgId := 2
-	pgdbClient, err := pgdb.ConnectENVWithOrg(orgId)
+	//orgId := 2
+	pgdbClient, err := pgdb.ConnectENVWithOrg(2)
 	if err != nil {
 		log.Fatal("cannot connect to db:", err)
 	}
@@ -317,6 +251,9 @@ func TestMain(m *testing.M) {
 	store := NewUploadHandlerStore(pgdbClient, client, mSNS, mS3, manifestFileTableName, manifestTableName)
 
 	populateManifest(store)
+
+	// close DB
+	pgdbClient.Close()
 
 	// Run tests
 	code := m.Run()
@@ -333,12 +270,12 @@ func TestUploadService(t *testing.T) {
 		"test pre-populated manifests":          testManifest,
 		"sorting of upload files":               testSorting,
 		"test folder mapping from upload files": testGetUploadFolderMap,
+		"test lambda handler end-to-end":        testHandler,
 	} {
 		t.Run(scenario, func(t *testing.T) {
 			client := getDynamoDBClient()
 
-			orgId := 2
-			pgdbClient, err := pgdb.ConnectENVWithOrg(orgId)
+			pgdbClient, err := pgdb.ConnectENV()
 			if err != nil {
 				log.Fatal("cannot connect to db:", err)
 			}
@@ -489,7 +426,7 @@ func populateManifest(store *UploadHandlerStore) error {
 	ctx := context.Background()
 
 	newManifest := dydb.ManifestTable{
-		ManifestId:     "1234567789",
+		ManifestId:     "00000000-0000-0000-0000-000000000000",
 		DatasetId:      1,
 		DatasetNodeId:  "N:Dataset:1",
 		OrganizationId: 2,
@@ -503,31 +440,14 @@ func populateManifest(store *UploadHandlerStore) error {
 		return err
 	}
 
-	files := []manifestFile.FileDTO{
-		{
-			UploadID:   "1",
-			TargetPath: "",
-			TargetName: "file1.edf",
-			Status:     0,
-			FileType:   fileType.EDF.String(),
-		},
-		{
-			UploadID:   "2",
-			TargetPath: "",
-			TargetName: "file2.edf",
-			Status:     0,
-			FileType:   fileType.EDF.String(),
-		},
-		{
-			UploadID:       "3",
-			S3Key:          "",
-			TargetPath:     "",
-			TargetName:     "file3.zip",
-			Status:         0,
-			MergePackageId: "",
-			FileType:       fileType.ZIP.String(),
-		},
+	params := []tesManifestFileParams{
+		{name: "file1.edf", path: "", fType: fileType.EDF},
+		{name: "file2.edf", path: "", fType: fileType.EDF},
+		{name: "file3.edf", path: "", fType: fileType.EDF},
+		{name: "file4.edf", path: "", fType: fileType.EDF},
+		{name: "file5.edf", path: "", fType: fileType.EDF},
 	}
+	files, _, _ := generateManifestFilesAndEvents(params, newManifest.ManifestId)
 
 	fileStats := store.dy.AddFiles(newManifest.ManifestId, files, nil, manifestFileTableName)
 	if len(fileStats.FailedFiles) > 0 {
@@ -536,49 +456,156 @@ func populateManifest(store *UploadHandlerStore) error {
 	return nil
 }
 
-func testHandler(t *testing.T, store *UploadHandlerStore) {
+type tesManifestFileParams struct {
+	name  string
+	path  string
+	fType fileType.Type
+}
 
-	ctx := context.Background()
-	messages := []events.SQSMessage{
-		{
-			MessageId:              "",
-			ReceiptHandle:          "",
-			Body:                   "",
-			Md5OfBody:              "",
-			Md5OfMessageAttributes: "",
-			Attributes:             nil,
-			MessageAttributes:      nil,
-			EventSourceARN:         "",
-			EventSource:            "aws:s3",
-			AWSRegion:              "us-east-1",
+func generateManifestFilesAndEvents(params []tesManifestFileParams, manifestId string) ([]manifestFile.FileDTO, []events.SQSMessage, error) {
+
+	var dtos []manifestFile.FileDTO
+	var sqsMessages []events.SQSMessage
+	for index, p := range params {
+		uploadId := fmt.Sprintf("00000000-1111-1111-1111-%012d", index)
+		dtos = append(dtos, manifestFile.FileDTO{
+			UploadID:       uploadId,
+			TargetPath:     p.path,
+			TargetName:     p.name,
+			Status:         0,
+			MergePackageId: "",
+			FileType:       p.fType.String(),
+		})
+
+		evtRecord := events.S3EventRecord{
+			S3: events.S3Entity{
+				Bucket: events.S3Bucket{
+					Name: "dummy-s3-bucket",
+				},
+				Object: events.S3Object{
+					Key:  fmt.Sprintf("%s/%s", manifestId, uploadId),
+					Size: 99,
+					ETag: "fakeETag1",
+				},
+			},
+		}
+		evt := events.S3Event{Records: []events.S3EventRecord{evtRecord}}
+		evtJson, err := json.Marshal(evt)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		sqsMessage := events.SQSMessage{
+			Body: string(evtJson),
+		}
+
+		sqsMessages = append(sqsMessages, sqsMessage)
+
+	}
+
+	return dtos, sqsMessages, nil
+
+}
+
+func getTestS3SQSEvents() ([]events.SQSMessage, error) {
+
+	eventRecord1 := events.S3EventRecord{
+		S3: events.S3Entity{
+			Bucket: events.S3Bucket{
+				Name: "pennsieve-dev-uploads-v2-use1",
+			},
+			Object: events.S3Object{
+				Key:  "00000000-0000-0000-0000-000000000000/00000000-1111-1111-1111-000000000000",
+				Size: 99,
+				ETag: "fakeETag1",
+			},
 		},
-		{
-			MessageId:              "",
-			ReceiptHandle:          "",
-			Body:                   "",
-			Md5OfBody:              "",
-			Md5OfMessageAttributes: "",
-			Attributes:             nil,
-			MessageAttributes:      nil,
-			EventSourceARN:         "",
-			EventSource:            "",
-			AWSRegion:              "",
-		},
-		{
-			MessageId:              "",
-			ReceiptHandle:          "",
-			Body:                   "",
-			Md5OfBody:              "",
-			Md5OfMessageAttributes: "",
-			Attributes:             nil,
-			MessageAttributes:      nil,
-			EventSourceARN:         "",
-			EventSource:            "",
-			AWSRegion:              "",
+	}
+	event1 := events.S3Event{Records: []events.S3EventRecord{eventRecord1}}
+	eventJson1, err := json.Marshal(event1)
+	if err != nil {
+		return nil, err
+	}
+
+	eventRecord2 := events.S3EventRecord{
+		S3: events.S3Entity{
+			Bucket: events.S3Bucket{
+				Name: "pennsieve-dev-uploads-v2-use1",
+			},
+			Object: events.S3Object{
+				Key:  "00000000-0000-0000-0000-000000000000/00000000-1111-1111-1111-000000000001",
+				Size: 99,
+				ETag: "fakeETag2",
+			},
 		},
 	}
 
+	event2 := events.S3Event{Records: []events.S3EventRecord{eventRecord2}}
+	eventJson2, err := json.Marshal(event2)
+	if err != nil {
+		return nil, err
+	}
+
+	events := []events.SQSMessage{
+		{
+			Body: string(eventJson1),
+		},
+		{
+			Body: string(eventJson2),
+		},
+	}
+	return events, nil
+}
+
+func testHandler(t *testing.T, store *UploadHandlerStore) {
+
+	ctx := context.Background()
+	newManifest := dydb.ManifestTable{
+		ManifestId:     "00000000-0000-0000-0000-000000000000",
+		DatasetId:      1,
+		DatasetNodeId:  "N:Dataset:1",
+		OrganizationId: 2,
+		UserId:         1,
+		Status:         manifest.Initiated.String(),
+		DateCreated:    time.Now().Unix(),
+	}
+
+	err := store.dy.CreateManifest(ctx, manifestTableName, newManifest)
+	assert.NoError(t, err)
+
+	params := []tesManifestFileParams{
+		{name: "file1.edf", path: "", fType: fileType.EDF},
+		{name: "file2.edf", path: "", fType: fileType.EDF},
+		{name: "file3.edf", path: "", fType: fileType.EDF},
+		{name: "file4.edf", path: "", fType: fileType.EDF},
+		{name: "file5.edf", path: "", fType: fileType.EDF},
+	}
+	files, messages, _ := generateManifestFilesAndEvents(params, newManifest.ManifestId)
+	_ = store.dy.AddFiles(newManifest.ManifestId, files, nil, manifestFileTableName)
+
+	// "Call" the Lambda funtion
 	sqsEvents := events.SQSEvent{Records: messages}
-	Handler(ctx, sqsEvents)
+	store.handler(ctx, sqsEvents)
+
+	// Test entries that are created in the database.
+	store.WithOrg(int(newManifest.OrganizationId))
+	packages, err := store.pg.GetPackageChildren(ctx, nil, int(newManifest.DatasetId), false)
+	assert.NoError(t, err)
+	assert.Equal(t, 5, len(packages))
+
+	allNamesCorrect := true
+
+OUTER:
+	for _, p := range packages {
+		for _, e := range params {
+			if p.Name == e.name {
+				continue OUTER
+			}
+		}
+		allNamesCorrect = false
+		break OUTER
+	}
+
+	assert.True(t, allNamesCorrect, "Not all packages where returned or names correctly.")
 
 }

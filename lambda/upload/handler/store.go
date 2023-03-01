@@ -24,6 +24,16 @@ import (
 	"sort"
 )
 
+type UploadQueries struct {
+	*pgQueries.Queries
+}
+
+func NewUploadQueries(q *pgQueries.Queries) *UploadQueries {
+	return &UploadQueries{
+		q,
+	}
+}
+
 // UploadHandlerStore provides the Queries interface and a db instance.
 type UploadHandlerStore struct {
 	pg            *pgQueries.Queries
@@ -63,14 +73,31 @@ func (s *UploadHandlerStore) WithDB(db *sql.DB) *UploadHandlerStore {
 	}
 }
 
-func (s *UploadHandlerStore) execTx(ctx context.Context, fn func(*pgQueries.Queries) error) error {
+func (s *UploadHandlerStore) WithOrg(orgId int) *UploadHandlerStore {
+	q, _ := s.pg.WithOrg(orgId)
+
+	return &UploadHandlerStore{
+		pgdb:          s.pgdb,
+		dynamodb:      s.dynamodb,
+		SNSClient:     s.SNSClient,
+		pg:            q,
+		dy:            s.dy,
+		fileTableName: s.fileTableName,
+		tableName:     s.tableName,
+	}
+}
+
+func (s *UploadHandlerStore) execTx(ctx context.Context, fn func(queries *UploadQueries) error) error {
+
 	tx, err := s.pgdb.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 
 	q := pgQueries.New(tx)
-	err = fn(q)
+	qq := NewUploadQueries(q)
+
+	err = fn(qq)
 	if err != nil {
 		if rbErr := tx.Rollback(); rbErr != nil {
 			return fmt.Errorf("tx err: %v, rb err: %v", err, rbErr)
@@ -84,11 +111,11 @@ func (s *UploadHandlerStore) execTx(ctx context.Context, fn func(*pgQueries.Quer
 // GetCreateUploadFolders creates new folders in the organization.
 // It updates UploadFolders with real folder ID for folders that already exist.
 // Assumes map keys are absolute paths in the dataset
-func (s *UploadHandlerStore) GetCreateUploadFolders(datasetId int, ownerId int, folders uploadFolder.UploadFolderMap) pgdb.PackageMap {
-
+func (q *UploadQueries) GetCreateUploadFolders(datasetId int, ownerId int, folders uploadFolder.UploadFolderMap) pgdb.PackageMap {
+	
 	// Get Root Folders
 	p := pgdb.Package{}
-	rootChildren, _ := s.pg.GetPackageChildren(context.Background(), &p, datasetId, true)
+	rootChildren, _ := q.GetPackageChildren(context.Background(), &p, datasetId, true)
 
 	// Map NodeId to Packages for folders that exist in DB
 	existingFolders := pgdb.PackageMap{}
@@ -119,7 +146,7 @@ func (s *UploadHandlerStore) GetCreateUploadFolders(datasetId int, ownerId int, 
 			}
 
 			// Add children of current folder to existing folders
-			children, _ := s.pg.GetPackageChildren(context.Background(), &folder, datasetId, true)
+			children, _ := q.GetPackageChildren(context.Background(), &folder, datasetId, true)
 			for _, k := range children {
 				p := fmt.Sprintf("%s/%s", path, k.Name)
 				existingFolders[p] = k
@@ -139,7 +166,7 @@ func (s *UploadHandlerStore) GetCreateUploadFolders(datasetId int, ownerId int, 
 				Attributes:   nil,
 			}
 
-			result, _ := s.pg.AddPackages(context.Background(), []pgdb.PackageParams{pkgParams})
+			result, _ := q.AddPackages(context.Background(), []pgdb.PackageParams{pkgParams})
 			folders[path].Id = result[0].Id
 			existingFolders[path] = result[0]
 
@@ -204,7 +231,7 @@ func (s *UploadHandlerStore) sendSNSMessages(snsEntries []types.PublishBatchRequ
 // All files belong to a single manifest, and therefor single dataset in a single organization.
 func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, ownerId int, files []uploadFile.UploadFile, manifest *dydb.ManifestTable) error {
 
-	err := s.execTx(ctx, func(q *pgQueries.Queries) error {
+	err := s.execTx(ctx, func(qtx *UploadQueries) error {
 
 		// Verify assumptions
 		for _, f := range files {
@@ -220,12 +247,12 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, own
 		folderMap := f.GetUploadFolderMap(files, "")
 
 		// 2. Iterate over folders and create them if they do not exist in organization
-		folderPackageMap := s.GetCreateUploadFolders(datasetId, ownerId, folderMap)
+		folderPackageMap := qtx.GetCreateUploadFolders(datasetId, ownerId, folderMap)
 
 		// 3. Create Package Params to add files to "packages" table.
 		pkgParams, _ := getPackageParams(datasetId, ownerId, files, folderPackageMap)
 
-		packages, err := s.pg.AddPackages(context.Background(), pkgParams)
+		packages, err := qtx.AddPackages(context.Background(), pkgParams)
 		if err != nil {
 			log.Error("Error creating a package: ", err)
 			// Some error in creating packages --> none of the packages are imported.
@@ -269,7 +296,7 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, own
 			allFileParams = append(allFileParams, file)
 		}
 
-		returnedFiles, err := s.pg.AddFiles(context.Background(), allFileParams)
+		returnedFiles, err := qtx.AddFiles(context.Background(), allFileParams)
 		if err != nil {
 			return err
 		}
@@ -281,12 +308,11 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, own
 		}
 
 		// Update storage for packages, datasets, and org
-		err = s.UpdateStorage(allFileParams, packages, manifest)
+		err = qtx.UpdateStorage(allFileParams, packages, manifest)
 		if err != nil {
 			return err
 		}
 
-		// TODO: add files
 		return nil
 	})
 
@@ -294,7 +320,7 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, own
 }
 
 // UpdateStorage updates storage in packages, dataset and organization for uploaded package
-func (s *UploadHandlerStore) UpdateStorage(files []pgdb.FileParams, packages []pgdb.Package, manifest *dydb.ManifestTable) error {
+func (q *UploadQueries) UpdateStorage(files []pgdb.FileParams, packages []pgdb.Package, manifest *dydb.ManifestTable) error {
 
 	packageMap := map[int]pgdb.Package{}
 	for _, p := range packages {
@@ -303,19 +329,10 @@ func (s *UploadHandlerStore) UpdateStorage(files []pgdb.FileParams, packages []p
 
 	ctx := context.Background()
 
-	// Create new store for Pennsieve (non-org schema)
-	dbOrg, err := pgQueries.ConnectRDS()
-	if err != nil {
-		log.Error("Error connecting to database.")
-		return err
-	}
-	//goland:noinspection GoUnhandledErrorResult
-	defer dbOrg.Close()
-
 	// Update all packageSize
 	for _, f := range files {
 
-		err = s.pg.IncrementPackageStorage(ctx, int64(f.PackageId), f.Size)
+		err := q.IncrementPackageStorage(ctx, int64(f.PackageId), f.Size)
 		if err != nil {
 			log.Error("Error incrementing package")
 			return err
@@ -323,20 +340,20 @@ func (s *UploadHandlerStore) UpdateStorage(files []pgdb.FileParams, packages []p
 
 		pkg := packageMap[f.PackageId]
 		if pkg.ParentId.Valid {
-			err = s.pg.IncrementPackageStorageAncestors(ctx, pkg.ParentId.Int64, f.Size)
+			err = q.IncrementPackageStorageAncestors(ctx, pkg.ParentId.Int64, f.Size)
 			if err != nil {
 				log.Error("Error incrementing package ancestors")
 				return err
 			}
 		}
 
-		err = s.pg.IncrementDatasetStorage(ctx, manifest.DatasetId, f.Size)
+		err = q.IncrementDatasetStorage(ctx, manifest.DatasetId, f.Size)
 		if err != nil {
 			log.Error("Error incrementing dataset.")
 			return err
 		}
 
-		err = s.pg.IncrementOrganizationStorage(ctx, manifest.OrganizationId, f.Size)
+		err = q.IncrementOrganizationStorage(ctx, manifest.OrganizationId, f.Size)
 		if err != nil {
 			log.Error("Error incrementing organization")
 			return err

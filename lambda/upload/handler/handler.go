@@ -58,6 +58,20 @@ func init() {
 // Handler implements the function that is called when new SQS Events arrive.
 func Handler(ctx context.Context, sqsEvent events.SQSEvent) error {
 
+	db, err := pgQueries.ConnectRDSWithOrg(2)
+	if err != nil {
+		return err
+	}
+
+	// Define store without Postgres connection (as this is different depending on the manifest/org)
+	s := NewUploadHandlerStore(db, manifestSession.Client, manifestSession.SNSClient,
+		manifestSession.S3Client, manifestSession.FileTableName, manifestSession.TableName)
+
+	err = s.handler(ctx, sqsEvent)
+	return err
+}
+
+func (s *UploadHandlerStore) handler(ctx context.Context, sqsEvent events.SQSEvent) error {
 	/*
 		Messages can be from multiple upload sessions --> multiple organizations.
 		We need to:
@@ -66,10 +80,6 @@ func Handler(ctx context.Context, sqsEvent events.SQSEvent) error {
 			3. Create Packages
 			4. Create Files in Packages
 	*/
-
-	// Define store without Postgres connection (as this is different depending on the manifest/org)
-	s := NewUploadHandlerStore(nil, manifestSession.Client, manifestSession.SNSClient,
-		manifestSession.S3Client, manifestSession.FileTableName, manifestSession.TableName)
 
 	// 1. Parse UploadEntries
 	uploadEntries, err := s.GetUploadEntries(sqsEvent.Records)
@@ -94,21 +104,18 @@ func Handler(ctx context.Context, sqsEvent events.SQSEvent) error {
 	for manifestId, uploadFilesForManifest := range fileByManifest {
 
 		// Get manifest from dynamodb
-		manifest, err := s.dy.GetFromManifest(ctx, manifestSession.TableName, manifestId)
-		db, err := pgQueries.ConnectRDSWithOrg(int(manifest.OrganizationId))
+		manifest, err := s.dy.GetFromManifest(ctx, s.tableName, manifestId)
 		if err != nil {
-			return err
+			log.Error("GetFromManifest: Unable to get manifest.", err)
+			continue
 		}
 
-		// Create postgres session with organization associated with manifest.
-		s = s.WithDB(db)
-
+		s.WithOrg(int(manifest.OrganizationId))
 		if err != nil {
-			log.Error("Unable to create upload session.", err)
+			log.Error("Unable to set search path.", err)
 			continue
 		}
 		err = s.ImportFiles(ctx, int(manifest.DatasetId), int(manifest.OrganizationId), uploadFilesForManifest, manifest)
-
 		if err != nil {
 			log.Error("Unable to create packages: ", err)
 			continue

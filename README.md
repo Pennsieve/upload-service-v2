@@ -15,7 +15,14 @@ Version 2 of the Pennsieve upload service
 
 ## Testing
 
+__Jenkins testing__
+
 The tests are automatically run by Jenkins once you push to a feature branch. Successful tests are required to merge a feature branch into the main branch.
+
+__Local testing__
+
+You can test the upload service locally using ```make test```. The Docker-Compose file assumes you have the pennsieve-go-core repository checked out at the same level as the upload service.
+This allows you to ```replace``` the pennsieve-go-core dependency in the mod file to the local version. 
 
 ## Deployment
 
