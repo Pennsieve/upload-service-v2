@@ -61,8 +61,6 @@ func (q *UploadDyQueries) GetUploadFiles(entries []UploadEntry) ([]uploadFile.Up
 			ProjectionExpression:     nil,
 		}
 
-		fmt.Println(ManifestFileTableName)
-
 		getTableItems := map[string]dynamoTypes.KeysAndAttributes{
 			ManifestFileTableName: keysAndAttributes,
 		}

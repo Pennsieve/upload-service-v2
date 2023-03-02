@@ -12,8 +12,14 @@ import (
 	"os"
 )
 
-var manifestSession ManifestSession
-var ManifestFileTableName, ManifestTableName string
+var (
+	SNSClient             *sns.Client
+	SNSTopic              string
+	S3Client              *s3.Client
+	DynamoClient          *dynamodb.Client
+	ManifestTableName     string
+	ManifestFileTableName string
+)
 
 // init runs on cold start of lambda and gets jwt key-sets from Cognito user pools.
 func init() {
@@ -33,15 +39,11 @@ func init() {
 
 	ManifestFileTableName = os.Getenv("FILES_TABLE")
 	ManifestTableName = os.Getenv("MANIFEST_TABLE")
+	SNSClient = sns.NewFromConfig(cfg)
+	S3Client = s3.NewFromConfig(cfg)
+	SNSTopic = os.Getenv("IMPORTED_SNS_TOPIC")
+	DynamoClient = dynamodb.NewFromConfig(cfg)
 
-	manifestSession = ManifestSession{
-		FileTableName: os.Getenv("MANIFEST_FILE_TABLE"),
-		TableName:     os.Getenv("MANIFEST_TABLE"),
-		Client:        dynamodb.NewFromConfig(cfg),
-		SNSClient:     sns.NewFromConfig(cfg),
-		SNSTopic:      os.Getenv("IMPORTED_SNS_TOPIC"),
-		S3Client:      s3.NewFromConfig(cfg),
-	}
 }
 
 // Handler implements the function that is called when new SQS Events arrive.
@@ -53,8 +55,7 @@ func Handler(ctx context.Context, sqsEvent events.SQSEvent) error {
 	}
 
 	// Define store without Postgres connection (as this is different depending on the manifest/org)
-	s := NewUploadHandlerStore(db, manifestSession.Client, manifestSession.SNSClient,
-		manifestSession.S3Client, manifestSession.FileTableName, manifestSession.TableName)
+	s := NewUploadHandlerStore(db, DynamoClient, SNSClient, S3Client, ManifestFileTableName, ManifestTableName)
 
 	err = s.Handler(ctx, sqsEvent)
 	return err

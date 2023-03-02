@@ -25,43 +25,13 @@ import (
 	"time"
 )
 
-func testSQSMessageParser(t *testing.T, store *UploadHandlerStore) {
-
-	evts, err := getTestS3SQSEvents()
-	assert.NoError(t, err)
-
-	entries, err := store.GetUploadEntries(evts)
-	assert.NoError(t, err)
-	assert.Equal(t, 2, len(entries))
-
+type tesManifestFileParams struct {
+	name  string
+	path  string
+	fType fileType.Type
 }
 
-func getEnv(key, fallback string) string {
-	if value, ok := os.LookupEnv(key); ok {
-		return value
-	}
-	return fallback
-}
-
-func getDynamoDBClient() *dynamodb.Client {
-
-	testDBUri := getEnv("DYNAMODB_URL", "http://localhost:8000")
-
-	cfg, err := config.LoadDefaultConfig(context.TODO(),
-		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider("dummy", "dummy_secret", "1234")),
-		config.WithEndpointResolverWithOptions(aws.EndpointResolverWithOptionsFunc(
-			func(service, region string, options ...interface{}) (aws.Endpoint, error) {
-				return aws.Endpoint{URL: testDBUri}, nil
-			})),
-	)
-	if err != nil {
-		panic(err)
-	}
-
-	svc := dynamodb.NewFromConfig(cfg)
-	return svc
-}
-
+// TestMain initializes test-suite
 func TestMain(m *testing.M) {
 
 	// If testing on Jenkins (-> DYNAMODB_URL is set) then wait for db to be active.
@@ -264,6 +234,7 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
+// TestUploadService iterates over and runs tests.
 func TestUploadService(t *testing.T) {
 	for scenario, fn := range map[string]func(
 		tt *testing.T, store *UploadHandlerStore,
@@ -272,7 +243,7 @@ func TestUploadService(t *testing.T) {
 		"test pre-populated manifests":          testManifest,
 		"sorting of upload files":               testSorting,
 		"test folder mapping from upload files": testGetUploadFolderMap,
-		"test lambda handler end-to-end":        testHandler,
+		"test importing simple manifest":        testSimpleManifest,
 	} {
 		t.Run(scenario, func(t *testing.T) {
 			client := getDynamoDBClient()
@@ -290,6 +261,8 @@ func TestUploadService(t *testing.T) {
 		})
 	}
 }
+
+// TESTS
 
 func testManifest(t *testing.T, store *UploadHandlerStore) {
 	ctx := context.Background()
@@ -423,6 +396,19 @@ func testGetUploadFolderMap(t *testing.T, _ *UploadHandlerStore) {
 
 }
 
+func testSQSMessageParser(t *testing.T, store *UploadHandlerStore) {
+
+	evts, err := getTestS3SQSEvents()
+	assert.NoError(t, err)
+
+	entries, err := store.GetUploadEntries(evts)
+	assert.NoError(t, err)
+	assert.Equal(t, 2, len(entries))
+
+}
+
+// HELPER FUNCTIONS
+
 func populateManifest(store *UploadHandlerStore) error {
 
 	ctx := context.Background()
@@ -458,10 +444,30 @@ func populateManifest(store *UploadHandlerStore) error {
 	return nil
 }
 
-type tesManifestFileParams struct {
-	name  string
-	path  string
-	fType fileType.Type
+func getEnv(key, fallback string) string {
+	if value, ok := os.LookupEnv(key); ok {
+		return value
+	}
+	return fallback
+}
+
+func getDynamoDBClient() *dynamodb.Client {
+
+	testDBUri := getEnv("DYNAMODB_URL", "http://localhost:8000")
+
+	cfg, err := config.LoadDefaultConfig(context.TODO(),
+		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider("dummy", "dummy_secret", "1234")),
+		config.WithEndpointResolverWithOptions(aws.EndpointResolverWithOptionsFunc(
+			func(service, region string, options ...interface{}) (aws.Endpoint, error) {
+				return aws.Endpoint{URL: testDBUri}, nil
+			})),
+	)
+	if err != nil {
+		panic(err)
+	}
+
+	svc := dynamodb.NewFromConfig(cfg)
+	return svc
 }
 
 func generateManifestFilesAndEvents(params []tesManifestFileParams, manifestId string) ([]manifestFile.FileDTO, []events.SQSMessage, error) {
@@ -559,7 +565,7 @@ func getTestS3SQSEvents() ([]events.SQSMessage, error) {
 	return evts, nil
 }
 
-func testHandler(t *testing.T, store *UploadHandlerStore) {
+func testSimpleManifest(t *testing.T, store *UploadHandlerStore) {
 
 	ctx := context.Background()
 	newManifest := dydb.ManifestTable{
@@ -572,9 +578,6 @@ func testHandler(t *testing.T, store *UploadHandlerStore) {
 		DateCreated:    time.Now().Unix(),
 	}
 
-	err := store.dy.CreateManifest(ctx, ManifestTableName, newManifest)
-	assert.NoError(t, err)
-
 	params := []tesManifestFileParams{
 		{name: "file1.edf", path: "", fType: fileType.EDF},
 		{name: "file2.edf", path: "", fType: fileType.EDF},
@@ -582,6 +585,12 @@ func testHandler(t *testing.T, store *UploadHandlerStore) {
 		{name: "file4.edf", path: "", fType: fileType.EDF},
 		{name: "file5.edf", path: "", fType: fileType.EDF},
 	}
+
+	// Create Manifest
+	err := store.dy.CreateManifest(ctx, ManifestTableName, newManifest)
+	assert.NoError(t, err)
+
+	// Create Manifest Files
 	files, messages, _ := generateManifestFilesAndEvents(params, newManifest.ManifestId)
 	_ = store.dy.AddFiles(newManifest.ManifestId, files, nil, ManifestFileTableName)
 
