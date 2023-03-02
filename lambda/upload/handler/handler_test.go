@@ -17,6 +17,7 @@ import (
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/manifest/manifestFile"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/uploadFile"
 	"github.com/pennsieve/pennsieve-go-core/pkg/queries/pgdb"
+	"github.com/pennsieve/pennsieve-upload-service-v2/upload/test"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"os"
@@ -24,14 +25,12 @@ import (
 	"time"
 )
 
-var manifestTableName, manifestFileTableName string
-
 func testSQSMessageParser(t *testing.T, store *UploadHandlerStore) {
 
-	events, err := getTestS3SQSEvents()
+	evts, err := getTestS3SQSEvents()
 	assert.NoError(t, err)
 
-	entries, err := store.GetUploadEntries(events)
+	entries, err := store.GetUploadEntries(evts)
 	assert.NoError(t, err)
 	assert.Equal(t, 2, len(entries))
 
@@ -69,14 +68,14 @@ func TestMain(m *testing.M) {
 	if _, ok := os.LookupEnv("DYNAMODB_URL"); ok {
 		time.Sleep(5 * time.Second)
 	}
-	manifestTableName, _ = os.LookupEnv("MANIFEST_TABLE")
-	manifestFileTableName, _ = os.LookupEnv("MANIFEST_FILE_TABLE")
+	ManifestTableName, _ = os.LookupEnv("MANIFEST_TABLE")
+	ManifestFileTableName, _ = os.LookupEnv("MANIFEST_FILE_TABLE")
 
 	var err error
 
 	svc := getDynamoDBClient()
-	_, _ = svc.DeleteTable(context.Background(), &dynamodb.DeleteTableInput{TableName: aws.String(manifestTableName)})
-	_, _ = svc.DeleteTable(context.Background(), &dynamodb.DeleteTableInput{TableName: aws.String(manifestFileTableName)})
+	_, _ = svc.DeleteTable(context.Background(), &dynamodb.DeleteTableInput{TableName: aws.String(ManifestTableName)})
+	_, _ = svc.DeleteTable(context.Background(), &dynamodb.DeleteTableInput{TableName: aws.String(ManifestFileTableName)})
 
 	_, err = svc.CreateTable(context.TODO(), &dynamodb.CreateTableInput{
 		AttributeDefinitions: []types.AttributeDefinition{
@@ -119,7 +118,7 @@ func TestMain(m *testing.M) {
 				ProvisionedThroughput: nil,
 			},
 		},
-		TableName:   aws.String(manifestTableName),
+		TableName:   aws.String(ManifestTableName),
 		BillingMode: types.BillingModePayPerRequest,
 	})
 
@@ -128,7 +127,7 @@ func TestMain(m *testing.M) {
 	} else {
 		waiter := dynamodb.NewTableExistsWaiter(svc)
 		err = waiter.Wait(context.TODO(), &dynamodb.DescribeTableInput{
-			TableName: aws.String(manifestTableName)}, 5*time.Minute)
+			TableName: aws.String(ManifestTableName)}, 5*time.Minute)
 		if err != nil {
 			log.Printf("Wait for table exists failed. Here's why: %v\n", err)
 		}
@@ -223,7 +222,7 @@ func TestMain(m *testing.M) {
 				ProvisionedThroughput: nil,
 			},
 		},
-		TableName:   aws.String(manifestFileTableName),
+		TableName:   aws.String(ManifestFileTableName),
 		BillingMode: types.BillingModePayPerRequest,
 	})
 
@@ -232,7 +231,7 @@ func TestMain(m *testing.M) {
 	} else {
 		waiter := dynamodb.NewTableExistsWaiter(svc)
 		err = waiter.Wait(context.TODO(), &dynamodb.DescribeTableInput{
-			TableName: aws.String(manifestFileTableName)}, 5*time.Minute)
+			TableName: aws.String(ManifestFileTableName)}, 5*time.Minute)
 		if err != nil {
 			log.Printf("Wait for table exists failed. Here's why: %v\n", err)
 		}
@@ -245,15 +244,18 @@ func TestMain(m *testing.M) {
 		log.Fatal("cannot connect to db:", err)
 	}
 
-	mSNS := mockSNS{}
-	mS3 := mockS3{}
+	mSNS := test.MockSNS{}
+	mS3 := test.MockS3{}
 	client := getDynamoDBClient()
-	store := NewUploadHandlerStore(pgdbClient, client, mSNS, mS3, manifestFileTableName, manifestTableName)
+	store := NewUploadHandlerStore(pgdbClient, client, mSNS, mS3, ManifestFileTableName, ManifestTableName)
 
-	populateManifest(store)
+	err = populateManifest(store)
+	if err != nil {
+		log.Fatal("Unable to populate manifest.")
+	}
 
 	// close DB
-	pgdbClient.Close()
+	_ = pgdbClient.Close()
 
 	// Run tests
 	code := m.Run()
@@ -280,9 +282,9 @@ func TestUploadService(t *testing.T) {
 				log.Fatal("cannot connect to db:", err)
 			}
 
-			mSNS := mockSNS{}
-			mS3 := mockS3{}
-			store := NewUploadHandlerStore(pgdbClient, client, mSNS, mS3, manifestFileTableName, manifestTableName)
+			mSNS := test.MockSNS{}
+			mS3 := test.MockS3{}
+			store := NewUploadHandlerStore(pgdbClient, client, mSNS, mS3, ManifestFileTableName, ManifestTableName)
 
 			fn(t, store)
 		})
@@ -291,9 +293,9 @@ func TestUploadService(t *testing.T) {
 
 func testManifest(t *testing.T, store *UploadHandlerStore) {
 	ctx := context.Background()
-	manifest, err := store.dy.GetManifestsForDataset(ctx, manifestTableName, "N:Dataset:1")
+	m, err := store.dy.GetManifestsForDataset(ctx, ManifestTableName, "N:Dataset:1")
 	assert.NoError(t, err)
-	assert.Equal(t, len(manifest), 1)
+	assert.Equal(t, len(m), 1)
 
 }
 
@@ -435,7 +437,7 @@ func populateManifest(store *UploadHandlerStore) error {
 		DateCreated:    time.Now().Unix(),
 	}
 
-	err := store.dy.CreateManifest(ctx, manifestTableName, newManifest)
+	err := store.dy.CreateManifest(ctx, ManifestTableName, newManifest)
 	if err != nil {
 		return err
 	}
@@ -449,7 +451,7 @@ func populateManifest(store *UploadHandlerStore) error {
 	}
 	files, _, _ := generateManifestFilesAndEvents(params, newManifest.ManifestId)
 
-	fileStats := store.dy.AddFiles(newManifest.ManifestId, files, nil, manifestFileTableName)
+	fileStats := store.dy.AddFiles(newManifest.ManifestId, files, nil, ManifestFileTableName)
 	if len(fileStats.FailedFiles) > 0 {
 		return errors.New("could not pre-populate manifest files")
 	}
@@ -546,7 +548,7 @@ func getTestS3SQSEvents() ([]events.SQSMessage, error) {
 		return nil, err
 	}
 
-	events := []events.SQSMessage{
+	evts := []events.SQSMessage{
 		{
 			Body: string(eventJson1),
 		},
@@ -554,7 +556,7 @@ func getTestS3SQSEvents() ([]events.SQSMessage, error) {
 			Body: string(eventJson2),
 		},
 	}
-	return events, nil
+	return evts, nil
 }
 
 func testHandler(t *testing.T, store *UploadHandlerStore) {
@@ -570,7 +572,7 @@ func testHandler(t *testing.T, store *UploadHandlerStore) {
 		DateCreated:    time.Now().Unix(),
 	}
 
-	err := store.dy.CreateManifest(ctx, manifestTableName, newManifest)
+	err := store.dy.CreateManifest(ctx, ManifestTableName, newManifest)
 	assert.NoError(t, err)
 
 	params := []tesManifestFileParams{
@@ -581,14 +583,14 @@ func testHandler(t *testing.T, store *UploadHandlerStore) {
 		{name: "file5.edf", path: "", fType: fileType.EDF},
 	}
 	files, messages, _ := generateManifestFilesAndEvents(params, newManifest.ManifestId)
-	_ = store.dy.AddFiles(newManifest.ManifestId, files, nil, manifestFileTableName)
+	_ = store.dy.AddFiles(newManifest.ManifestId, files, nil, ManifestFileTableName)
 
-	// "Call" the Lambda funtion
+	// "Call" the Lambda function
 	sqsEvents := events.SQSEvent{Records: messages}
-	store.handler(ctx, sqsEvents)
+	_ = store.Handler(ctx, sqsEvents)
 
 	// Test entries that are created in the database.
-	store.WithOrg(int(newManifest.OrganizationId))
+	_ = store.WithOrg(int(newManifest.OrganizationId))
 	packages, err := store.pg.GetPackageChildren(ctx, nil, int(newManifest.DatasetId), false)
 	assert.NoError(t, err)
 	assert.Equal(t, 5, len(packages))

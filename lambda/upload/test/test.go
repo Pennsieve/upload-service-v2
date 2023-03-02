@@ -1,4 +1,4 @@
-package handler
+package test
 
 import (
 	"context"
@@ -8,9 +8,9 @@ import (
 	"github.com/aws/smithy-go/middleware"
 )
 
-type mockSNS struct{}
+type MockSNS struct{}
 
-func (s mockSNS) PublishBatch(ctx context.Context, params *sns.PublishBatchInput, optFns ...func(*sns.Options)) (*sns.PublishBatchOutput, error) {
+func (s MockSNS) PublishBatch(ctx context.Context, params *sns.PublishBatchInput, optFns ...func(*sns.Options)) (*sns.PublishBatchOutput, error) {
 	result := sns.PublishBatchOutput{
 		Failed:         nil,
 		Successful:     nil,
@@ -19,9 +19,9 @@ func (s mockSNS) PublishBatch(ctx context.Context, params *sns.PublishBatchInput
 	return &result, nil
 }
 
-type mockS3 struct{}
+type MockS3 struct{}
 
-func (s mockS3) HeadObject(ctx context.Context, params *s3.HeadObjectInput, optFns ...func(*s3.Options)) (*s3.HeadObjectOutput, error) {
+func (s MockS3) HeadObject(ctx context.Context, params *s3.HeadObjectInput, optFns ...func(*s3.Options)) (*s3.HeadObjectOutput, error) {
 	result := s3.HeadObjectOutput{
 		ChecksumSHA256: aws.String("fakeSHA"),
 	}
