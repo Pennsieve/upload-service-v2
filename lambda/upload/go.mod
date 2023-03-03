@@ -17,7 +17,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sns v1.20.3
 	github.com/aws/smithy-go v1.13.5
 	github.com/google/uuid v1.3.0
-	github.com/pennsieve/pennsieve-go-core v1.2.4-0.20230303210911-6d188e7d5c05
+	github.com/pennsieve/pennsieve-go-core v1.2.4-0.20230303214522-eeac0ca40ff6
 	github.com/sirupsen/logrus v1.9.0
 	github.com/stretchr/testify v1.8.1
 )
