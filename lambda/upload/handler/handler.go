@@ -37,7 +37,7 @@ func init() {
 		log.Fatalf("LoadDefaultConfig: %v\n", err)
 	}
 
-	ManifestFileTableName = os.Getenv("FILES_TABLE")
+	ManifestFileTableName = os.Getenv("MANIFEST_FILE_TABLE")
 	ManifestTableName = os.Getenv("MANIFEST_TABLE")
 	SNSClient = sns.NewFromConfig(cfg)
 	S3Client = s3.NewFromConfig(cfg)
