@@ -36,6 +36,9 @@ services:
     environment:
       - DYNAMODB_URL=http://dynamodb-ci:8000
       - POSTGRES_HOST=pennsievedb-ci
+      - MANIFEST_FILE_TABLE=manifest-file-table
+      - MANIFEST_TABLE=manifest-table
+      - IMPORTED_SNS_TOPIC=import-topic
     volumes:
       - $PWD:/go/src/github.com/pennsieve/upload-service-v2
     networks:
