@@ -667,6 +667,10 @@ func testNestedManifest(t *testing.T, store *UploadHandlerStore) {
 		{path: "protocol_1", name: "Readme.md"},
 		{path: "protocol_1/protocol_2/protocol_3", name: "Readme.md"},
 		{path: "protocol_1/protocol_2/protocol_3/protocol_4/protocol_5", name: "Readme.md"},
+		{path: "protocol_1/protocol_2/protocol_3/protocol_4/protocol_5/protocol_6", name: "Readme.md"},
+		{path: "protocol_1/protocol_2/protocol_3/protocol_4/protocol_5/protocol_6", name: "manifest.xlsx"},
+		{path: "protocol_1/protocol_2/protocol_3/protocol_4/protocol_5/protocol_6/protocol_7", name: "Readme.md"},
+		{path: "protocol_1/protocol_2/protocol_3/protocol_4/protocol_5/protocol_6/protocol_7", name: "manifest.xlsx"},
 	}
 
 	// Create Manifest
