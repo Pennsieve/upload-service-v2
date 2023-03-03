@@ -15,6 +15,7 @@ import (
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/manifest/manifestFile"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/packageInfo"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/packageInfo/packageState"
+	"github.com/pennsieve/pennsieve-go-core/pkg/models/packageInfo/packageType"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/pgdb"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/uploadFile"
 	log "github.com/sirupsen/logrus"
@@ -101,6 +102,9 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, own
 		folderMap := f.GetUploadFolderMap(files, "")
 
 		// 2. Iterate over folders and create them if they do not exist in organization
+		for key, item := range folderMap {
+			fmt.Println(fmt.Sprintf("Key: %s, Name %s, NodeId: %s, Parent_id: %d, ParentNodeId: %s", key, item.Name, item.NodeId, item.ParentId, item.ParentNodeId))
+		}
 		folderPackageMap := qtx.GetCreateUploadFolders(datasetId, ownerId, folderMap)
 
 		// 3. Create Package Params to add files to "packages" table.
@@ -217,6 +221,9 @@ func (s *UploadHandlerStore) Handler(ctx context.Context, sqsEvent events.SQSEve
 			log.Error("Unable to set search path.", err)
 			continue
 		}
+
+		fmt.Println(uploadFilesForManifest)
+
 		err = s.ImportFiles(ctx, int(manifest.DatasetId), int(manifest.OrganizationId), uploadFilesForManifest, manifest)
 		if err != nil {
 			log.Error("Unable to create packages: ", err)
@@ -314,10 +321,18 @@ func getPackageParams(datasetId int, ownerId int, uploadFiles []uploadFile.Uploa
 			DataType: "string",
 		})
 
+		// Select Package State
+		// UPLOADED if there is a workflow associated with the package type
+		// READY is there is no workflow associated with the package type
+		setPackageState := packageState.Uploaded
+		if !packageType.FileTypeToInfoDict[file.FileType].HasWorkflow {
+			setPackageState = packageState.Ready
+		}
+
 		pkgParam := pgdb.PackageParams{
 			Name:         packageName,
 			PackageType:  file.Type,
-			PackageState: packageState.Uploaded,
+			PackageState: setPackageState,
 			NodeId:       packageId,
 			ParentId:     parentId,
 			DatasetId:    datasetId,

@@ -37,6 +37,8 @@ func (q *UploadPgQueries) GetCreateUploadFolders(datasetId int, ownerId int, fol
 	p := pgdb.Package{}
 	rootChildren, _ := q.GetPackageChildren(context.Background(), &p, datasetId, true)
 
+	fmt.Println(rootChildren)
+
 	// Map NodeId to Packages for folders that exist in DB
 	existingFolders := pgdb.PackageMap{}
 	for _, k := range rootChildren {
@@ -85,6 +87,8 @@ func (q *UploadPgQueries) GetCreateUploadFolders(datasetId int, ownerId int, fol
 				Size:         0,
 				Attributes:   nil,
 			}
+
+			fmt.Println(pkgParams)
 
 			result, _ := q.AddPackages(context.Background(), []pgdb.PackageParams{pkgParams})
 			folders[path].Id = result[0].Id

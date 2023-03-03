@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,10 +12,13 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+	"github.com/google/uuid"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/dydb"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/fileInfo/fileType"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/manifest"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/manifest/manifestFile"
+	"github.com/pennsieve/pennsieve-go-core/pkg/models/packageInfo/packageType"
+	pgdb2 "github.com/pennsieve/pennsieve-go-core/pkg/models/pgdb"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/uploadFile"
 	"github.com/pennsieve/pennsieve-go-core/pkg/queries/pgdb"
 	"github.com/pennsieve/pennsieve-upload-service-v2/upload/test"
@@ -244,6 +248,7 @@ func TestUploadService(t *testing.T) {
 		"sorting of upload files":               testSorting,
 		"test folder mapping from upload files": testGetUploadFolderMap,
 		"test importing simple manifest":        testSimpleManifest,
+		"test importing nested files":           testNestedManifest,
 	} {
 		t.Run(scenario, func(t *testing.T) {
 			client := getDynamoDBClient()
@@ -408,6 +413,11 @@ func testSQSMessageParser(t *testing.T, store *UploadHandlerStore) {
 }
 
 // HELPER FUNCTIONS
+func truncate(t *testing.T, db *sql.DB, orgID int, table string) {
+	query := fmt.Sprintf("TRUNCATE TABLE \"%d\".%s CASCADE", orgID, table)
+	_, err := db.Exec(query)
+	assert.NoError(t, err)
+}
 
 func populateManifest(store *UploadHandlerStore) error {
 
@@ -474,10 +484,10 @@ func generateManifestFilesAndEvents(params []tesManifestFileParams, manifestId s
 
 	var dtos []manifestFile.FileDTO
 	var sqsMessages []events.SQSMessage
-	for index, p := range params {
-		uploadId := fmt.Sprintf("00000000-1111-1111-1111-%012d", index)
+	for _, p := range params {
+		uploadId, _ := uuid.NewUUID()
 		dtos = append(dtos, manifestFile.FileDTO{
-			UploadID:       uploadId,
+			UploadID:       uploadId.String(),
 			TargetPath:     p.path,
 			TargetName:     p.name,
 			Status:         0,
@@ -567,6 +577,11 @@ func getTestS3SQSEvents() ([]events.SQSMessage, error) {
 
 func testSimpleManifest(t *testing.T, store *UploadHandlerStore) {
 
+	defer func() {
+		truncate(t, store.pgdb, 2, "packages")
+		truncate(t, store.pgdb, 2, "files")
+	}()
+
 	ctx := context.Background()
 	newManifest := dydb.ManifestTable{
 		ManifestId:     "00000000-0000-0000-0000-000000000000",
@@ -619,4 +634,67 @@ OUTER:
 
 	assert.True(t, allNamesCorrect, "Not all packages where returned or names correctly.")
 
+}
+
+func testNestedManifest(t *testing.T, store *UploadHandlerStore) {
+
+	defer func() {
+		truncate(t, store.pgdb, 2, "packages")
+		truncate(t, store.pgdb, 2, "files")
+	}()
+
+	ctx := context.Background()
+	newManifest := dydb.ManifestTable{
+		ManifestId:     "00000000-0000-0000-0000-000000000001",
+		DatasetId:      1,
+		DatasetNodeId:  "N:dataset:149b65da-6803-4a67-bf20-83076774a5c7",
+		OrganizationId: 2,
+		UserId:         1,
+		Status:         manifest.Initiated.String(),
+		DateCreated:    time.Now().Unix(),
+	}
+
+	params := []tesManifestFileParams{
+		{path: "protocol_1/protocol_2", name: "Readme.md"},
+		{path: "", name: "manifest.xlsx"},
+		{path: "protocol_1", name: "manifest.xlsx"},
+		{path: "protocol_1/protocol_2/protocol_3/protocol_4/protocol_5", name: "manifest.xlsx"},
+		{path: "protocol_1/protocol_2", name: "manifest.xlsx"},
+		{path: "protocol_1/protocol_2/protocol_3", name: "manifest.xlsx"},
+		{path: "protocol_1/protocol_2/protocol_3/protocol_4", name: "Readme.md"},
+		{path: "protocol_1/protocol_2/protocol_3/protocol_4", name: "manifest.xlsx"},
+		{path: "", name: "Readme.md"},
+		{path: "protocol_1", name: "Readme.md"},
+		{path: "protocol_1/protocol_2/protocol_3", name: "Readme.md"},
+		{path: "protocol_1/protocol_2/protocol_3/protocol_4/protocol_5", name: "Readme.md"},
+	}
+
+	// Create Manifest
+	err := store.dy.CreateManifest(ctx, ManifestTableName, newManifest)
+	assert.NoError(t, err)
+
+	// Create Manifest Files
+	files, messages, _ := generateManifestFilesAndEvents(params, newManifest.ManifestId)
+	_ = store.dy.AddFiles(newManifest.ManifestId, files, nil, ManifestFileTableName)
+
+	// "Call" the Lambda function
+	sqsEvents := events.SQSEvent{Records: messages}
+	err = store.Handler(ctx, sqsEvents)
+	assert.NoError(t, err)
+
+	// Test entries that are created in the database.
+	_ = store.WithOrg(int(newManifest.OrganizationId))
+
+	printPackageDetails(context.Background(), store, nil, int(newManifest.DatasetId))
+
+}
+
+func printPackageDetails(ctx context.Context, store *UploadHandlerStore, parent *pgdb2.Package, datasetId int) {
+	packages, _ := store.pg.GetPackageChildren(ctx, parent, datasetId, false)
+	for _, p := range packages {
+		fmt.Println(fmt.Sprintf("Name: %s, Path: %d Type:%s", p.Name, p.ParentId.Int64, p.PackageType.String()))
+		if p.PackageType == packageType.Collection {
+			printPackageDetails(context.Background(), store, &p, datasetId)
+		}
+	}
 }
