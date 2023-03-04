@@ -105,10 +105,18 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, own
 		for key, item := range folderMap {
 			fmt.Println(fmt.Sprintf("Key: %s, Name %s, NodeId: %s, Parent_id: %d, ParentNodeId: %s", key, item.Name, item.NodeId, item.ParentId, item.ParentNodeId))
 		}
-		folderPackageMap := qtx.GetCreateUploadFolders(datasetId, ownerId, folderMap)
+		folderPackageMap, err := qtx.GetCreateUploadFolders(datasetId, ownerId, folderMap)
+		if err != nil {
+			log.Error("Unable to create folders in ImportFiles function: ", err)
+			return err
+		}
 
 		// 3. Create Package Params to add files to "packages" table.
-		pkgParams, _ := getPackageParams(datasetId, ownerId, files, folderPackageMap)
+		pkgParams, err := getPackageParams(datasetId, ownerId, files, folderPackageMap)
+		if err != nil {
+			log.Error("Unable to parse package parameters: ", err)
+			return err
+		}
 
 		packages, err := qtx.AddPackages(context.Background(), pkgParams)
 		if err != nil {
@@ -290,7 +298,7 @@ func getPackageParams(datasetId int, ownerId int, uploadFiles []uploadFile.Uploa
 		packageId, packageName, err := parsePackageId(file)
 		if err != nil {
 			log.Error(err.Error())
-			continue
+			return nil, err
 		}
 
 		parentId := int64(-1)

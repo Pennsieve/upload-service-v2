@@ -65,7 +65,7 @@ services:
       - upload-tests
 
   pennsievedb:
-    image: pennsieve/pennsievedb:V20221102133799-seed
+    image: pennsieve/pennsievedb:V20230214167639-seed
     restart: always
     ports:
       - "5432:5432"
@@ -73,7 +73,7 @@ services:
       - upload-tests
 
   pennsievedb-ci:
-    image: pennsieve/pennsievedb:V20221102133799-seed
+    image: pennsieve/pennsievedb:V20230214167639-seed
     restart: always
     networks:
       - upload-tests

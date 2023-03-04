@@ -31,13 +31,18 @@ func NewUploadPgQueries(db pgQueries.DBTX) *UploadPgQueries {
 // GetCreateUploadFolders creates new folders in the organization.
 // It updates UploadFolders with real folder ID for folders that already exist.
 // Assumes map keys are absolute paths in the dataset
-func (q *UploadPgQueries) GetCreateUploadFolders(datasetId int, ownerId int, folders uploadFolder.UploadFolderMap) pgdb.PackageMap {
+func (q *UploadPgQueries) GetCreateUploadFolders(datasetId int, ownerId int, folders uploadFolder.UploadFolderMap) (pgdb.PackageMap, error) {
 
 	// Get Root Folders
 	p := pgdb.Package{}
-	rootChildren, _ := q.GetPackageChildren(context.Background(), &p, datasetId, true)
-
-	fmt.Println(rootChildren)
+	rootChildren, err := q.GetPackageChildren(context.Background(), &p, datasetId, true)
+	if err != nil {
+		log.WithFields(
+			log.Fields{
+				"dataset_id": datasetId,
+			}).Error("Error getting root folders:  ", err)
+		return nil, err
+	}
 
 	// Map NodeId to Packages for folders that exist in DB
 	existingFolders := pgdb.PackageMap{}
@@ -69,6 +74,15 @@ func (q *UploadPgQueries) GetCreateUploadFolders(datasetId int, ownerId int, fol
 
 			// Add children of current folder to existing folders
 			children, _ := q.GetPackageChildren(context.Background(), &folder, datasetId, true)
+			if err != nil {
+				log.WithFields(
+					log.Fields{
+						"dataset_id":       datasetId,
+						"folder":           folder.Name,
+						"folder_parent_id": folder.ParentId,
+					}).Error("Error getting children for folder:  ", err)
+				return nil, err
+			}
 			for _, k := range children {
 				p := fmt.Sprintf("%s/%s", path, k.Name)
 				existingFolders[p] = k
@@ -88,9 +102,16 @@ func (q *UploadPgQueries) GetCreateUploadFolders(datasetId int, ownerId int, fol
 				Attributes:   nil,
 			}
 
-			fmt.Println(pkgParams)
+			result, err := q.AddPackages(context.Background(), []pgdb.PackageParams{pkgParams})
+			if err != nil {
+				log.WithFields(
+					log.Fields{
+						"dataset_id": datasetId,
+						"folder":     folders[path].Name,
+					}).Error("Error adding folder to package:  ", err)
+				return nil, err
+			}
 
-			result, _ := q.AddPackages(context.Background(), []pgdb.PackageParams{pkgParams})
 			folders[path].Id = result[0].Id
 			existingFolders[path] = result[0]
 
@@ -101,7 +122,7 @@ func (q *UploadPgQueries) GetCreateUploadFolders(datasetId int, ownerId int, fol
 		}
 	}
 
-	return existingFolders
+	return existingFolders, nil
 
 }
 
