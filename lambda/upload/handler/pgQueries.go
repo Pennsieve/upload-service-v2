@@ -102,7 +102,7 @@ func (q *UploadPgQueries) GetCreateUploadFolders(datasetId int, ownerId int, fol
 				Attributes:   nil,
 			}
 
-			result, err := q.AddPackages(context.Background(), []pgdb.PackageParams{pkgParams})
+			result, err := q.AddFolder(context.Background(), pkgParams)
 			if err != nil {
 				log.WithFields(
 					log.Fields{
@@ -112,12 +112,12 @@ func (q *UploadPgQueries) GetCreateUploadFolders(datasetId int, ownerId int, fol
 				return nil, err
 			}
 
-			folders[path].Id = result[0].Id
-			existingFolders[path] = result[0]
+			folders[path].Id = result.Id
+			existingFolders[path] = *result
 
 			for _, childFolder := range folders[path].Children {
-				childFolder.ParentId = result[0].Id
-				childFolder.ParentNodeId = result[0].NodeId
+				childFolder.ParentId = result.Id
+				childFolder.ParentNodeId = result.NodeId
 			}
 		}
 	}

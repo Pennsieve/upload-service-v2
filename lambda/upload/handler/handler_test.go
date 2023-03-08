@@ -689,15 +689,75 @@ func testNestedManifest(t *testing.T, store *UploadHandlerStore) {
 	// Test entries that are created in the database.
 	_ = store.WithOrg(int(newManifest.OrganizationId))
 
-	printPackageDetails(context.Background(), store, nil, int(newManifest.DatasetId))
+	//printPackageDetails(context.Background(), store, nil, int(newManifest.DatasetId))
+
+	//Check that all packages in dataset are present in manifest
+	//and all packages in manifest are present in dataset
+	checkCreatedPackages(t, store, params, int(newManifest.DatasetId))
 
 }
 
+func checkCreatedPackages(t *testing.T, store *UploadHandlerStore, expected []tesManifestFileParams, datasetId int) {
+	ctx := context.Background()
+	fullPathMap := map[string]tesManifestFileParams{}
+	for _, e := range expected {
+		if e.path == "" {
+			fullPathMap[fmt.Sprintf("%s", e.name)] = e
+		} else {
+			fullPathMap[fmt.Sprintf("%s/%s", e.path, e.name)] = e
+		}
+	}
+
+	existMap := map[string]bool{}
+	for key := range fullPathMap {
+		existMap[key] = false
+	}
+
+	currentPath := ""
+	existMap = checkPackageDetails(ctx, t, store, currentPath, nil, datasetId, fullPathMap, existMap)
+
+	for key := range existMap {
+		assert.True(t, existMap[key])
+	}
+
+}
+
+func checkPackageDetails(ctx context.Context, t *testing.T, store *UploadHandlerStore, currentPath string, parent *pgdb2.Package,
+	datasetId int, fullPathMap map[string]tesManifestFileParams, existMap map[string]bool) map[string]bool {
+
+	// Check all packages in the database are part of expected list
+	packages, _ := store.pg.GetPackageChildren(ctx, parent, datasetId, false)
+
+	for _, p := range packages {
+		var curFullPath string
+		if currentPath == "" {
+			curFullPath = fmt.Sprintf("%s", p.Name)
+		} else {
+			curFullPath = fmt.Sprintf("%s/%s", currentPath, p.Name)
+		}
+
+		if p.PackageType == packageType.Collection {
+			existMap = checkPackageDetails(ctx, t, store, curFullPath, &p, datasetId, fullPathMap, existMap)
+		} else {
+			assert.Contains(t, fullPathMap, curFullPath)
+			existMap[curFullPath] = true
+		}
+	}
+
+	return existMap
+
+}
+
+//goland:noinspection GoUnusedFunction
 func printPackageDetails(ctx context.Context, store *UploadHandlerStore, parent *pgdb2.Package, datasetId int) {
+
+	fmt.Println("PRINTING PACKAGE DETAILS")
+	fmt.Println("ROOT")
 	packages, _ := store.pg.GetPackageChildren(ctx, parent, datasetId, false)
 	for _, p := range packages {
 		fmt.Println(fmt.Sprintf("Name: %s, Path: %d Type:%s", p.Name, p.ParentId.Int64, p.PackageType.String()))
 		if p.PackageType == packageType.Collection {
+			fmt.Println("FOLDER: ", p.Name)
 			printPackageDetails(context.Background(), store, &p, datasetId)
 		}
 	}

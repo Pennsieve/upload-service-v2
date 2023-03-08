@@ -52,6 +52,7 @@ func NewUploadHandlerStore(db *sql.DB, dy *dynamodb.Client, sns domain.SnsAPI, s
 func (s *UploadHandlerStore) WithOrg(orgId int) error {
 	_, err := s.pg.WithOrg(orgId)
 	return err
+
 }
 
 func (s *UploadHandlerStore) execTx(ctx context.Context, fn func(queries *UploadPgQueries) error) error {
@@ -87,7 +88,6 @@ func (s *UploadHandlerStore) execTx(ctx context.Context, fn func(queries *Upload
 func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, ownerId int, files []uploadFile.UploadFile, manifest *dydb.ManifestTable) error {
 
 	err := s.execTx(ctx, func(qtx *UploadPgQueries) error {
-
 		// Verify assumptions
 		for _, f := range files {
 			if f.ManifestId != manifest.ManifestId {
@@ -121,14 +121,6 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, own
 		packages, err := qtx.AddPackages(context.Background(), pkgParams)
 		if err != nil {
 			log.Error("Error creating a package: ", err)
-			// Some error in creating packages --> none of the packages are imported.
-
-			// This should not really happen, but we see this when adding packages causes a constraint violation.
-			// such as importing an already imported package. (upload id)
-
-			// TODO should we retry packages individually? or send SNS message for import lambda to handle?
-
-			// TODO what do we do with failed uploads?
 			return err
 		}
 
@@ -224,7 +216,7 @@ func (s *UploadHandlerStore) Handler(ctx context.Context, sqsEvent events.SQSEve
 			continue
 		}
 
-		s.WithOrg(int(manifest.OrganizationId))
+		err = s.WithOrg(int(manifest.OrganizationId))
 		if err != nil {
 			log.Error("Unable to set search path.", err)
 			continue
@@ -361,7 +353,7 @@ func getPackageParams(datasetId int, ownerId int, uploadFiles []uploadFile.Uploa
 	}
 
 	// Turn map into array --> ensure no duplicate packages.
-	for i, _ := range pkgParamsMap {
+	for i := range pkgParamsMap {
 		pkgParams = append(pkgParams, pkgParamsMap[i])
 	}
 
@@ -377,7 +369,7 @@ func parsePackageId(file uploadFile.UploadFile) (string, string, error) {
 		packageId = fmt.Sprintf("N:package:%s", file.MergePackageId)
 
 		// Set packageName to name without extension
-		r := regexp.MustCompile(`(?P<FileName>[^\.]*)?\.?(?P<Extension>.*)`)
+		r := regexp.MustCompile(`(?P<FileName>[^.]*)?\.?(?P<Extension>.*)`)
 		pathParts := r.FindStringSubmatch(file.Name)
 		if pathParts == nil {
 			log.Error("Unable to parse filename:", file.Name)
