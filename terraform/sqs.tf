@@ -24,6 +24,7 @@ resource "aws_lambda_event_source_mapping" "upload_source_mapping" {
   function_name    = aws_lambda_function.upload_lambda.arn
   batch_size = 100
   maximum_batching_window_in_seconds = 5
+  function_response_types = ["ReportBatchItemFailures"]
 }
 
 # Grant SNS to post to SQS queue

@@ -43,20 +43,32 @@ func init() {
 	S3Client = s3.NewFromConfig(cfg)
 	SNSTopic = os.Getenv("IMPORTED_SNS_TOPIC")
 	DynamoClient = dynamodb.NewFromConfig(cfg)
-
 }
 
 // Handler implements the function that is called when new SQS Events arrive.
-func Handler(ctx context.Context, sqsEvent events.SQSEvent) error {
+func Handler(ctx context.Context, sqsEvent events.SQSEvent) events.SQSEventResponse {
 
-	db, err := pgQueries.ConnectRDSWithOrg(2)
+	eventResponse := events.SQSEventResponse{
+		BatchItemFailures: []events.SQSBatchItemFailure{},
+	}
+
+	db, err := pgQueries.ConnectRDS()
 	if err != nil {
-		return err
+		for _, e := range sqsEvent.Records {
+			failedItem := events.SQSBatchItemFailure{
+				ItemIdentifier: e.MessageId,
+			}
+			eventResponse.BatchItemFailures = append(eventResponse.BatchItemFailures, failedItem)
+		}
+		return eventResponse
 	}
 
 	// Define store without Postgres connection (as this is different depending on the manifest/org)
 	s := NewUploadHandlerStore(db, DynamoClient, SNSClient, S3Client, ManifestFileTableName, ManifestTableName, SNSTopic)
 
-	err = s.Handler(ctx, sqsEvent)
-	return err
+	eventResponse, err = s.Handler(ctx, sqsEvent)
+	if err != nil {
+		log.Error(err)
+	}
+	return eventResponse
 }

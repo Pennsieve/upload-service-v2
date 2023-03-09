@@ -3,7 +3,6 @@ package handler
 import (
 	"context"
 	"fmt"
-	"github.com/pennsieve/pennsieve-go-core/pkg/models/dydb"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/packageInfo/packageState"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/packageInfo/packageType"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/pgdb"
@@ -50,7 +49,7 @@ func (q *UploadPgQueries) GetCreateUploadFolders(datasetId int, ownerId int, fol
 		existingFolders[k.Name] = k
 	}
 
-	// Sort the keys of the map, so we can iterate over the sorted map
+	// Sort the keys of the provided uploadFolderMap, so we can iterate over the sorted map
 	pathKeys := make([]string, 0)
 	for k := range folders {
 		pathKeys = append(pathKeys, k)
@@ -127,7 +126,8 @@ func (q *UploadPgQueries) GetCreateUploadFolders(datasetId int, ownerId int, fol
 }
 
 // UpdateStorage updates storage in packages, dataset and organization for uploaded package
-func (q *UploadPgQueries) UpdateStorage(files []pgdb.FileParams, packages []pgdb.Package, manifest *dydb.ManifestTable) error {
+// 	* Typically needs to be wrapped in Transaction as this contains multiple insert queries.
+func (q *UploadPgQueries) UpdateStorage(files []pgdb.FileParams, packages []pgdb.Package, datasetId int64, orgId int64) error {
 
 	packageMap := map[int]pgdb.Package{}
 	for _, p := range packages {
@@ -154,13 +154,13 @@ func (q *UploadPgQueries) UpdateStorage(files []pgdb.FileParams, packages []pgdb
 			}
 		}
 
-		err = q.IncrementDatasetStorage(ctx, manifest.DatasetId, f.Size)
+		err = q.IncrementDatasetStorage(ctx, datasetId, f.Size)
 		if err != nil {
 			log.Error("Error incrementing dataset.")
 			return err
 		}
 
-		err = q.IncrementOrganizationStorage(ctx, manifest.OrganizationId, f.Size)
+		err = q.IncrementOrganizationStorage(ctx, orgId, f.Size)
 		if err != nil {
 			log.Error("Error incrementing organization")
 			return err

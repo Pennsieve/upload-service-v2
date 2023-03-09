@@ -10,24 +10,6 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-func (s *UploadHandlerStore) sendSNSMessages(snsEntries []types.PublishBatchRequestEntry) error {
-	log.Debug("Number of SNS messages: ", len(snsEntries))
-
-	if len(snsEntries) > 0 {
-		params := sns.PublishBatchInput{
-			PublishBatchRequestEntries: snsEntries,
-			TopicArn:                   aws.String(s.SNSTopic),
-		}
-		_, err := s.SNSClient.PublishBatch(context.Background(), &params)
-		if err != nil {
-			log.Error("Error publishing to SNS: ", err)
-			return err
-		}
-	}
-
-	return nil
-}
-
 // PublishToSNS publishes messages to SNS after files are imported.
 func (s *UploadHandlerStore) PublishToSNS(files []pgdb.File) error {
 
@@ -54,4 +36,23 @@ func (s *UploadHandlerStore) PublishToSNS(files []pgdb.File) error {
 	err := s.sendSNSMessages(snsEntries)
 
 	return err
+}
+
+// sendSNSMessages actually sends messages to topic -- Internally used by PublishToSNS
+func (s *UploadHandlerStore) sendSNSMessages(snsEntries []types.PublishBatchRequestEntry) error {
+	log.Debug("Number of SNS messages: ", len(snsEntries))
+
+	if len(snsEntries) > 0 {
+		params := sns.PublishBatchInput{
+			PublishBatchRequestEntries: snsEntries,
+			TopicArn:                   aws.String(s.SNSTopic),
+		}
+		_, err := s.SNSClient.PublishBatch(context.Background(), &params)
+		if err != nil {
+			log.Error("Error publishing to SNS: ", err)
+			return err
+		}
+	}
+
+	return nil
 }

@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/aws/aws-lambda-go/events"
@@ -18,8 +19,10 @@ import (
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/packageInfo/packageType"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/pgdb"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/uploadFile"
+	"github.com/pennsieve/pennsieve-go-core/pkg/models/uploadFolder"
 	log "github.com/sirupsen/logrus"
 	"regexp"
+	"strings"
 )
 
 // UploadHandlerStore provides the Queries interface and a db instance.
@@ -100,7 +103,7 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, own
 		f.Sort(files)
 
 		// 1. Iterate over files and return map of folders and sub-folders
-		folderMap := f.GetUploadFolderMap(files, "")
+		folderMap := getUploadFolderMap(files, "")
 
 		// 2. Iterate over folders and create them if they do not exist in organization
 		for key, item := range folderMap {
@@ -167,7 +170,7 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, own
 		}
 
 		// Update storage for packages, datasets, and org
-		err = qtx.UpdateStorage(allFileParams, packages, manifest)
+		err = qtx.UpdateStorage(allFileParams, packages, manifest.DatasetId, manifest.OrganizationId)
 		if err != nil {
 			return err
 		}
@@ -178,7 +181,7 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, own
 	return err
 }
 
-func (s *UploadHandlerStore) Handler(ctx context.Context, sqsEvent events.SQSEvent) error {
+func (s *UploadHandlerStore) Handler(ctx context.Context, sqsEvent events.SQSEvent) (events.SQSEventResponse, error) {
 	/*
 		Messages can be from multiple upload sessions --> multiple organizations.
 		We need to:
@@ -188,17 +191,33 @@ func (s *UploadHandlerStore) Handler(ctx context.Context, sqsEvent events.SQSEve
 			4. Create Files in Packages
 	*/
 
+	// Response can include list of failed SQS messages
+	response := events.SQSEventResponse{
+		BatchItemFailures: []events.SQSBatchItemFailure{},
+	}
+
+	// Map SQS Events by s3Key - This is used in case of failed imports.
+	s3KeySQSMessageMap := map[string]events.SQSMessage{}
+	for _, m := range sqsEvent.Records {
+		parsedS3Event := events.S3Event{}
+		_ = json.Unmarshal([]byte(m.Body), &parsedS3Event)
+		s3Key := parsedS3Event.Records[0].S3.Object.Key
+		s3KeySQSMessageMap[s3Key] = m
+	}
+
 	// 1. Parse UploadEntries
 	uploadEntries, err := s.GetUploadEntries(sqsEvent.Records)
 	if err != nil {
 		// This really should never happen --> Somehow the SQS queue received a non-S3 message.
-		log.Fatalf(err.Error())
+		log.Error(err.Error())
+		return response, err
 	}
 
 	// 2. Match against Manifest and create uploadFiles
 	uploadFiles, err := s.dy.GetUploadFiles(uploadEntries)
 	if err != nil {
 		log.Error("Error with GetUploadFiles: ", err)
+		return response, err
 	}
 
 	// 3. Map by uploadSessionID
@@ -223,34 +242,29 @@ func (s *UploadHandlerStore) Handler(ctx context.Context, sqsEvent events.SQSEve
 			continue
 		}
 
-		fmt.Println(uploadFilesForManifest)
-
 		err = s.ImportFiles(ctx, int(manifest.DatasetId), int(manifest.OrganizationId), uploadFilesForManifest, manifest)
+
 		if err != nil {
 			log.Error("Unable to create packages: ", err)
+
+			// Add failed messages to response
+			for _, f := range uploadFilesForManifest {
+				failedMessage := events.SQSBatchItemFailure{
+					ItemIdentifier: s3KeySQSMessageMap[f.S3Key].MessageId}
+
+				response.BatchItemFailures = append(response.BatchItemFailures, failedMessage)
+
+			}
+
 			continue
 		}
 
-		// Update status of files in dynamoDB
-		var fileDTOs []manifestFile.FileDTO
-		for _, u := range uploadFilesForManifest {
-			f := manifestFile.FileDTO{
-				UploadID:       u.UploadId,
-				S3Key:          u.S3Key,
-				TargetPath:     u.Path,
-				TargetName:     u.Name,
-				Status:         manifestFile.Imported,
-				MergePackageId: u.MergePackageId,
-				FileType:       u.FileType.String(),
-			}
-			fileDTOs = append(fileDTOs, f)
+		// Update entries in manifest to IMPORTED for all files
+		err = s.updateManifest(uploadFilesForManifest, manifestId)
+		if err != nil {
+			log.Error(err)
+			continue
 		}
-
-		// We are replacing the entries instead of updating the status field as
-		// this is the only way we can batch update, and we also update the name in
-		// case that we need to append index (on name conflict).
-		setStatus := manifestFile.Imported
-		s.dy.AddFiles(manifestId, fileDTOs, &setStatus, s.fileTableName)
 
 		// Check if there are any remaining items for manifest and
 		// set manifest status if not
@@ -263,18 +277,133 @@ func (s *UploadHandlerStore) Handler(ctx context.Context, sqsEvent events.SQSEve
 		if len(remaining) == 0 {
 			err = s.dy.UpdateManifestStatus(ctx, s.tableName, manifestId, manifestModels.Completed)
 			if err != nil {
-				return err
+				log.Error(err)
 			}
 		} else if manifest.Status == "Completed" {
 			err = s.dy.UpdateManifestStatus(ctx, s.tableName, manifestId, manifestModels.Uploading)
 			if err != nil {
-				return err
+				log.Error(err)
 			}
 		}
 
 	}
 
+	return response, nil
+}
+
+// updateManifest updates the manifestFiles to IMPORTED status and updates other fields.
+func (s *UploadHandlerStore) updateManifest(uploadFilesForManifest []uploadFile.UploadFile, manifestId string) error {
+
+	// Update status of files in dynamoDB
+	var fileDTOs []manifestFile.FileDTO
+	for _, u := range uploadFilesForManifest {
+		f := manifestFile.FileDTO{
+			UploadID:       u.UploadId,
+			S3Key:          u.S3Key,
+			TargetPath:     u.Path,
+			TargetName:     u.Name,
+			Status:         manifestFile.Imported,
+			MergePackageId: u.MergePackageId,
+			FileType:       u.FileType.String(),
+		}
+		fileDTOs = append(fileDTOs, f)
+	}
+
+	// We are replacing the entries instead of updating the status field as
+	// this is the only way we can batch update, and we also update the name in
+	// case that we need to append index (on name conflict).
+	setStatus := manifestFile.Imported
+	stats := s.dy.AddFiles(manifestId, fileDTOs, &setStatus, s.fileTableName)
+	if stats.NrFilesUpdated != len(uploadFilesForManifest) {
+		return errors.New("could not update status for manifest files to IMPORTED")
+	}
+
 	return nil
+
+}
+
+// GetUploadFolderMap returns an object that maps path name to Folder object.
+func getUploadFolderMap(sortedFiles []uploadFile.UploadFile, targetFolder string) uploadFolder.UploadFolderMap {
+
+	// Mapping path from targetFolder to UploadFolder Object
+	var folderNameMap = map[string]*uploadFolder.UploadFolder{}
+
+	// Iterate over the files and create the UploadFolder objects.
+	for _, f := range sortedFiles {
+
+		if f.Path == "" {
+			continue
+		}
+
+		// Prepend the target-Folder if it exists
+		p := f.Path
+		if targetFolder != "" {
+			p = strings.Join(
+				[]string{
+					targetFolder, p,
+				}, "/")
+		}
+
+		// Remove leading and trailing "/"
+		leadingSlashes := regexp.MustCompile(`^\/+`)
+		p = leadingSlashes.ReplaceAllString(p, "")
+
+		trailingSlashes := regexp.MustCompile(`\/+$`)
+		p = trailingSlashes.ReplaceAllString(p, "")
+
+		// Iterate over path segments in a single file and identify folders.
+		pathSegments := strings.Split(p, "/")
+		absoluteSegment := "" // Current location in the path walker for current file.
+		currentNodeId := ""
+		currentFolderPath := ""
+		for depth, segment := range pathSegments {
+
+			parentNodeId := currentNodeId
+			parentFolderPath := currentFolderPath
+
+			// If depth > 0 ==> prepend the previous absoluteSegment to the current path name.
+			if depth > 0 {
+				absoluteSegment = strings.Join(
+					[]string{
+
+						absoluteSegment,
+						segment,
+					}, "/")
+			} else {
+				absoluteSegment = segment
+			}
+
+			// If folder already exists in map, add current folder as a child to the parent
+			// folder (which will exist too at this point). If not, create new folder to the map and add to parent folder.
+
+			folder, ok := folderNameMap[absoluteSegment]
+			if ok {
+				currentNodeId = folder.NodeId
+				currentFolderPath = absoluteSegment
+
+			} else {
+				currentNodeId = fmt.Sprintf("N:collection:%s", uuid.New().String())
+				currentFolderPath = absoluteSegment
+
+				folder = &uploadFolder.UploadFolder{
+					NodeId:       currentNodeId,
+					Name:         segment,
+					ParentNodeId: parentNodeId,
+					ParentId:     -1,
+					Depth:        depth,
+				}
+				folderNameMap[absoluteSegment] = folder
+			}
+
+			// Add current segment to parent if exist
+			if parentFolderPath != "" {
+				folderNameMap[parentFolderPath].Children = append(folderNameMap[parentFolderPath].Children, folder)
+			}
+
+		}
+	}
+
+	return folderNameMap
 }
 
 // getPackageParams returns an array of PackageParams to insert in the Packages Table.
