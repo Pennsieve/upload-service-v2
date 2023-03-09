@@ -44,6 +44,7 @@ func TestMain(m *testing.M) {
 	}
 	ManifestTableName, _ = os.LookupEnv("MANIFEST_TABLE")
 	ManifestFileTableName, _ = os.LookupEnv("MANIFEST_FILE_TABLE")
+	SNSTopic = getEnv("IMPORTED_SNS_TOPIC", "dummy_sns_topic")
 
 	var err error
 
@@ -221,7 +222,7 @@ func TestMain(m *testing.M) {
 	mSNS := test.MockSNS{}
 	mS3 := test.MockS3{}
 	client := getDynamoDBClient()
-	store := NewUploadHandlerStore(pgdbClient, client, mSNS, mS3, ManifestFileTableName, ManifestTableName)
+	store := NewUploadHandlerStore(pgdbClient, client, mSNS, mS3, ManifestFileTableName, ManifestTableName, SNSTopic)
 
 	err = populateManifest(store)
 	if err != nil {
@@ -260,7 +261,7 @@ func TestUploadService(t *testing.T) {
 
 			mSNS := test.MockSNS{}
 			mS3 := test.MockS3{}
-			store := NewUploadHandlerStore(pgdbClient, client, mSNS, mS3, ManifestFileTableName, ManifestTableName)
+			store := NewUploadHandlerStore(pgdbClient, client, mSNS, mS3, ManifestFileTableName, ManifestTableName, SNSTopic)
 
 			fn(t, store)
 		})

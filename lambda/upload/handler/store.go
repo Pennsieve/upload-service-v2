@@ -36,11 +36,12 @@ type UploadHandlerStore struct {
 }
 
 // NewUploadHandlerStore returns a UploadHandlerStore object which implements the Queries
-func NewUploadHandlerStore(db *sql.DB, dy *dynamodb.Client, sns domain.SnsAPI, s3 domain.S3API, fileTableName string, tableName string) *UploadHandlerStore {
+func NewUploadHandlerStore(db *sql.DB, dy *dynamodb.Client, sns domain.SnsAPI, s3 domain.S3API, fileTableName string, tableName string, snsTopic string) *UploadHandlerStore {
 	return &UploadHandlerStore{
 		pgdb:          db,
 		dynamodb:      dy,
 		SNSClient:     sns,
+		SNSTopic:      snsTopic,
 		S3Client:      s3,
 		pg:            NewUploadPgQueries(db),
 		dy:            NewUploadDyQueries(dy),
