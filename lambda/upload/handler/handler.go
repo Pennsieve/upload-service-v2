@@ -46,7 +46,7 @@ func init() {
 }
 
 // Handler implements the function that is called when new SQS Events arrive.
-func Handler(ctx context.Context, sqsEvent events.SQSEvent) events.SQSEventResponse {
+func Handler(ctx context.Context, sqsEvent events.SQSEvent) (events.SQSEventResponse, error) {
 
 	eventResponse := events.SQSEventResponse{
 		BatchItemFailures: []events.SQSBatchItemFailure{},
@@ -54,13 +54,7 @@ func Handler(ctx context.Context, sqsEvent events.SQSEvent) events.SQSEventRespo
 
 	db, err := pgQueries.ConnectRDS()
 	if err != nil {
-		for _, e := range sqsEvent.Records {
-			failedItem := events.SQSBatchItemFailure{
-				ItemIdentifier: e.MessageId,
-			}
-			eventResponse.BatchItemFailures = append(eventResponse.BatchItemFailures, failedItem)
-		}
-		return eventResponse
+		return eventResponse, err
 	}
 
 	// Define store without Postgres connection (as this is different depending on the manifest/org)
@@ -68,7 +62,7 @@ func Handler(ctx context.Context, sqsEvent events.SQSEvent) events.SQSEventRespo
 
 	eventResponse, err = s.Handler(ctx, sqsEvent)
 	if err != nil {
-		log.Error(err)
+		return eventResponse, err
 	}
-	return eventResponse
+	return eventResponse, nil
 }
