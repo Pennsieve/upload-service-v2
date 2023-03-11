@@ -14,26 +14,35 @@ import (
 )
 
 // GetUploadEntries parses the events from SQS into meaningful objects
-func (s *UploadHandlerStore) GetUploadEntries(fileEvents []events.SQSMessage) ([]UploadEntry, error) {
+func (s *UploadHandlerStore) GetUploadEntries(fileEvents []events.SQSMessage) ([]UploadEntry, []OrphanS3File, error) {
 
 	var entries []UploadEntry
+	var orphanFiles []OrphanS3File
+
 	for _, message := range fileEvents {
 		parsedS3Event := events.S3Event{}
 		if err := json.Unmarshal([]byte(message.Body), &parsedS3Event); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal message, %v", err)
+			log.Error("unexpected error, could not parse event send by S3")
+			return nil, nil, fmt.Errorf("failed to unmarshal message, %v", err)
 		}
 
 		entry, err := s.uploadEntryFromS3Event(&parsedS3Event)
 		if err != nil {
-			log.Error("Unable to parse s3-key: ", err)
+			orphanFile := OrphanS3File{
+				S3Bucket: parsedS3Event.Records[0].S3.Bucket.Name,
+				S3Key:    parsedS3Event.Records[0].S3.Object.Key,
+				ETag:     parsedS3Event.Records[0].S3.Object.ETag,
+			}
+
+			orphanFiles = append(orphanFiles, orphanFile)
+			log.Info("Unable to parse s3-key into expected format: ", err)
 			continue
 		}
 
 		entries = append(entries, *entry)
-
 	}
 
-	return entries, nil
+	return entries, orphanFiles, nil
 }
 
 // uploadEntryFromS3Event returns an object representing an uploaded file from an S3 Event.

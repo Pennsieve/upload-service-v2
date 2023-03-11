@@ -206,7 +206,13 @@ func (s *UploadHandlerStore) Handler(ctx context.Context, sqsEvent events.SQSEve
 	}
 
 	// 1. Parse UploadEntries
-	uploadEntries, err := s.GetUploadEntries(sqsEvent.Records)
+	uploadEntries, orphanEntries, err := s.GetUploadEntries(sqsEvent.Records)
+	if orphanEntries != nil {
+		log.Info("Files uploaded that do not follow the correct s3Key format and don't belong to manifest.")
+		// These files are unexpected and do not follow the expected S3Key format for Pennsieve uploads
+
+		// TODO: Delete files.
+	}
 	if err != nil {
 		// This really should never happen --> Somehow the SQS queue received a non-S3 message.
 		log.Error(err.Error())
@@ -214,7 +220,13 @@ func (s *UploadHandlerStore) Handler(ctx context.Context, sqsEvent events.SQSEve
 	}
 
 	// 2. Match against Manifest and create uploadFiles
-	uploadFiles, err := s.dy.GetUploadFiles(uploadEntries)
+	uploadFiles, orphanEntries, err := s.dy.GetUploadFiles(uploadEntries)
+	if orphanEntries != nil {
+		log.Info("Files uploaded that don't belong to a manifest.")
+		// These files somehow did parse correctly in the GetUploadEntries method.
+
+		// TODO: Delete files.
+	}
 	if err != nil {
 		log.Error("Error with GetUploadFiles: ", err)
 		return response, err

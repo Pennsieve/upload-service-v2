@@ -280,7 +280,7 @@ func testSQSMessageParser(t *testing.T, store *UploadHandlerStore) {
 	evts, err := getTestS3SQSEvents()
 	assert.NoError(t, err)
 
-	entries, err := store.GetUploadEntries(evts)
+	entries, _, err := store.GetUploadEntries(evts)
 	assert.NoError(t, err)
 	assert.Equal(t, 2, len(entries))
 

@@ -22,6 +22,12 @@ type UploadDyQueries struct {
 	db dyQueries.DB
 }
 
+type OrphanS3File struct {
+	S3Bucket string
+	S3Key    string
+	ETag     string
+}
+
 // NewUploadDyQueries returns a new instance of an UploadPgQueries object
 func NewUploadDyQueries(db dyQueries.DB) *UploadDyQueries {
 	q := dyQueries.New(db)
@@ -32,7 +38,9 @@ func NewUploadDyQueries(db dyQueries.DB) *UploadDyQueries {
 }
 
 // GetUploadFiles returns a set of UploadFiles from a set of UploadEntries by verifying against DynamoDB
-func (q *UploadDyQueries) GetUploadFiles(entries []UploadEntry) ([]uploadFile.UploadFile, error) {
+func (q *UploadDyQueries) GetUploadFiles(entries []UploadEntry) ([]uploadFile.UploadFile, []OrphanS3File, error) {
+
+	var unexpectedEntries []OrphanS3File
 
 	// 1. Check all standard uploadEntities against dynamodb
 	var getItems []map[string]dynamoTypes.AttributeValue
@@ -72,17 +80,28 @@ func (q *UploadDyQueries) GetUploadFiles(entries []UploadEntry) ([]uploadFile.Up
 
 		dbResults, err := q.db.BatchGetItem(context.Background(), &batchItemInput)
 		if err != nil {
-			log.Fatalln("Unable to get dbItems.")
+			log.Error(fmt.Sprintf("Unable to get dbItems: %v", err))
+			return nil, nil, err
 		}
-
 		dbItems := dbResults.Responses[ManifestFileTableName]
+
+		// Re-request missing items if for some reason dynamodb does not return all events
+		for len(dbResults.UnprocessedKeys) > 0 {
+			moreResults, err := q.db.BatchGetItem(context.Background(), &batchItemInput)
+			if err != nil {
+				log.Error(fmt.Sprintf("Unable to get dbItems: %v", err))
+				return nil, nil, err
+			}
+
+			dbItems = append(dbItems, moreResults.Responses[ManifestFileTableName]...)
+		}
 
 		for _, dbItem := range dbItems {
 			fileEntry := dydb.ManifestFileTable{}
 			err := attributevalue.UnmarshalMap(dbItem, &fileEntry)
 			if err != nil {
 				log.Error("Unable to UnMarshall unprocessed items. ", err)
-				return nil, err
+				return nil, nil, err
 			}
 
 			// Match with original upload entry from SQS queue
@@ -92,7 +111,7 @@ func (q *UploadDyQueries) GetUploadFiles(entries []UploadEntry) ([]uploadFile.Up
 			pathParts := r.FindStringSubmatch(fileEntry.FileName)
 			if pathParts == nil {
 				// File does not contain the required s3key components
-				return nil, errors.New(fmt.Sprintf("File path does not contain the required s3key components: %s",
+				return nil, nil, errors.New(fmt.Sprintf("File path does not contain the required s3key components: %s",
 					fileEntry.FilePath))
 			}
 
@@ -122,6 +141,26 @@ func (q *UploadDyQueries) GetUploadFiles(entries []UploadEntry) ([]uploadFile.Up
 
 	if len(verifiedFiles) != len(entries) {
 		log.Error("MISMATCH BETWEEN UPLOADED ENTRIES AND RETURN FROM DYNAMO-BD.")
+
+		// create verified fileMap
+		verifiedFileIds := []string{}
+		for _, e := range verifiedFiles {
+			verifiedFileIds = append(verifiedFileIds, e.UploadId)
+		}
+
+		// Add to unexpected entries if not returned
+		for _, e := range entries {
+			if !contains(verifiedFileIds, e.UploadId) {
+				f := OrphanS3File{
+					S3Bucket: e.S3Bucket,
+					S3Key:    e.S3Key,
+					ETag:     e.ETag,
+				}
+
+				unexpectedEntries = append(unexpectedEntries, f)
+			}
+		}
+
 	}
 
 	var uploadFiles []uploadFile.UploadFile
@@ -158,11 +197,7 @@ func (q *UploadDyQueries) GetUploadFiles(entries []UploadEntry) ([]uploadFile.Up
 		uploadFiles = append(uploadFiles, file)
 	}
 
-	return uploadFiles, nil
-
-	// TODO handle (delete) non-compliant uploads.
-	// Currently non-compliant uploads are ignored and will remain in uploads folder.
-
+	return uploadFiles, unexpectedEntries, nil
 }
 
 // getFileInfo returns a FileType and PackageType.Info object based on filetype string.
@@ -177,4 +212,16 @@ func getFileInfo(fileTypeStr string) (fileType.Type, packageType.Info) {
 	}
 
 	return fType, pType
+}
+
+// https://play.golang.org/p/Qg_uv_inCek
+// contains checks if a string is present in a slice
+func contains(s []string, str string) bool {
+	for _, v := range s {
+		if v == str {
+			return true
+		}
+	}
+
+	return false
 }
