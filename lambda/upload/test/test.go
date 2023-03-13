@@ -4,6 +4,7 @@ import (
 	"context"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/aws-sdk-go-v2/service/sns"
 	"github.com/aws/smithy-go/middleware"
 )
@@ -26,5 +27,21 @@ func (s MockS3) HeadObject(ctx context.Context, params *s3.HeadObjectInput, optF
 		ChecksumSHA256: aws.String("fakeSHA"),
 	}
 
+	return &result, nil
+}
+
+func (s MockS3) DeleteObjects(ctx context.Context, params *s3.DeleteObjectsInput, optFns ...func(*s3.Options)) (*s3.DeleteObjectsOutput, error) {
+
+	var deleted []types.DeletedObject
+	toBeDeleted := params.Delete.Objects
+	for _, f := range toBeDeleted {
+		deleted = append(deleted, types.DeletedObject{
+			Key: f.Key,
+		})
+	}
+
+	result := s3.DeleteObjectsOutput{
+		Deleted: deleted,
+	}
 	return &result, nil
 }

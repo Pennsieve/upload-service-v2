@@ -108,10 +108,10 @@ func (s *UploadMoveStore) manifestFileWalk(walker fileWalk) error {
 		},
 	})
 
-	log.Println("In manifest file walk")
+	log.Debug("In manifest file walk")
 
 	for p.HasMorePages() {
-		log.Println("Getting page from dynamodb")
+		log.Debug("Getting page from dynamodb")
 
 		out, err := p.NextPage(context.TODO())
 		if err != nil {

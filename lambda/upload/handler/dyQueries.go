@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
@@ -9,6 +10,8 @@ import (
 	dynamoTypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/dydb"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/fileInfo/fileType"
+	manifestModels "github.com/pennsieve/pennsieve-go-core/pkg/models/manifest"
+	"github.com/pennsieve/pennsieve-go-core/pkg/models/manifest/manifestFile"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/packageInfo/packageType"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/uploadFile"
 	dyQueries "github.com/pennsieve/pennsieve-go-core/pkg/queries/dydb"
@@ -107,7 +110,7 @@ func (q *UploadDyQueries) GetUploadFiles(entries []UploadEntry) ([]uploadFile.Up
 			// Match with original upload entry from SQS queue
 			inputUploadEntry := entryMap[fileEntry.UploadId]
 
-			r := regexp.MustCompile(`(?P<FileName>[^\.]*)?\.?(?P<Extension>.*)`)
+			r := regexp.MustCompile(`(?P<FileName>[^.]*)?\.?(?P<Extension>.*)`)
 			pathParts := r.FindStringSubmatch(fileEntry.FileName)
 			if pathParts == nil {
 				// File does not contain the required s3key components
@@ -143,7 +146,7 @@ func (q *UploadDyQueries) GetUploadFiles(entries []UploadEntry) ([]uploadFile.Up
 		log.Error("MISMATCH BETWEEN UPLOADED ENTRIES AND RETURN FROM DYNAMO-BD.")
 
 		// create verified fileMap
-		verifiedFileIds := []string{}
+		var verifiedFileIds []string
 		for _, e := range verifiedFiles {
 			verifiedFileIds = append(verifiedFileIds, e.UploadId)
 		}
@@ -198,6 +201,73 @@ func (q *UploadDyQueries) GetUploadFiles(entries []UploadEntry) ([]uploadFile.Up
 	}
 
 	return uploadFiles, unexpectedEntries, nil
+}
+
+// checkUpdateManifestStatus checks current status of Manifest and updates if necessary.
+func (q *UploadDyQueries) checkUpdateManifestStatus(ctx context.Context, manifest *dydb.ManifestTable) (manifestModels.Status, error) {
+
+	// Check if there are any remaining items for manifest and
+	// set manifest status if not
+	reqStatus := sql.NullString{
+		String: "InProgress",
+		Valid:  true,
+	}
+
+	setStatus := manifestModels.Initiated
+
+	remaining, _, err := q.GetFilesPaginated(ctx, ManifestFileTableName,
+		manifest.ManifestId, reqStatus, 1, nil)
+	if err != nil {
+		return setStatus, err
+	}
+
+	if len(remaining) == 0 {
+		setStatus = manifestModels.Completed
+		err = q.UpdateManifestStatus(ctx, ManifestTableName, manifest.ManifestId, setStatus)
+		if err != nil {
+			return setStatus, err
+		}
+	} else if manifest.Status == "Completed" {
+		setStatus = manifestModels.Uploading
+		err = q.UpdateManifestStatus(ctx, ManifestTableName, manifest.ManifestId, setStatus)
+		if err != nil {
+			return setStatus, err
+		}
+	}
+
+	return setStatus, nil
+
+}
+
+// updateManifest updates the manifestFiles to IMPORTED status and updates other fields.
+func (q *UploadDyQueries) updateManifest(uploadFilesForManifest []uploadFile.UploadFile, manifestId string) error {
+
+	// Update status of files in dynamoDB
+	var fileDTOs []manifestFile.FileDTO
+	for _, u := range uploadFilesForManifest {
+		f := manifestFile.FileDTO{
+			UploadID:       u.UploadId,
+			S3Key:          u.S3Key,
+			TargetPath:     u.Path,
+			TargetName:     u.Name,
+			Status:         manifestFile.Imported,
+			MergePackageId: u.MergePackageId,
+			FileType:       u.FileType.String(),
+		}
+		fileDTOs = append(fileDTOs, f)
+	}
+
+	// We are replacing the entries instead of updating the status field as
+	// this is the only way we can batch update, and we also update the name in
+	// case that we need to append index (on name conflict).
+	setStatus := manifestFile.Imported
+	stats := q.AddFiles(manifestId, fileDTOs, &setStatus, ManifestFileTableName)
+	if stats.NrFilesUpdated != len(uploadFilesForManifest) {
+		return errors.New("could not update status for manifest files to IMPORTED")
+	}
+
+	return nil
+
 }
 
 // getFileInfo returns a FileType and PackageType.Info object based on filetype string.

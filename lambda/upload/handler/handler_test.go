@@ -223,7 +223,8 @@ func TestMain(m *testing.M) {
 	client := getDynamoDBClient()
 	store := NewUploadHandlerStore(pgdbClient, client, mSNS, mS3, ManifestFileTableName, ManifestTableName, SNSTopic)
 
-	err = populateManifest(store)
+	manifestId := "00000000-0000-0000-0000-000000000000"
+	err = populateManifest(store, manifestId, 1)
 	if err != nil {
 		log.Fatal("Unable to populate manifest.")
 	}
@@ -266,7 +267,6 @@ func TestUploadService(t *testing.T) {
 }
 
 // TESTS
-
 func testManifest(t *testing.T, store *UploadHandlerStore) {
 	ctx := context.Background()
 	m, err := store.dy.GetManifestsForDataset(ctx, ManifestTableName, "N:Dataset:1")
@@ -287,14 +287,15 @@ func testSQSMessageParser(t *testing.T, store *UploadHandlerStore) {
 }
 
 // HELPER FUNCTION
-func populateManifest(store *UploadHandlerStore) error {
+func populateManifest(store *UploadHandlerStore, manifestId string, datasetId int) error {
 
 	ctx := context.Background()
+	datasetNodeId := fmt.Sprintf("N:Dataset:%d", datasetId)
 
 	newManifest := dydb.ManifestTable{
-		ManifestId:     "00000000-0000-0000-0000-000000000000",
-		DatasetId:      1,
-		DatasetNodeId:  "N:Dataset:1",
+		ManifestId:     manifestId,
+		DatasetId:      int64(datasetId),
+		DatasetNodeId:  datasetNodeId,
 		OrganizationId: 2,
 		UserId:         1,
 		Status:         manifest.Initiated.String(),

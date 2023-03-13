@@ -2,26 +2,41 @@ package handler
 
 import (
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/uploadFile"
+	"github.com/pennsieve/pennsieve-go-core/pkg/queries/pgdb"
+	"github.com/pennsieve/pennsieve-upload-service-v2/upload/test"
+	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"testing"
 )
 
 func TestStore(t *testing.T) {
 	for scenario, fn := range map[string]func(
-		t *testing.T,
+		t *testing.T, store *UploadHandlerStore,
 	){
 		"sorts upload files by path":           testSortFiles,
 		"correctly maps files to folders":      testFolderMapping,
 		"test ignore leading slash":            testRemoveLeadingTrailingSlash,
 		"test folder mapping for nested files": testNestedStructure,
+		"test deleting orphaned files":         testDeleteOrphanedFiles,
 	} {
 		t.Run(scenario, func(t *testing.T) {
-			fn(t)
+			client := getDynamoDBClient()
+
+			pgdbClient, err := pgdb.ConnectENV()
+			if err != nil {
+				log.Fatal("cannot connect to db:", err)
+			}
+
+			mSNS := test.MockSNS{}
+			mS3 := test.MockS3{}
+			store := NewUploadHandlerStore(pgdbClient, client, mSNS, mS3, ManifestFileTableName, ManifestTableName, SNSTopic)
+
+			fn(t, store)
 		})
 	}
 }
 
-func testSortFiles(t *testing.T) {
+func testSortFiles(t *testing.T, _ *UploadHandlerStore) {
 
 	uploadFile1 := uploadFile.UploadFile{
 		ManifestId: "",
@@ -57,7 +72,7 @@ func testSortFiles(t *testing.T) {
 
 }
 
-func testFolderMapping(t *testing.T) {
+func testFolderMapping(t *testing.T, _ *UploadHandlerStore) {
 
 	uploadFile1 := uploadFile.UploadFile{
 		ManifestId: "",
@@ -144,7 +159,7 @@ func testFolderMapping(t *testing.T) {
 
 }
 
-func testRemoveLeadingTrailingSlash(t *testing.T) {
+func testRemoveLeadingTrailingSlash(t *testing.T, _ *UploadHandlerStore) {
 	uploadFile1 := uploadFile.UploadFile{
 		ManifestId: "",
 		Path:       "/folder1/folder2",
@@ -205,7 +220,7 @@ func testRemoveLeadingTrailingSlash(t *testing.T) {
 
 }
 
-func testNestedStructure(t *testing.T) {
+func testNestedStructure(t *testing.T, _ *UploadHandlerStore) {
 
 	files := []uploadFile.UploadFile{
 		{Path: "protocol_1/protocol_2", Name: "Readme.md"},
@@ -232,5 +247,24 @@ func testNestedStructure(t *testing.T) {
 	assert.Equal(t, uploadMap["protocol_1/protocol_2"].NodeId, uploadMap["protocol_1/protocol_2/protocol_3"].ParentNodeId)
 	assert.Equal(t, uploadMap["protocol_1/protocol_2/protocol_3"].NodeId, uploadMap["protocol_1/protocol_2/protocol_3/protocol_4"].ParentNodeId)
 	assert.Equal(t, uploadMap["protocol_1/protocol_2/protocol_3/protocol_4"].NodeId, uploadMap["protocol_1/protocol_2/protocol_3/protocol_4/protocol_5"].ParentNodeId)
+
+}
+
+func testDeleteOrphanedFiles(t *testing.T, store *UploadHandlerStore) {
+	// This test only tests the method argument parsing as the S3 client is mocked
+
+	files := []OrphanS3File{
+		{
+			S3Bucket: "123",
+			S3Key:    "123",
+		},
+		{
+			S3Bucket: "123",
+			S3Key:    "456",
+		},
+	}
+
+	err := store.deleteOrphanFiles(files)
+	assert.NoError(t, err)
 
 }

@@ -7,7 +7,7 @@ resource "aws_cloudwatch_metric_alarm" "upload_sqs_dlq_cloudwatch_metric_alarm" 
   namespace                 = "AWS/SQS"
   period                    = "60"
   statistic                 = "Average"
-  threshold                 = "50"
+  threshold                 = "1"
   alarm_description         = "This metric monitors Upload-V2 SQS DLQ for messages"
   insufficient_data_actions = []
   alarm_actions             = [data.terraform_remote_state.account.outputs.data_management_victor_ops_sns_topic_id]
@@ -19,10 +19,11 @@ resource "aws_cloudwatch_metric_alarm" "upload_sqs_dlq_cloudwatch_metric_alarm" 
   }
 }
 
+
 // CREATE FARGATE TASK CLOUDWATCH LOG GROUP
 resource "aws_cloudwatch_log_group" "fargate_cloudwatch_log_group" {
   name              = "/aws/fargate/${var.environment_name}-${var.service_name}-${var.tier}-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
-  retention_in_days = 7
+  retention_in_days = 14
 
   tags = local.common_tags
 }
@@ -40,7 +41,7 @@ resource "aws_cloudwatch_log_subscription_filter" "cloudwatch_fargate_group_subs
 // Create log group for upload lambda.
 resource "aws_cloudwatch_log_group" "upload_lambda_loggroup" {
   name              = "/aws/lambda/${aws_lambda_function.upload_lambda.function_name}"
-  retention_in_days = 7
+  retention_in_days = 30
   tags = local.common_tags
 }
 
@@ -56,7 +57,7 @@ resource "aws_cloudwatch_log_subscription_filter" "cloudwatch_log_group_subscrip
 // Create log group for upload lambda.
 resource "aws_cloudwatch_log_group" "upload_service_lambda_loggroup" {
   name              = "/aws/lambda/${aws_lambda_function.service_lambda.function_name}"
-  retention_in_days = 7
+  retention_in_days = 30
   tags = local.common_tags
 }
 

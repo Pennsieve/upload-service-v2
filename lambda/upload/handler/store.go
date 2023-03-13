@@ -7,13 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"github.com/aws/aws-lambda-go/events"
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	s3Types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/google/uuid"
 	"github.com/pennsieve/pennsieve-go-core/pkg/domain"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/dydb"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/fileInfo/objectType"
-	manifestModels "github.com/pennsieve/pennsieve-go-core/pkg/models/manifest"
-	"github.com/pennsieve/pennsieve-go-core/pkg/models/manifest/manifestFile"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/packageInfo"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/packageInfo/packageState"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/packageInfo/packageType"
@@ -53,12 +54,14 @@ func NewUploadHandlerStore(db *sql.DB, dy *dynamodb.Client, sns domain.SnsAPI, s
 	}
 }
 
+// WithOrg sets the search path for the pg queries
 func (s *UploadHandlerStore) WithOrg(orgId int) error {
 	_, err := s.pg.WithOrg(orgId)
 	return err
 
 }
 
+// execTx wraps a function in a transaction.
 func (s *UploadHandlerStore) execTx(ctx context.Context, fn func(queries *UploadPgQueries) error) error {
 
 	// NOTE: When you create a new transaction (as below), the s.pgdb is NOT part of the transaction.
@@ -106,9 +109,6 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, own
 		folderMap := getUploadFolderMap(files, "")
 
 		// 2. Iterate over folders and create them if they do not exist in organization
-		for key, item := range folderMap {
-			fmt.Println(fmt.Sprintf("Key: %s, Name %s, NodeId: %s, Parent_id: %d, ParentNodeId: %s", key, item.Name, item.NodeId, item.ParentId, item.ParentNodeId))
-		}
 		folderPackageMap, err := qtx.GetCreateUploadFolders(datasetId, ownerId, folderMap)
 		if err != nil {
 			log.Error("Unable to create folders in ImportFiles function: ", err)
@@ -181,6 +181,7 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, own
 	return err
 }
 
+// Handler is the primary entrypoint that handles importing files and is called by the Lambda
 func (s *UploadHandlerStore) Handler(ctx context.Context, sqsEvent events.SQSEvent) (events.SQSEventResponse, error) {
 	/*
 		Messages can be from multiple upload sessions --> multiple organizations.
@@ -192,8 +193,10 @@ func (s *UploadHandlerStore) Handler(ctx context.Context, sqsEvent events.SQSEve
 	*/
 
 	// Response can include list of failed SQS messages
+
+	var batchItemFailures []events.SQSBatchItemFailure
 	response := events.SQSEventResponse{
-		BatchItemFailures: []events.SQSBatchItemFailure{},
+		BatchItemFailures: batchItemFailures,
 	}
 
 	// Map SQS Events by s3Key - This is used in case of failed imports.
@@ -210,8 +213,10 @@ func (s *UploadHandlerStore) Handler(ctx context.Context, sqsEvent events.SQSEve
 	if orphanEntries != nil {
 		log.Info("Files uploaded that do not follow the correct s3Key format and don't belong to manifest.")
 		// These files are unexpected and do not follow the expected S3Key format for Pennsieve uploads
-
-		// TODO: Delete files.
+		err := s.deleteOrphanFiles(orphanEntries)
+		if err != nil {
+			log.Error("unable to delete orphan files")
+		}
 	}
 	if err != nil {
 		// This really should never happen --> Somehow the SQS queue received a non-S3 message.
@@ -224,8 +229,10 @@ func (s *UploadHandlerStore) Handler(ctx context.Context, sqsEvent events.SQSEve
 	if orphanEntries != nil {
 		log.Info("Files uploaded that don't belong to a manifest.")
 		// These files somehow did parse correctly in the GetUploadEntries method.
-
-		// TODO: Delete files.
+		err := s.deleteOrphanFiles(orphanEntries)
+		if err != nil {
+			log.Error("unable to delete orphan files")
+		}
 	}
 	if err != nil {
 		log.Error("Error with GetUploadFiles: ", err)
@@ -242,99 +249,89 @@ func (s *UploadHandlerStore) Handler(ctx context.Context, sqsEvent events.SQSEve
 	for manifestId, uploadFilesForManifest := range fileByManifest {
 
 		// Get manifest from dynamodb
-		manifest, err := s.dy.GetFromManifest(ctx, s.tableName, manifestId)
+		manifest, err := s.dy.GetManifestById(ctx, s.tableName, manifestId)
 		if err != nil {
-			log.Error("GetFromManifest: Unable to get manifest.", err)
+			log.Error("GetManifestById: Unable to get manifest.", err)
+			batchItemFailures = addToFailedFiles(uploadFilesForManifest, s3KeySQSMessageMap, batchItemFailures)
 			continue
 		}
 
 		err = s.WithOrg(int(manifest.OrganizationId))
 		if err != nil {
 			log.Error("Unable to set search path.", err)
+			batchItemFailures = addToFailedFiles(uploadFilesForManifest, s3KeySQSMessageMap, batchItemFailures)
 			continue
 		}
 
 		err = s.ImportFiles(ctx, int(manifest.DatasetId), int(manifest.OrganizationId), uploadFilesForManifest, manifest)
-
 		if err != nil {
 			log.Error("Unable to create packages: ", err)
-
-			// Add failed messages to response
-			for _, f := range uploadFilesForManifest {
-				failedMessage := events.SQSBatchItemFailure{
-					ItemIdentifier: s3KeySQSMessageMap[f.S3Key].MessageId}
-
-				response.BatchItemFailures = append(response.BatchItemFailures, failedMessage)
-
-			}
-
+			batchItemFailures = addToFailedFiles(uploadFilesForManifest, s3KeySQSMessageMap, batchItemFailures)
 			continue
 		}
 
 		// Update entries in manifest to IMPORTED for all files
-		err = s.updateManifest(uploadFilesForManifest, manifestId)
+		err = s.dy.updateManifest(uploadFilesForManifest, manifestId)
 		if err != nil {
+			// Status is not correctly updated in Manifest but files are completely imported.
+			// This should not return the failed files.
 			log.Error(err)
 			continue
 		}
 
-		// Check if there are any remaining items for manifest and
-		// set manifest status if not
-		reqStatus := sql.NullString{
-			String: "InProgress",
-			Valid:  true,
-		}
-		remaining, _, err := s.dy.GetFilesPaginated(ctx, s.tableName,
-			manifestId, reqStatus, 1, nil)
-		if len(remaining) == 0 {
-			err = s.dy.UpdateManifestStatus(ctx, s.tableName, manifestId, manifestModels.Completed)
-			if err != nil {
-				log.Error(err)
-			}
-		} else if manifest.Status == "Completed" {
-			err = s.dy.UpdateManifestStatus(ctx, s.tableName, manifestId, manifestModels.Uploading)
-			if err != nil {
-				log.Error(err)
-			}
+		_, err = s.dy.checkUpdateManifestStatus(ctx, manifest)
+		if err != nil {
+			log.Error(err)
 		}
 
 	}
 
+	response.BatchItemFailures = batchItemFailures
 	return response, nil
 }
 
-// updateManifest updates the manifestFiles to IMPORTED status and updates other fields.
-func (s *UploadHandlerStore) updateManifest(uploadFilesForManifest []uploadFile.UploadFile, manifestId string) error {
+// deleteOrphanFiles deletes files from upload bucket if no representation exists in manifest.
+func (s *UploadHandlerStore) deleteOrphanFiles(files []OrphanS3File) error {
 
-	// Update status of files in dynamoDB
-	var fileDTOs []manifestFile.FileDTO
-	for _, u := range uploadFilesForManifest {
-		f := manifestFile.FileDTO{
-			UploadID:       u.UploadId,
-			S3Key:          u.S3Key,
-			TargetPath:     u.Path,
-			TargetName:     u.Name,
-			Status:         manifestFile.Imported,
-			MergePackageId: u.MergePackageId,
-			FileType:       u.FileType.String(),
+	ctx := context.Background()
+
+	// Assert all buckets are the same
+	s3Bucket := files[0].S3Bucket
+
+	var keys []s3Types.ObjectIdentifier
+	for _, f := range files {
+		if f.S3Bucket != s3Bucket {
+			return errors.New("not all orphan files have the same bucket")
 		}
-		fileDTOs = append(fileDTOs, f)
+		keys = append(keys, s3Types.ObjectIdentifier{
+			Key:       aws.String(f.S3Key),
+			VersionId: nil,
+		})
 	}
 
-	// We are replacing the entries instead of updating the status field as
-	// this is the only way we can batch update, and we also update the name in
-	// case that we need to append index (on name conflict).
-	setStatus := manifestFile.Imported
-	stats := s.dy.AddFiles(manifestId, fileDTOs, &setStatus, s.fileTableName)
-	if stats.NrFilesUpdated != len(uploadFilesForManifest) {
-		return errors.New("could not update status for manifest files to IMPORTED")
+	f := s3Types.Delete{
+		Objects: keys,
+		Quiet:   false,
+	}
+
+	params := s3.DeleteObjectsInput{
+		Bucket: aws.String(s3Bucket),
+		Delete: &f,
+	}
+
+	result, err := s.S3Client.DeleteObjects(ctx, &params)
+	if err != nil {
+		return err
+	}
+	if len(result.Deleted) != len(files) {
+		return errors.New("unable to delete all orphan files")
 	}
 
 	return nil
 
 }
 
-// GetUploadFolderMap returns an object that maps path name to Folder object.
+// getUploadFolderMap returns an object that maps path name to Folder object.
 func getUploadFolderMap(sortedFiles []uploadFile.UploadFile, targetFolder string) uploadFolder.UploadFolderMap {
 
 	// Mapping path from targetFolder to UploadFolder Object
@@ -357,10 +354,10 @@ func getUploadFolderMap(sortedFiles []uploadFile.UploadFile, targetFolder string
 		}
 
 		// Remove leading and trailing "/"
-		leadingSlashes := regexp.MustCompile(`^\/+`)
+		leadingSlashes := regexp.MustCompile(`^/+`)
 		p = leadingSlashes.ReplaceAllString(p, "")
 
-		trailingSlashes := regexp.MustCompile(`\/+$`)
+		trailingSlashes := regexp.MustCompile(`/+$`)
 		p = trailingSlashes.ReplaceAllString(p, "")
 
 		// Iterate over path segments in a single file and identify folders.
@@ -522,4 +519,17 @@ func parsePackageId(file uploadFile.UploadFile) (string, string, error) {
 	}
 
 	return packageId, packageName, nil
+}
+
+// addToFailedFiles appends array of upload files to failed SQS messages
+func addToFailedFiles(files []uploadFile.UploadFile, s3KeySQSMessageMap map[string]events.SQSMessage,
+	failures []events.SQSBatchItemFailure) []events.SQSBatchItemFailure {
+	for _, f := range files {
+		failedMessage := events.SQSBatchItemFailure{
+			ItemIdentifier: s3KeySQSMessageMap[f.S3Key].MessageId}
+
+		failures = append(failures, failedMessage)
+
+	}
+	return failures
 }

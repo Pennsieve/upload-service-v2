@@ -131,6 +131,7 @@ data "aws_iam_policy_document" "upload_service_v2_iam_policy_document" {
       "s3:ListBucket",
       "s3:GetObject",
       "s3:GetObjectAttributes",
+      "s3:DeleteObject"
     ]
 
     resources = [
