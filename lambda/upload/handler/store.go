@@ -271,17 +271,12 @@ func (s *UploadHandlerStore) Handler(ctx context.Context, sqsEvent events.SQSEve
 		}
 
 		// Update entries in manifest to IMPORTED for all files
-		err = s.dy.updateManifest(uploadFilesForManifest, manifestId)
+		err = s.dy.updateManifestFileStatus(uploadFilesForManifest, manifestId)
 		if err != nil {
 			// Status is not correctly updated in Manifest but files are completely imported.
 			// This should not return the failed files.
 			log.Error(err)
 			continue
-		}
-
-		_, err = s.dy.checkUpdateManifestStatus(ctx, manifest)
-		if err != nil {
-			log.Error(err)
 		}
 
 	}

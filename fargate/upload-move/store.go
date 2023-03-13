@@ -37,6 +37,7 @@ func NewUploadMoveStore(db *sql.DB, dydb *dynamodb.Client, s3 *s3.Client) *Uploa
 	}
 }
 
+// execPgTx wrap function in transaction.
 func (s *UploadMoveStore) execPgTx(ctx context.Context, fn func(*pgQeuries.Queries) error) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -66,7 +67,7 @@ func (s *UploadMoveStore) GetManifestStorageBucket(manifestId string) (*storageO
 	}
 
 	// Get manifest from dynamodb based on id
-	manifest, err := s.dy.GetFromManifest(context.Background(), TableName, manifestId)
+	manifest, err := s.dy.GetManifestById(context.Background(), TableName, manifestId)
 
 	//var o dbTable.Organization
 	org, err := s.pg.GetOrganization(context.Background(), manifest.OrganizationId)
@@ -298,6 +299,7 @@ func (s *UploadMoveStore) moveFile(workerId int32, items <-chan Item) error {
 	return nil
 }
 
+// simpleCopyFile copy files between buckets using simple file copy method.
 func (s *UploadMoveStore) simpleCopyFile(stOrgItem *storageOrgItem, sourcePath string, targetPath string) error {
 	// Copy the item
 

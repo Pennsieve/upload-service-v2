@@ -47,7 +47,9 @@ func getManifestRoute(_ events.APIGatewayV2HTTPRequest, claims *authorizer.Claim
 
 	// Create an Amazon DynamoDB client.
 	table := os.Getenv("MANIFEST_TABLE")
+	fileTable := os.Getenv("MANIFEST_FILE_TABLE")
 	ctx := context.Background()
+
 	manifests, err := store.GetManifestsForDataset(ctx, table, claims.DatasetClaim.NodeId)
 	if err != nil {
 		message := "Error: Unable to get manifests for dataset: " + claims.DatasetClaim.NodeId + " ||| " + fmt.Sprint(err)
@@ -57,14 +59,24 @@ func getManifestRoute(_ events.APIGatewayV2HTTPRequest, claims *authorizer.Claim
 	}
 
 	// Build the input parameters for the request.
-
 	var manifestDTOs []manifest.ManifestDTO
 	for _, m := range manifests {
+
+		// If the manifest is not marked as completed, check for completeness
+		var s manifest.Status
+		mStatus := s.ManifestStatusMap(m.Status)
+		if m.Status != manifest.Completed.String() {
+			mStatus, err = store.CheckUpdateManifestStatus(ctx, fileTable, table, &m)
+			if err != nil {
+				log.Error(err)
+			}
+		}
+
 		manifestDTOs = append(manifestDTOs, manifest.ManifestDTO{
 			Id:            m.ManifestId,
 			DatasetNodeId: m.DatasetNodeId,
 			DatasetId:     m.DatasetId,
-			Status:        m.Status,
+			Status:        mStatus.String(),
 			User:          m.UserId,
 			DateCreated:   m.DateCreated,
 		})
@@ -115,12 +127,6 @@ func postManifestRoute(request events.APIGatewayV2HTTPRequest, claims *authorize
 
 	fmt.Println("SessionID: ", res.ID, " NrFiles: ", len(res.Files))
 
-	//s := manifestPkg.ManifestSession{
-	//	FileTableName: manifestFileTableName,
-	//	TableName:     manifestTableName,
-	//	Client:        client,
-	//}
-
 	// ADDING MANIFEST IF NEEDED
 	var activeManifest *dydb.ManifestTable
 	if res.ID == "" {
@@ -152,7 +158,7 @@ func postManifestRoute(request events.APIGatewayV2HTTPRequest, claims *authorize
 		// Check that manifest exists.
 		log.Debug("Has existing manifest")
 
-		activeManifest, err = store.GetFromManifest(context.Background(), store.tableName, res.ID)
+		activeManifest, err = store.GetManifestById(context.Background(), store.tableName, res.ID)
 		if err != nil {
 			message := "Error: Invalid ManifestID |||| Manifest ID: " + res.ID
 			apiResponse = events.APIGatewayV2HTTPResponse{
@@ -177,6 +183,14 @@ func postManifestRoute(request events.APIGatewayV2HTTPRequest, claims *authorize
 		NrFilesUpdated: addFilesResponse.NrFilesUpdated,
 		NrFilesRemoved: addFilesResponse.NrFilesRemoved,
 		FailedFiles:    addFilesResponse.FailedFiles,
+	}
+
+	// If the manifest is not marked as completed, check for completeness if sync is not adding files
+	if activeManifest.Status != manifest.Completed.String() && addFilesResponse.NrFilesUpdated == 0 {
+		_, err = store.CheckUpdateManifestStatus(context.Background(), store.fileTableName, store.tableName, activeManifest)
+		if err != nil {
+			log.Error(fmt.Sprintf("Could not check/update Manifest Status: %v", err))
+		}
 	}
 
 	jsonBody, _ := json.Marshal(responseBody)

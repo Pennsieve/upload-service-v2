@@ -2,7 +2,6 @@ package handler
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
@@ -10,7 +9,6 @@ import (
 	dynamoTypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/dydb"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/fileInfo/fileType"
-	manifestModels "github.com/pennsieve/pennsieve-go-core/pkg/models/manifest"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/manifest/manifestFile"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/packageInfo/packageType"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/uploadFile"
@@ -203,44 +201,44 @@ func (q *UploadDyQueries) GetUploadFiles(entries []UploadEntry) ([]uploadFile.Up
 	return uploadFiles, unexpectedEntries, nil
 }
 
-// checkUpdateManifestStatus checks current status of Manifest and updates if necessary.
-func (q *UploadDyQueries) checkUpdateManifestStatus(ctx context.Context, manifest *dydb.ManifestTable) (manifestModels.Status, error) {
-
-	// Check if there are any remaining items for manifest and
-	// set manifest status if not
-	reqStatus := sql.NullString{
-		String: "InProgress",
-		Valid:  true,
-	}
-
-	setStatus := manifestModels.Initiated
-
-	remaining, _, err := q.GetFilesPaginated(ctx, ManifestFileTableName,
-		manifest.ManifestId, reqStatus, 1, nil)
-	if err != nil {
-		return setStatus, err
-	}
-
-	if len(remaining) == 0 {
-		setStatus = manifestModels.Completed
-		err = q.UpdateManifestStatus(ctx, ManifestTableName, manifest.ManifestId, setStatus)
-		if err != nil {
-			return setStatus, err
-		}
-	} else if manifest.Status == "Completed" {
-		setStatus = manifestModels.Uploading
-		err = q.UpdateManifestStatus(ctx, ManifestTableName, manifest.ManifestId, setStatus)
-		if err != nil {
-			return setStatus, err
-		}
-	}
-
-	return setStatus, nil
-
-}
+//// checkUpdateManifestStatus checks current status of Manifest and updates if necessary.
+//func (q *UploadDyQueries) checkUpdateManifestStatus(ctx context.Context, manifest *dydb.ManifestTable) (manifestModels.Status, error) {
+//
+//	// Check if there are any remaining items for manifest and
+//	// set manifest status if not
+//	reqStatus := sql.NullString{
+//		String: "InProgress",
+//		Valid:  true,
+//	}
+//
+//	setStatus := manifestModels.Initiated
+//
+//	remaining, _, err := q.GetFilesPaginated(ctx, ManifestFileTableName,
+//		manifest.ManifestId, reqStatus, 1, nil)
+//	if err != nil {
+//		return setStatus, err
+//	}
+//
+//	if len(remaining) == 0 {
+//		setStatus = manifestModels.Completed
+//		err = q.UpdateManifestStatus(ctx, ManifestTableName, manifest.ManifestId, setStatus)
+//		if err != nil {
+//			return setStatus, err
+//		}
+//	} else if manifest.Status == "Completed" {
+//		setStatus = manifestModels.Uploading
+//		err = q.UpdateManifestStatus(ctx, ManifestTableName, manifest.ManifestId, setStatus)
+//		if err != nil {
+//			return setStatus, err
+//		}
+//	}
+//
+//	return setStatus, nil
+//
+//}
 
 // updateManifest updates the manifestFiles to IMPORTED status and updates other fields.
-func (q *UploadDyQueries) updateManifest(uploadFilesForManifest []uploadFile.UploadFile, manifestId string) error {
+func (q *UploadDyQueries) updateManifestFileStatus(uploadFilesForManifest []uploadFile.UploadFile, manifestId string) error {
 
 	// Update status of files in dynamoDB
 	var fileDTOs []manifestFile.FileDTO
