@@ -9,7 +9,6 @@ resource "aws_lambda_function" "upload_lambda" {
   memory_size      = 128
   s3_bucket         = var.lambda_bucket
   s3_key            = "${var.service_name}/upload/upload-v2-handler-${var.image_tag}.zip"
-  reserved_concurrent_executions = 1
 
   vpc_config {
     subnet_ids         = tolist(data.terraform_remote_state.vpc.outputs.private_subnet_ids)
