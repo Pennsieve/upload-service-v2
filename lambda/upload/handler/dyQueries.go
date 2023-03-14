@@ -259,7 +259,11 @@ func (q *UploadDyQueries) updateManifestFileStatus(uploadFilesForManifest []uplo
 	// this is the only way we can batch update, and we also update the name in
 	// case that we need to append index (on name conflict).
 	setStatus := manifestFile.Imported
-	stats := q.AddFiles(manifestId, fileDTOs, &setStatus, ManifestFileTableName)
+	stats, err := q.SyncFiles(manifestId, fileDTOs, &setStatus, ManifestTableName, ManifestFileTableName)
+	if err != nil {
+		return err
+	}
+
 	if stats.NrFilesUpdated != len(uploadFilesForManifest) {
 		return errors.New("could not update status for manifest files to IMPORTED")
 	}

@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/dydb"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/fileInfo/fileType"
+	"github.com/pennsieve/pennsieve-go-core/pkg/models/manifest"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/manifest/manifestFile"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
@@ -61,8 +62,8 @@ func TestMain(m *testing.M) {
 	//}
 
 	svc := getClient()
-	_, _ = svc.DeleteTable(context.Background(), &dynamodb.DeleteTableInput{TableName: aws.String("upload-table")})
-	_, _ = svc.DeleteTable(context.Background(), &dynamodb.DeleteTableInput{TableName: aws.String("upload-file-table")})
+	_, _ = svc.DeleteTable(context.Background(), &dynamodb.DeleteTableInput{TableName: aws.String(manifestTableName)})
+	_, _ = svc.DeleteTable(context.Background(), &dynamodb.DeleteTableInput{TableName: aws.String(manifestFileTableName)})
 
 	_, err = svc.CreateTable(context.TODO(), &dynamodb.CreateTableInput{
 		AttributeDefinitions: []types.AttributeDefinition{
@@ -83,10 +84,6 @@ func TestMain(m *testing.M) {
 			{
 				AttributeName: aws.String("ManifestId"),
 				KeyType:       types.KeyTypeHash,
-			},
-			{
-				AttributeName: aws.String("UserId"),
-				KeyType:       types.KeyTypeRange,
 			},
 		},
 		GlobalSecondaryIndexes: []types.GlobalSecondaryIndex{
@@ -109,7 +106,7 @@ func TestMain(m *testing.M) {
 				ProvisionedThroughput: nil,
 			},
 		},
-		TableName:   aws.String("upload-table"),
+		TableName:   aws.String(manifestTableName),
 		BillingMode: types.BillingModePayPerRequest,
 	})
 
@@ -118,7 +115,7 @@ func TestMain(m *testing.M) {
 	} else {
 		waiter := dynamodb.NewTableExistsWaiter(svc)
 		err = waiter.Wait(context.TODO(), &dynamodb.DescribeTableInput{
-			TableName: aws.String("upload-table")}, 5*time.Minute)
+			TableName: aws.String(manifestTableName)}, 5*time.Minute)
 		if err != nil {
 			log.Printf("Wait for table exists failed. Here's why: %v\n", err)
 		}
@@ -213,7 +210,7 @@ func TestMain(m *testing.M) {
 				ProvisionedThroughput: nil,
 			},
 		},
-		TableName:   aws.String("upload-file-table"),
+		TableName:   aws.String(manifestFileTableName),
 		BillingMode: types.BillingModePayPerRequest,
 	})
 
@@ -222,7 +219,7 @@ func TestMain(m *testing.M) {
 	} else {
 		waiter := dynamodb.NewTableExistsWaiter(svc)
 		err = waiter.Wait(context.TODO(), &dynamodb.DescribeTableInput{
-			TableName: aws.String("upload-file-table")}, 5*time.Minute)
+			TableName: aws.String(manifestFileTableName)}, 5*time.Minute)
 		if err != nil {
 			log.Printf("Wait for table exists failed. Here's why: %v\n", err)
 		}
@@ -315,6 +312,19 @@ func testCreateGetManifest(t *testing.T, store *UploadServiceStore) {
 
 func testAddFiles(t *testing.T, store *UploadServiceStore) {
 
+	ctx := context.Background()
+	manifestId := "0002"
+	err := store.CreateManifest(ctx, manifestTableName, dydb.ManifestTable{
+		ManifestId:     manifestId,
+		DatasetId:      1,
+		DatasetNodeId:  "N:Dataset:0002",
+		OrganizationId: 1,
+		UserId:         1,
+		Status:         manifest.Initiated.String(),
+		DateCreated:    time.Now().Unix(),
+	})
+	assert.NoError(t, err)
+
 	testFileDTOs := []manifestFile.FileDTO{
 		{
 			UploadID:       "111",
@@ -342,10 +352,9 @@ func testAddFiles(t *testing.T, store *UploadServiceStore) {
 	}
 
 	// Adding files to upload
-	manifestId := "1111"
-	result := store.AddFiles(manifestId, testFileDTOs, nil, store.fileTableName)
+	result, err := store.SyncFiles(manifestId, testFileDTOs, nil, store.tableName, store.fileTableName)
+	assert.NoError(t, err)
 
-	// Checking returned status
 	// Checking returned status
 	assert.Equal(t, manifestFile.Unknown, result.FileStatus[0].Status)
 

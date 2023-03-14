@@ -29,6 +29,16 @@ test-ci:
 	docker-compose -f docker-compose.test.yml down --remove-orphans
 	docker-compose -f docker-compose.test.yml up --exit-code-from ci_tests ci_tests
 
+go-get:
+	cd $(WORKING_DIR)/lambda/service; \
+		go get github.com/pennsieve/pennsieve-upload-service-v2/service
+	cd $(WORKING_DIR)/lambda/upload; \
+		go get github.com/pennsieve/pennsieve-upload-service-v2/upload
+	cd $(WORKING_DIR)/lambda/moveTrigger; \
+		go get github.com/pennsieve/pennsieve-upload-service-v2/move-trigger
+	cd $(WORKING_DIR)/fargate/upload-move; \
+		go get github.com/pennsieve/pennsieve-upload-service-v2/upload-move-files
+
 # Spin down active docker containers.
 docker-clean:
 	docker-compose -f docker-compose.test.yml down

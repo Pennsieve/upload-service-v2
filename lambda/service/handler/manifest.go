@@ -66,7 +66,7 @@ func getManifestRoute(_ events.APIGatewayV2HTTPRequest, claims *authorizer.Claim
 		var s manifest.Status
 		mStatus := s.ManifestStatusMap(m.Status)
 		if m.Status != manifest.Completed.String() {
-			mStatus, err = store.CheckUpdateManifestStatus(ctx, fileTable, table, &m)
+			mStatus, err = store.CheckUpdateManifestStatus(ctx, fileTable, table, m.ManifestId, m.Status)
 			if err != nil {
 				log.Error(err)
 			}
@@ -125,7 +125,7 @@ func postManifestRoute(request events.APIGatewayV2HTTPRequest, claims *authorize
 		return &apiResponse, nil
 	}
 
-	fmt.Println("SessionID: ", res.ID, " NrFiles: ", len(res.Files))
+	//fmt.Println("SessionID: ", res.ID, " NrFiles: ", len(res.Files))
 
 	// ADDING MANIFEST IF NEEDED
 	var activeManifest *dydb.ManifestTable
@@ -174,7 +174,19 @@ func postManifestRoute(request events.APIGatewayV2HTTPRequest, claims *authorize
 	upload.PackageTypeResolver(res.Files)
 
 	// ADDING FILES TO MANIFEST
-	addFilesResponse := store.AddFiles(activeManifest.ManifestId, res.Files, nil, store.fileTableName)
+	addFilesResponse, err := store.SyncFiles(activeManifest.ManifestId, res.Files, nil, store.tableName, store.fileTableName)
+	if err != nil {
+		log.WithFields(
+			log.Fields{
+				"manifestId": activeManifest.ManifestId,
+				"datasetId":  claims.DatasetClaim.NodeId,
+			},
+		).Error("Error syncing files:", err)
+		message := "Error: cannot sync files with manifest: " + activeManifest.ManifestId
+		apiResponse = events.APIGatewayV2HTTPResponse{
+			Body: gateway.CreateErrorMessage(message, 500), StatusCode: 500}
+		return &apiResponse, nil
+	}
 
 	// CREATING API RESPONSE
 	responseBody := manifest.PostResponse{
@@ -187,7 +199,7 @@ func postManifestRoute(request events.APIGatewayV2HTTPRequest, claims *authorize
 
 	// If the manifest is not marked as completed, check for completeness if sync is not adding files
 	if activeManifest.Status != manifest.Completed.String() && addFilesResponse.NrFilesUpdated == 0 {
-		_, err = store.CheckUpdateManifestStatus(context.Background(), store.fileTableName, store.tableName, activeManifest)
+		_, err = store.CheckUpdateManifestStatus(context.Background(), store.fileTableName, store.tableName, activeManifest.ManifestId, activeManifest.Status)
 		if err != nil {
 			log.Error(fmt.Sprintf("Could not check/update Manifest Status: %v", err))
 		}

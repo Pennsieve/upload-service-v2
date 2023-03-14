@@ -80,7 +80,7 @@ func testCheckUpdateManifest(t *testing.T, store *UploadHandlerStore) {
 	manifest, err := store.dy.GetManifestById(context.Background(), ManifestTableName, manifestId)
 	assert.NoError(t, err)
 
-	status, err := store.dy.CheckUpdateManifestStatus(context.Background(), ManifestFileTableName, ManifestTableName, manifest)
+	status, err := store.dy.CheckUpdateManifestStatus(context.Background(), ManifestFileTableName, ManifestTableName, manifest.ManifestId, manifest.Status)
 	assert.NoError(t, err)
 	assert.Equal(t, manifestModels.Initiated, status, "expected to be in INITIATED status")
 
@@ -99,7 +99,7 @@ func testCheckUpdateManifest(t *testing.T, store *UploadHandlerStore) {
 	err = store.dy.updateManifestFileStatus(uFiles, manifestId)
 	assert.NoError(t, err)
 
-	status, err = store.dy.CheckUpdateManifestStatus(context.Background(), ManifestFileTableName, ManifestTableName, manifest)
+	status, err = store.dy.CheckUpdateManifestStatus(context.Background(), ManifestFileTableName, ManifestTableName, manifest.ManifestId, manifest.Status)
 	if err != nil {
 		log.Error(err)
 	}

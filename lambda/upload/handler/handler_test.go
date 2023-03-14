@@ -316,7 +316,11 @@ func populateManifest(store *UploadHandlerStore, manifestId string, datasetId in
 	}
 	files, _, _ := generateManifestFilesAndEvents(params, newManifest.ManifestId)
 
-	fileStats := store.dy.AddFiles(newManifest.ManifestId, files, nil, ManifestFileTableName)
+	fileStats, err := store.dy.SyncFiles(newManifest.ManifestId, files, nil, ManifestTableName, ManifestFileTableName)
+	if err != nil {
+		return err
+	}
+
 	if len(fileStats.FailedFiles) > 0 {
 		return errors.New("could not pre-populate manifest files")
 	}
@@ -480,7 +484,8 @@ func testSimpleManifest(t *testing.T, store *UploadHandlerStore) {
 
 	// Create Manifest Files
 	files, messages, _ := generateManifestFilesAndEvents(params, newManifest.ManifestId)
-	_ = store.dy.AddFiles(newManifest.ManifestId, files, nil, ManifestFileTableName)
+	_, err = store.dy.SyncFiles(newManifest.ManifestId, files, nil, ManifestTableName, ManifestFileTableName)
+	assert.NoError(t, err)
 
 	// "Call" the Lambda function
 	sqsEvents := events.SQSEvent{Records: messages}
@@ -558,7 +563,8 @@ func testNestedManifest(t *testing.T, store *UploadHandlerStore) {
 
 	// Create Manifest Files
 	files, messages, _ := generateManifestFilesAndEvents(params, newManifest.ManifestId)
-	_ = store.dy.AddFiles(newManifest.ManifestId, files, nil, ManifestFileTableName)
+	_, err = store.dy.SyncFiles(newManifest.ManifestId, files, nil, ManifestTableName, ManifestFileTableName)
+	assert.NoError(t, err)
 
 	// "Call" the Lambda function
 	sqsEvents := events.SQSEvent{Records: messages}
