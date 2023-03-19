@@ -7,10 +7,11 @@ import (
 	"fmt"
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+	"github.com/aws/aws-sdk-go-v2/service/lambda"
+	types2 "github.com/aws/aws-sdk-go-v2/service/lambda/types"
 	"github.com/google/uuid"
 	"github.com/pennsieve/pennsieve-go-core/pkg/authorizer"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/dydb"
@@ -26,6 +27,10 @@ import (
 	"strconv"
 	"time"
 )
+
+type ArchiveEvent struct {
+	ManifestId string `json:"manifest_id"`
+}
 
 // DynamoDBDescribeTableAPI defines the interface for the DescribeTable function.
 // We use this interface to enable unit testing.
@@ -425,202 +430,40 @@ func getManifestFilesStatusRoute(request events.APIGatewayV2HTTPRequest, claims 
 	return &apiResponse, nil
 }
 
-func handleManifestIdRoute(request events.APIGatewayV2HTTPRequest, claims *authorizer.Claims) (*events.APIGatewayV2HTTPResponse, error) {
-
+// postManifestArchiveRoute exports a manifest to S3 and removes files from manifestFileTable
+func postManifestArchiveRoute(request events.APIGatewayV2HTTPRequest, claims *authorizer.Claims) (*events.APIGatewayV2HTTPResponse, error) {
 	apiResponse := events.APIGatewayV2HTTPResponse{}
+	queryParams := request.QueryStringParameters
 
-	switch request.RequestContext.HTTP.Method {
-	case "GET":
-		// Obtain the QueryStringParameter
-		name := request.QueryStringParameters["name"]
-
-		if name != "" {
-
-			cfg, err := config.LoadDefaultConfig(context.Background())
-			if err != nil {
-				panic("unable to load SDK config, " + err.Error())
-			}
-
-			// Create an Amazon DynamoDB client.
-			client := dynamodb.NewFromConfig(cfg)
-
-			table := aws.String("dev-manifest-files-table-use1")
-
-			// Build the input parameters for the request.
-			input := &dynamodb.DescribeTableInput{
-				TableName: table,
-			}
-
-			resp, err := GetTableInfo(context.TODO(), client, input)
-			if err != nil {
-				panic("failed to describe table, " + err.Error())
-			}
-
-			fmt.Println("Info about " + *table + ":")
-			fmt.Println("  #items:     ", resp.Table.ItemCount)
-			fmt.Println("  Size (bytes)", resp.Table.TableSizeBytes)
-			fmt.Println("  ClientStatus:     ", string(resp.Table.TableStatus))
-
-			apiResponse = events.APIGatewayV2HTTPResponse{
-				StatusCode:        200,
-				Headers:           nil,
-				MultiValueHeaders: nil,
-				Body:              "Hey " + name + " welcome! ",
-				IsBase64Encoded:   false,
-				Cookies:           nil,
-			}
-		} else {
-			apiResponse = events.APIGatewayV2HTTPResponse{
-				StatusCode:        500,
-				Headers:           nil,
-				MultiValueHeaders: nil,
-				Body:              "Error: Query Parameter name missing",
-				IsBase64Encoded:   false,
-				Cookies:           nil,
-			}
-		}
-	case "POST":
-		//validates json and returns error if not working
-		err := fastjson.Validate(request.Body)
-
-		if err != nil {
-			body := "Error: Invalid JSON payload ||| " + fmt.Sprint(err) + " Body Obtained" + "||||" + request.Body
-			apiResponse = events.APIGatewayV2HTTPResponse{Body: body, StatusCode: 500}
-		} else {
-			apiResponse = events.APIGatewayV2HTTPResponse{Body: request.Body, StatusCode: 200}
-		}
+	var manifestId string
+	var found bool
+	if manifestId, found = queryParams["manifest_id"]; !found {
+		message := "Error: ManifestID not specified"
+		apiResponse = events.APIGatewayV2HTTPResponse{
+			Body: gateway.CreateErrorMessage(message, 400), StatusCode: 400}
+		return &apiResponse, nil
 	}
 
-	return &apiResponse, nil
+	// Verify that manifestID belongs to DatasetID in Claim.
+	// This is redundant as request is already authorized but no harm in checking twice.
 
-}
+	// Set Manifest to "archiving"
+	eventData := ArchiveEvent{ManifestId: manifestId}
 
-func handleManifestIdUpdatesRoute(request events.APIGatewayV2HTTPRequest, claims *authorizer.Claims) (*events.APIGatewayV2HTTPResponse, error) {
-
-	apiResponse := events.APIGatewayV2HTTPResponse{}
-
-	switch request.RequestContext.HTTP.Method {
-	case "GET":
-		// Obtain the QueryStringParameter
-		name := request.QueryStringParameters["name"]
-
-		if name != "" {
-
-			cfg, err := config.LoadDefaultConfig(context.Background())
-			if err != nil {
-				panic("unable to load SDK config, " + err.Error())
-			}
-
-			// Create an Amazon DynamoDB client.
-			client := dynamodb.NewFromConfig(cfg)
-
-			table := aws.String("dev-manifest-files-table-use1")
-
-			// Build the input parameters for the request.
-			input := &dynamodb.DescribeTableInput{
-				TableName: table,
-			}
-
-			resp, err := GetTableInfo(context.TODO(), client, input)
-			if err != nil {
-				panic("failed to describe table, " + err.Error())
-			}
-
-			fmt.Println("Info about " + *table + ":")
-			fmt.Println("  #items:     ", resp.Table.ItemCount)
-			fmt.Println("  Size (bytes)", resp.Table.TableSizeBytes)
-			fmt.Println("  ClientStatus:     ", string(resp.Table.TableStatus))
-
-			apiResponse = events.APIGatewayV2HTTPResponse{
-				StatusCode:        200,
-				Headers:           nil,
-				MultiValueHeaders: nil,
-				Body:              "Hey " + name + " welcome! ",
-				IsBase64Encoded:   false,
-				Cookies:           nil,
-			}
-		} else {
-			apiResponse = events.APIGatewayV2HTTPResponse{
-				StatusCode:        500,
-				Headers:           nil,
-				MultiValueHeaders: nil,
-				Body:              "Error: Query Parameter name missing",
-				IsBase64Encoded:   false,
-				Cookies:           nil,
-			}
-		}
-	case "POST":
-		//validates json and returns error if not working
-		err := fastjson.Validate(request.Body)
-
-		if err != nil {
-			body := "Error: Invalid JSON payload ||| " + fmt.Sprint(err) + " Body Obtained" + "||||" + request.Body
-			apiResponse = events.APIGatewayV2HTTPResponse{Body: body, StatusCode: 500}
-		} else {
-			apiResponse = events.APIGatewayV2HTTPResponse{Body: request.Body, StatusCode: 200}
-		}
+	// Call ArchiveLambda in asynchronous way.
+	payload, err := json.Marshal(eventData)
+	if err != nil {
+		return &events.APIGatewayV2HTTPResponse{}, fmt.Errorf("marshal request: %w", err)
 	}
 
-	return &apiResponse, nil
-
-}
-
-func handleManifestIdRemoveRoute(request events.APIGatewayV2HTTPRequest, claims *authorizer.Claims) (*events.APIGatewayV2HTTPResponse, error) {
-
-	apiResponse := events.APIGatewayV2HTTPResponse{}
-
-	switch request.RequestContext.HTTP.Method {
-	case "DELETE":
-		// Obtain the QueryStringParameter
-		name := request.QueryStringParameters["name"]
-
-		if name != "" {
-
-			cfg, err := config.LoadDefaultConfig(context.Background())
-			if err != nil {
-				panic("unable to load SDK config, " + err.Error())
-			}
-
-			// Create an Amazon DynamoDB client.
-			client := dynamodb.NewFromConfig(cfg)
-
-			table := aws.String("dev-manifest-files-table-use1")
-
-			// Build the input parameters for the request.
-			input := &dynamodb.DescribeTableInput{
-				TableName: table,
-			}
-
-			resp, err := GetTableInfo(context.TODO(), client, input)
-			if err != nil {
-				panic("failed to describe table, " + err.Error())
-			}
-
-			fmt.Println("Info about " + *table + ":")
-			fmt.Println("  #items:     ", resp.Table.ItemCount)
-			fmt.Println("  Size (bytes)", resp.Table.TableSizeBytes)
-			fmt.Println("  ClientStatus:     ", string(resp.Table.TableStatus))
-
-			apiResponse = events.APIGatewayV2HTTPResponse{
-				StatusCode:        200,
-				Headers:           nil,
-				MultiValueHeaders: nil,
-				Body:              "Hey " + name + " welcome! ",
-				IsBase64Encoded:   false,
-				Cookies:           nil,
-			}
-		} else {
-			apiResponse = events.APIGatewayV2HTTPResponse{
-				StatusCode:        500,
-				Headers:           nil,
-				MultiValueHeaders: nil,
-				Body:              "Error: Query Parameter name missing",
-				IsBase64Encoded:   false,
-				Cookies:           nil,
-			}
-		}
-	}
+	_, err = store.lambdaClient.Invoke(context.Background(),
+		&lambda.InvokeInput{
+			InvocationType: types2.InvocationTypeEvent,
+			FunctionName:   aws.String(os.Getenv("ARCHIVER_INVOKE_ARN")),
+			Payload:        payload,
+		},
+	)
+	// Return lambda
 
 	return &apiResponse, nil
-
 }

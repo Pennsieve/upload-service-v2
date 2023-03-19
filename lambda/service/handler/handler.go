@@ -5,6 +5,8 @@ import (
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	"github.com/aws/aws-sdk-go-v2/service/lambda"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/pennsieve/pennsieve-go-core/pkg/authorizer"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/permissions"
 	log "github.com/sirupsen/logrus"
@@ -38,8 +40,10 @@ func init() {
 	}
 
 	client := dynamodb.NewFromConfig(cfg)
+	s3Client := s3.NewFromConfig(cfg)
+	lambdaClient := lambda.NewFromConfig(cfg)
 
-	store = NewUploadServiceStore(client, manifestFileTableName, manifestTableName)
+	store = NewUploadServiceStore(client, s3Client, lambdaClient, manifestFileTableName, manifestTableName)
 
 }
 
@@ -82,10 +86,26 @@ func ManifestHandler(request events.APIGatewayV2HTTPRequest) (*events.APIGateway
 				apiResponse, err = getManifestFilesStatusRoute(request, claims)
 			}
 		}
-	case "/manifest/{id}/remove":
-		//if authorized = checkOwner(*claims, manifestId); authorized {
-		//	apiResponse, err = handleManifestIdRemoveRoute(request, claims)
-		//}
+	case "/manifest/{id}/archive":
+		switch request.RequestContext.HTTP.Method {
+		case "GET":
+			// Return zipped file containing the manifest
+
+			//if authorized = authorizer.HasRole(*claims, permissions.ViewFiles); authorized {
+			//	apiResponse, err = getManifestRoute(request, claims)
+			//}
+		case "DELETE":
+			// Completely removes a previously archived manifest (archive must be archived before deleting)
+
+			//if authorized = authorizer.HasRole(*claims, permissions.ViewFiles); authorized {
+			//	apiResponse, err = getManifestRoute(request, claims)
+			//}
+		case "POST":
+			// Archive manifest
+			if authorized = authorizer.HasRole(*claims, permissions.CreateDeleteFiles); authorized {
+				apiResponse, err = postManifestArchiveRoute(request, claims)
+			}
+		}
 	case "/manifest/{id}/updates":
 		//if authorized = checkOwner(*claims, manifestId); authorized {
 		//	apiResponse, err = handleManifestIdUpdatesRoute(request, claims)

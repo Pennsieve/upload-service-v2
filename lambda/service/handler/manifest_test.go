@@ -11,6 +11,7 @@ import (
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/fileInfo/fileType"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/manifest"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/manifest/manifestFile"
+	"github.com/pennsieve/pennsieve-upload-service-v2/service/test"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"os"
@@ -242,7 +243,10 @@ func TestManifest(t *testing.T) {
 		t.Run(scenario, func(t *testing.T) {
 			client := getClient()
 
-			store := NewUploadServiceStore(client, manifestFileTableName, manifestTableName)
+			s3Client := test.MockS3{}
+			mockLambda := test.MockLambda{}
+
+			store := NewUploadServiceStore(client, s3Client, &mockLambda, manifestFileTableName, manifestTableName)
 
 			fn(t, store)
 		})

@@ -56,26 +56,45 @@ resource "aws_lambda_function" "service_lambda" {
       MANIFEST_FILE_TABLE = aws_dynamodb_table.manifest_files_dynamo_table.name,
       REGION = var.aws_region
       RDS_PROXY_ENDPOINT = data.terraform_remote_state.pennsieve_postgres.outputs.rds_proxy_endpoint,
+      ARCHIVER_INVOKE_ARN = aws_lambda_function.archive_lambda.invoke_arn,
       LOG_LEVEL = "info",
     }
   }
 }
 
-#
-#resource "aws_lambda_alias" "upload_service_lambda_live" {
-#  name             = "live"
-#  function_name    = aws_lambda_function.service_lambda.function_name
-#  function_version = aws_lambda_function.service_lambda.version
-#}
-#
-#resource "aws_lambda_provisioned_concurrency_config" "authorizer_lambda" {
-#  function_name                     = aws_lambda_function.service_lambda.function_name
-#  provisioned_concurrent_executions = 2
-#  qualifier                         = aws_lambda_function.service_lambda.version
-#}
+### ARCHIVE MANIFEST LAMBDA
+## Lambda Function which archives a manifest
+resource "aws_lambda_function" "archive_lambda" {
+  description      = "Lambda Function which archives a manifest when triggered by the service."
+  function_name    = "${var.environment_name}-${var.service_name}-archive-lambda-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
+  handler          = "manifest_archiver"
+  runtime          = "go1.x"
+  role             = aws_iam_role.upload_service_v2_lambda_role.arn
+  timeout          = 600
+  memory_size      = 128
+  s3_bucket         = var.lambda_bucket
+  s3_key            = "${var.service_name}/archive/manifest-archiver-${var.image_tag}.zip"
+
+  vpc_config {
+    subnet_ids         = tolist(data.terraform_remote_state.vpc.outputs.private_subnet_ids)
+    security_group_ids = [data.terraform_remote_state.platform_infrastructure.outputs.upload_v2_security_group_id]
+  }
+
+  environment {
+    variables = {
+      ENV = var.environment_name
+      PENNSIEVE_DOMAIN = data.terraform_remote_state.account.outputs.domain_name,
+      MANIFEST_TABLE = aws_dynamodb_table.manifest_dynamo_table.name,
+      MANIFEST_FILE_TABLE = aws_dynamodb_table.manifest_files_dynamo_table.name,
+      REGION = var.aws_region
+      RDS_PROXY_ENDPOINT = data.terraform_remote_state.pennsieve_postgres.outputs.rds_proxy_endpoint,
+      LOG_LEVEL = "info",
+    }
+  }
+}
+
 
 ### MOVE TRIGGER
-
 
 resource "aws_lambda_function" "fargate_trigger_lambda" {
   description      = "Lambda Function which triggers FARGATE to move files to final destination."
