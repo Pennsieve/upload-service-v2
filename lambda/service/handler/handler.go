@@ -86,7 +86,7 @@ func ManifestHandler(request events.APIGatewayV2HTTPRequest) (*events.APIGateway
 				apiResponse, err = getManifestFilesStatusRoute(request, claims)
 			}
 		}
-	case "/manifest/{id}/archive":
+	case "/manifest/archive":
 		switch request.RequestContext.HTTP.Method {
 		case "GET":
 			// Return zipped file containing the manifest
