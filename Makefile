@@ -84,7 +84,7 @@ package:
 	@echo "*   Building Manifest Archiver lambda   *"
 	@echo "***********************"
 	@echo ""
-	cd $(WORKING_DIR)/lambda/archiveManifest; \
+	cd $(WORKING_DIR)/lambda/archiver; \
   		env GOOS=linux GOARCH=amd64 go build -o $(WORKING_DIR)/lambda/bin/archiver/manifest_archiver; \
 		cd $(WORKING_DIR)/lambda/bin/archiver/ ; \
 			zip -r $(WORKING_DIR)/lambda/bin/archiver/$(ARCHIVER_PACKAGE_NAME) .
