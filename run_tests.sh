@@ -23,6 +23,13 @@ echo ""
 cd ../../lambda/upload; \
   go test -v ./... ;
 echo ""
+echo "******************************"
+echo "*   Testing Archiver Lambda  *"
+echo "******************************"
+echo ""
+cd ../../lambda/archiver; \
+  go test -v ./... ;
+echo ""
 echo "**********************************"
 echo "*   Testing Move Fargate Task	*"
 echo "**********************************"

@@ -258,6 +258,22 @@ data "aws_iam_policy_document" "upload_service_v2_iam_policy_document" {
       "${aws_sqs_queue.upload_trigger_queue.arn}/*",
     ]
   }
+
+  statement {
+    sid = "InvokeLambdaPermission"
+    effect = "Allow"
+
+    actions = [
+      "lambda:InvokeFunction",
+      "lambda:InvokeAsync"
+    ]
+
+    resources = [
+      aws_lambda_function.archive_lambda.arn
+    ]
+
+  }
+
 }
 
 ##############################

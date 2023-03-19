@@ -7,6 +7,7 @@ SERVICE_NAME  ?= "upload-service-v2"
 SERVICE_PACKAGE_NAME ?= "upload-v2-service-${VERSION}.zip"
 UPLOADHANDLER_PACKAGE_NAME ?= "upload-v2-handler-${VERSION}.zip"
 MOVETRIGGER_PACKAGE_NAME ?= "upload-v2-move-trigger-${VERSION}.zip"
+ARCHIVER_PACKAGE_NAME ?= "manifest_archiver-${VERSION}.zip"
 PACKAGE_NAME  ?= "${SERVICE_NAME}-${VERSION}.zip"
 
 .DEFAULT: help
@@ -19,7 +20,7 @@ help:
 	@echo "make package - create venv and package lambdas and fargate functions"
 	@echo "make publish - package and publish lambda function"
 
-test:
+test: clean
 	docker-compose -f docker-compose.test.yml down --remove-orphans
 	docker-compose -f docker-compose.test.yml up --exit-code-from local_tests local_tests
 
@@ -36,6 +37,8 @@ go-get:
 		go get github.com/pennsieve/pennsieve-upload-service-v2/upload
 	cd $(WORKING_DIR)/lambda/moveTrigger; \
 		go get github.com/pennsieve/pennsieve-upload-service-v2/move-trigger
+	cd $(WORKING_DIR)/lambda/archiver; \
+		go get github.com/pennsieve/pennsieve-upload-service-v2/archiver
 	cd $(WORKING_DIR)/fargate/upload-move; \
 		go get github.com/pennsieve/pennsieve-upload-service-v2/upload-move-files
 
@@ -46,6 +49,7 @@ docker-clean:
 # Remove dynamodb database
 clean: docker-clean
 	rm -rf test-dynamodb-data
+	rm -rf testdata
 
 package:
 	@echo ""
@@ -77,6 +81,15 @@ package:
 			zip -r $(WORKING_DIR)/lambda/bin/moveTrigger/$(MOVETRIGGER_PACKAGE_NAME) .
 	@echo ""
 	@echo "***********************"
+	@echo "*   Building Manifest Archiver lambda   *"
+	@echo "***********************"
+	@echo ""
+	cd $(WORKING_DIR)/lambda/archiveManifest; \
+  		env GOOS=linux GOARCH=amd64 go build -o $(WORKING_DIR)/lambda/bin/archiver/manifest_archiver; \
+		cd $(WORKING_DIR)/lambda/bin/archiver/ ; \
+			zip -r $(WORKING_DIR)/lambda/bin/archiver/$(ARCHIVER_PACKAGE_NAME) .
+	@echo ""
+	@echo "***********************"
 	@echo "*   Building Fargate   *"
 	@echo "***********************"
 	@echo ""
@@ -88,23 +101,30 @@ package:
 publish:
 	@make package
 	@echo ""
-	@echo "*************************"
+	@echo "*********************************"
 	@echo "*   Publishing Service lambda   *"
-	@echo "*************************"
+	@echo "*********************************"
 	@echo ""
 	aws s3 cp $(WORKING_DIR)/lambda/bin/service/$(SERVICE_PACKAGE_NAME) s3://$(LAMBDA_BUCKET)/upload-service-v2/service/
 	rm -rf $(WORKING_DIR)/lambda/bin/service/$(SERVICE_PACKAGE_NAME)
 	@echo ""
-	@echo "*************************"
+	@echo "********************************"
 	@echo "*   Publishing Upload lambda   *"
-	@echo "*************************"
+	@echo "********************************"
 	@echo ""
 	aws s3 cp $(WORKING_DIR)/lambda/bin/upload/$(UPLOADHANDLER_PACKAGE_NAME) s3://$(LAMBDA_BUCKET)/upload-service-v2/upload/
 	rm -rf $(WORKING_DIR)/lambda/bin/upload/$(UPLOADHANDLER_PACKAGE_NAME)
 	@echo ""
-	@echo "*************************"
+	@echo "************************************"
+	@echo "*   Publishing Manifest Archiver   *"
+	@echo "************************************"
+	@echo ""
+	aws s3 cp $(WORKING_DIR)/lambda/bin/archiver/$(ARCHIVER_PACKAGE_NAME) s3://$(LAMBDA_BUCKET)/upload-service-v2/archiver/
+	rm -rf $(WORKING_DIR)/lambda/bin/archiver/$(ARCHIVER_PACKAGE_NAME)
+	@echo ""
+	@echo "**************************************"
 	@echo "*   Publishing Move Trigger lambda   *"
-	@echo "*************************"
+	@echo "**************************************"
 	@echo ""
 	aws s3 cp $(WORKING_DIR)/lambda/bin/moveTrigger/$(MOVETRIGGER_PACKAGE_NAME) s3://$(LAMBDA_BUCKET)/upload-service-v2/trigger/
 	rm -rf $(WORKING_DIR)/lambda/bin/moveTrigger/$(MOVETRIGGER_PACKAGE_NAME)

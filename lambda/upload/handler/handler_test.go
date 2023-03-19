@@ -11,6 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/google/uuid"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/dydb"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/fileInfo/fileType"
@@ -219,9 +220,40 @@ func TestMain(m *testing.M) {
 	}
 
 	mSNS := test.MockSNS{}
-	mS3 := test.MockS3{}
+
+	s3Client := getS3Client()
+	s3Client.CreateBucket(context.Background(), &s3.CreateBucketInput{
+		Bucket:                     aws.String("dummy-s3-bucket"),
+		ACL:                        "",
+		CreateBucketConfiguration:  nil,
+		GrantFullControl:           nil,
+		GrantRead:                  nil,
+		GrantReadACP:               nil,
+		GrantWrite:                 nil,
+		GrantWriteACP:              nil,
+		ObjectLockEnabledForBucket: false,
+		ObjectOwnership:            "",
+	})
+
+	_, err = s3Client.CreateBucket(context.Background(), &s3.CreateBucketInput{
+		Bucket:                     aws.String("pennsieve-dev-uploads-v2-use1"),
+		ACL:                        "",
+		CreateBucketConfiguration:  nil,
+		GrantFullControl:           nil,
+		GrantRead:                  nil,
+		GrantReadACP:               nil,
+		GrantWrite:                 nil,
+		GrantWriteACP:              nil,
+		ObjectLockEnabledForBucket: false,
+		ObjectOwnership:            "",
+	})
+	if err != nil {
+		fmt.Println(err)
+		log.Fatal(err)
+	}
+
 	client := getDynamoDBClient()
-	store := NewUploadHandlerStore(pgdbClient, client, mSNS, mS3, ManifestFileTableName, ManifestTableName, SNSTopic)
+	store := NewUploadHandlerStore(pgdbClient, client, mSNS, s3Client, ManifestFileTableName, ManifestTableName, SNSTopic)
 
 	manifestId := "00000000-0000-0000-0000-000000000000"
 	err = populateManifest(store, manifestId, 1)
@@ -258,8 +290,9 @@ func TestUploadService(t *testing.T) {
 			}
 
 			mSNS := test.MockSNS{}
-			mS3 := test.MockS3{}
-			store := NewUploadHandlerStore(pgdbClient, client, mSNS, mS3, ManifestFileTableName, ManifestTableName, SNSTopic)
+			s3Client := test.MockS3{}
+
+			store := NewUploadHandlerStore(pgdbClient, client, mSNS, s3Client, ManifestFileTableName, ManifestTableName, SNSTopic)
 
 			fn(t, store)
 		})
@@ -332,6 +365,27 @@ func getEnv(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func getS3Client() *s3.Client {
+
+	testDBUri := getEnv("MINIO_URL", "http://localhost:9002")
+
+	cfg, err := config.LoadDefaultConfig(context.TODO(),
+		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider("minioadmin", "minioadmin", "")),
+		config.WithEndpointResolverWithOptions(aws.EndpointResolverWithOptionsFunc(
+			func(service, region string, options ...interface{}) (aws.Endpoint, error) {
+				return aws.Endpoint{URL: testDBUri, HostnameImmutable: true}, nil
+			})),
+	)
+	if err != nil {
+		panic(err)
+	}
+
+	s3Client := s3.NewFromConfig(cfg)
+
+	return s3Client
+
 }
 
 func getDynamoDBClient() *dynamodb.Client {
