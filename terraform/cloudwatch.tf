@@ -19,7 +19,6 @@ resource "aws_cloudwatch_metric_alarm" "upload_sqs_dlq_cloudwatch_metric_alarm" 
   }
 }
 
-
 // CREATE FARGATE TASK CLOUDWATCH LOG GROUP
 resource "aws_cloudwatch_log_group" "fargate_cloudwatch_log_group" {
   name              = "/aws/fargate/${var.environment_name}-${var.service_name}-${var.tier}-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
@@ -36,7 +35,6 @@ resource "aws_cloudwatch_log_subscription_filter" "cloudwatch_fargate_group_subs
   destination_arn = data.terraform_remote_state.region.outputs.datadog_delivery_stream_arn
   role_arn        = data.terraform_remote_state.region.outputs.cw_logs_to_datadog_logs_firehose_role_arn
 }
-
 
 // Create log group for upload lambda.
 resource "aws_cloudwatch_log_group" "upload_lambda_loggroup" {
@@ -65,6 +63,22 @@ resource "aws_cloudwatch_log_group" "upload_service_lambda_loggroup" {
 resource "aws_cloudwatch_log_subscription_filter" "cloudwatch_upload_service_group_subscription" {
   name            = "${aws_cloudwatch_log_group.upload_service_lambda_loggroup.name}-subscription"
   log_group_name  = aws_cloudwatch_log_group.upload_service_lambda_loggroup.name
+  filter_pattern  = ""
+  destination_arn = data.terraform_remote_state.region.outputs.datadog_delivery_stream_arn
+  role_arn        = data.terraform_remote_state.region.outputs.cw_logs_to_datadog_logs_firehose_role_arn
+}
+
+// Create log group for archiver lambda.
+resource "aws_cloudwatch_log_group" "archiver_lambda_loggroup" {
+  name              = "/aws/lambda/${aws_lambda_function.archive_lambda.function_name}"
+  retention_in_days = 7
+  tags = local.common_tags
+}
+
+// Send logs from upload trigger service to datadog
+resource "aws_cloudwatch_log_subscription_filter" "cloudwatch_archiver_group_subscription" {
+  name            = "${aws_cloudwatch_log_group.archiver_lambda_loggroup.name}-subscription"
+  log_group_name  = aws_cloudwatch_log_group.archiver_lambda_loggroup.name
   filter_pattern  = ""
   destination_arn = data.terraform_remote_state.region.outputs.datadog_delivery_stream_arn
   role_arn        = data.terraform_remote_state.region.outputs.cw_logs_to_datadog_logs_firehose_role_arn
