@@ -7,7 +7,7 @@ SERVICE_NAME  ?= "upload-service-v2"
 SERVICE_PACKAGE_NAME ?= "upload-v2-service-${VERSION}.zip"
 UPLOADHANDLER_PACKAGE_NAME ?= "upload-v2-handler-${VERSION}.zip"
 MOVETRIGGER_PACKAGE_NAME ?= "upload-v2-move-trigger-${VERSION}.zip"
-ARCHIVER_PACKAGE_NAME ?= "manifest_archiver-${VERSION}.zip"
+ARCHIVER_PACKAGE_NAME ?= "manifest-archiver-${VERSION}.zip"
 PACKAGE_NAME  ?= "${SERVICE_NAME}-${VERSION}.zip"
 
 .DEFAULT: help
