@@ -73,7 +73,7 @@ resource "aws_lambda_function" "archive_lambda" {
   timeout          = 600
   memory_size      = 128
   s3_bucket         = var.lambda_bucket
-  s3_key            = "${var.service_name}/archive/manifest-archiver-${var.image_tag}.zip"
+  s3_key            = "${var.service_name}/archiver/manifest-archiver-${var.image_tag}.zip"
 
   vpc_config {
     subnet_ids         = tolist(data.terraform_remote_state.vpc.outputs.private_subnet_ids)
