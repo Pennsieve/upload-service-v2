@@ -56,7 +56,7 @@ resource "aws_lambda_function" "service_lambda" {
       MANIFEST_FILE_TABLE = aws_dynamodb_table.manifest_files_dynamo_table.name,
       REGION = var.aws_region
       RDS_PROXY_ENDPOINT = data.terraform_remote_state.pennsieve_postgres.outputs.rds_proxy_endpoint,
-      ARCHIVER_INVOKE_ARN = aws_lambda_function.archive_lambda.invoke_arn,
+      ARCHIVER_INVOKE_ARN = aws_lambda_function.archive_lambda.arn,
       LOG_LEVEL = "info",
     }
   }
