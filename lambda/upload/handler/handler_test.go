@@ -222,16 +222,8 @@ func TestMain(m *testing.M) {
 	mSNS := test.MockSNS{}
 
 	s3Client := getS3Client()
-	s3Client.DeleteBucket(context.Background(), &s3.DeleteBucketInput{
-		Bucket:              aws.String("dummy-s3-bucket"),
-		ExpectedBucketOwner: nil,
-	})
-	s3Client.DeleteBucket(context.Background(), &s3.DeleteBucketInput{
-		Bucket:              aws.String("pennsieve-dev-uploads-v2-use1"),
-		ExpectedBucketOwner: nil,
-	})
 
-	s3Client.CreateBucket(context.Background(), &s3.CreateBucketInput{
+	_, err = s3Client.CreateBucket(context.Background(), &s3.CreateBucketInput{
 		Bucket:                     aws.String("dummy-s3-bucket"),
 		ACL:                        "",
 		CreateBucketConfiguration:  nil,
@@ -243,6 +235,9 @@ func TestMain(m *testing.M) {
 		ObjectLockEnabledForBucket: false,
 		ObjectOwnership:            "",
 	})
+	if err != nil {
+		log.Info(err)
+	}
 
 	_, err = s3Client.CreateBucket(context.Background(), &s3.CreateBucketInput{
 		Bucket:                     aws.String("pennsieve-dev-uploads-v2-use1"),
@@ -257,8 +252,7 @@ func TestMain(m *testing.M) {
 		ObjectOwnership:            "",
 	})
 	if err != nil {
-		fmt.Println(err)
-		log.Fatal(err)
+		log.Info(err)
 	}
 
 	client := getDynamoDBClient()
