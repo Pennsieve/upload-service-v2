@@ -60,6 +60,12 @@ func ManifestHandler(event ArchiveEvent) error {
 	_, err := store.writeCSVFile(ctx, csvFileName, event.ManifestId)
 
 	_, err = store.writeManifestToS3(ctx, csvFileName, event.OrganizationId, event.DatasetId)
+
+	if err != nil {
+		return err
+	}
+
+	err = store.removeManifestFiles(ctx, event.ManifestId)
 	if err != nil {
 		return err
 	}

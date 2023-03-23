@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"database/sql"
 	"encoding/csv"
 	"fmt"
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -13,7 +14,7 @@ import (
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/fileInfo/fileType"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/manifest"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/manifest/manifestFile"
-	"github.com/pennsieve/pennsieve-go-core/pkg/test"
+	"github.com/pennsieve/pennsieve-go-core/test"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"os"
@@ -62,6 +63,7 @@ func getS3Client() *s3.Client {
 			})),
 	)
 	if err != nil {
+		log.Error("Cannot create Minio resource")
 		panic(err)
 	}
 
@@ -86,12 +88,16 @@ func TestMain(m *testing.M) {
 	archiverBucket = "test-archiever-bucket"
 
 	s3Client := getS3Client()
+	s3Client.DeleteBucket(context.Background(), &s3.DeleteBucketInput{
+		Bucket:              aws.String(archiverBucket),
+		ExpectedBucketOwner: nil,
+	})
+
 	_, err := s3Client.CreateBucket(context.Background(), &s3.CreateBucketInput{
 		Bucket: aws.String(archiverBucket),
 	})
 	if err != nil {
-		log.Error("Unable to create Bucket: ", err)
-		return
+		log.Info("Bucket already exists: ", err)
 	}
 
 	// Run tests
@@ -106,8 +112,9 @@ func TestArchiver(t *testing.T) {
 	for scenario, fn := range map[string]func(
 		tt *testing.T,
 	){
-		"write manifest to CSV file": testWriteManifestCsv,
-		"write CSV to S3":            testWriteCSVToS3,
+		"write manifest to CSV file":               testWriteManifestCsv,
+		"write CSV to S3":                          testWriteCSVToS3,
+		"remove rows from file-table for manifest": testRemoveManifestFiles,
 	} {
 		t.Run(scenario, func(t *testing.T) {
 			client := getClient()
@@ -157,6 +164,55 @@ func testWriteManifestCsv(t *testing.T) {
 
 }
 
+func testRemoveManifestFiles(t *testing.T) {
+
+	//manifestId := "0002"
+	ctx := context.Background()
+	manifestId := "Manifest:0003"
+	err := store.CreateManifest(ctx, manifestTableName, dydb.ManifestTable{
+		ManifestId:     manifestId,
+		DatasetId:      1,
+		DatasetNodeId:  "N:Dataset:0002",
+		OrganizationId: 1,
+		UserId:         1,
+		Status:         manifest.Initiated.String(),
+		DateCreated:    time.Now().Unix(),
+	})
+	assert.NoError(t, err, "should be able to create manifest")
+
+	// Create 100 fileDTOs
+	var testFileDTOs []manifestFile.FileDTO
+	i := 1
+	for i <= 100 {
+		testFileDTOs = append(testFileDTOs, manifestFile.FileDTO{
+			UploadID:       fmt.Sprintf("%s-%d", manifestId, i),
+			S3Key:          "",
+			TargetPath:     "",
+			TargetName:     fmt.Sprintf("%s-%d", manifestId, i),
+			Status:         manifestFile.Local,
+			MergePackageId: "",
+			FileType:       fileType.Aperio.String(),
+		})
+		i++
+	}
+
+	// Adding files to upload
+	stat, err := store.SyncFiles(manifestId, testFileDTOs, nil, store.tableName, store.fileTableName)
+	assert.NoError(t, err, "Should be able to create manifest files.")
+	assert.Equal(t, 100, stat.NrFilesUpdated, "Number of updated files should match input")
+
+	// This should remove all files
+	err = store.removeManifestFiles(ctx, manifestId)
+	assert.NoError(t, err, "Should be able to remove files.")
+
+	// Try to get files from dynamoDB for manifest, which should be empty
+	resFiles, next, err := store.GetFilesPaginated(ctx, store.fileTableName, manifestId, sql.NullString{Valid: false}, 100, nil)
+	assert.NoError(t, err, "Should be able to get paginated files even if no files exist.")
+	assert.Len(t, next, 0, "Should not be any pointer to next data")
+	assert.Len(t, resFiles, 0, "All files should be deleted")
+
+}
+
 func testWriteCSVToS3(t *testing.T) {
 
 	// create CSV file
@@ -164,7 +220,8 @@ func testWriteCSVToS3(t *testing.T) {
 	filePath := fmt.Sprintf("/tmp/%s", exportFileName)
 	f, err := os.Create(filePath)
 	assert.NoError(t, err)
-	f.WriteString("This is a test")
+	_, err = f.WriteString("This is a test")
+	assert.NoError(t, err)
 	f.Close()
 
 	ctx := context.Background()

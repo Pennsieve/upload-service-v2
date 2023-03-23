@@ -20,7 +20,7 @@ import (
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/packageInfo/packageType"
 	pgdb2 "github.com/pennsieve/pennsieve-go-core/pkg/models/pgdb"
 	"github.com/pennsieve/pennsieve-go-core/pkg/queries/pgdb"
-	testHelpers "github.com/pennsieve/pennsieve-go-core/pkg/test"
+	testHelpers "github.com/pennsieve/pennsieve-go-core/test"
 	"github.com/pennsieve/pennsieve-upload-service-v2/upload/test"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
@@ -222,6 +222,15 @@ func TestMain(m *testing.M) {
 	mSNS := test.MockSNS{}
 
 	s3Client := getS3Client()
+	s3Client.DeleteBucket(context.Background(), &s3.DeleteBucketInput{
+		Bucket:              aws.String("dummy-s3-bucket"),
+		ExpectedBucketOwner: nil,
+	})
+	s3Client.DeleteBucket(context.Background(), &s3.DeleteBucketInput{
+		Bucket:              aws.String("pennsieve-dev-uploads-v2-use1"),
+		ExpectedBucketOwner: nil,
+	})
+
 	s3Client.CreateBucket(context.Background(), &s3.CreateBucketInput{
 		Bucket:                     aws.String("dummy-s3-bucket"),
 		ACL:                        "",

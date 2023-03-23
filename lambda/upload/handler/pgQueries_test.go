@@ -10,7 +10,7 @@ import (
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/packageInfo/packageType"
 	pgdb2 "github.com/pennsieve/pennsieve-go-core/pkg/models/pgdb"
 	"github.com/pennsieve/pennsieve-go-core/pkg/queries/pgdb"
-	testHelpers "github.com/pennsieve/pennsieve-go-core/pkg/test"
+	testHelpers "github.com/pennsieve/pennsieve-go-core/test"
 	"github.com/pennsieve/pennsieve-upload-service-v2/upload/test"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
@@ -93,7 +93,7 @@ func testUpdateStorage(t *testing.T, store *UploadHandlerStore) {
 	assert.NoError(t, err)
 
 	// Test adding packages to root
-	testParams := []testHelpers.TestPackageParams{
+	testParams := []testHelpers.PackageParams{
 		{Name: "package_1.txt", ParentId: -1, NodeId: "N:Package:1"},
 		{Name: "package_2.txt", ParentId: -1, NodeId: "N:Package:2"},
 		{Name: "package_3.txt", ParentId: folder1.Id, NodeId: "N:Package:3"},

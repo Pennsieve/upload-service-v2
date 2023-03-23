@@ -12,7 +12,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue v1.10.14
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.18.4
 	github.com/google/uuid v1.3.0
-	github.com/pennsieve/pennsieve-go-core v1.2.10
+	github.com/pennsieve/pennsieve-go-core v1.2.11
 	github.com/sirupsen/logrus v1.9.0
 	github.com/valyala/fastjson v1.6.3
 )
@@ -21,6 +21,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.13.14
 	github.com/aws/aws-sdk-go-v2/service/lambda v1.30.1
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.30.4
+	github.com/aws/smithy-go v1.13.5
 	github.com/stretchr/testify v1.8.1
 )
 
@@ -41,7 +42,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sso v1.12.3 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.14.3 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.18.4 // indirect
-	github.com/aws/smithy-go v1.13.5 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/lib/pq v1.10.7 // indirect
