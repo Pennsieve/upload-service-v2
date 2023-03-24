@@ -158,7 +158,7 @@ data "aws_iam_policy_document" "upload_service_v2_iam_policy_document" {
 
     resources = [
       aws_s3_bucket.manifest_archive_bucket.arn,
-      "${aws_s3_bucket.manifest_archive_bucket}/*"
+      "${aws_s3_bucket.manifest_archive_bucket.arn}/*",
     ]
   }
 
