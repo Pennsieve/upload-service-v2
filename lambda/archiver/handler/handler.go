@@ -6,6 +6,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/pennsieve/pennsieve-go-core/pkg/models/manifest"
 	log "github.com/sirupsen/logrus"
 	"os"
 )
@@ -62,6 +63,17 @@ func ManifestHandler(event ArchiveEvent) error {
 	_, err = store.writeManifestToS3(ctx, csvFileName, event.OrganizationId, event.DatasetId)
 
 	if err != nil {
+		return err
+	}
+
+	err = store.UpdateManifestStatus(ctx, store.tableName, event.ManifestId, manifest.Archived)
+	if err != nil {
+		log.WithFields(
+			log.Fields{
+				"manifest_id":     event.ManifestId,
+				"organization_id": event.OrganizationId,
+				"dataset_id":      event.DatasetId,
+			}).Error("Cannot update manifest to 'Archived'.")
 		return err
 	}
 

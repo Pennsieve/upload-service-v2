@@ -75,7 +75,7 @@ func getS3Client() *s3.Client {
 
 func TestMain(m *testing.M) {
 	// Initialize logger
-	log.SetLevel(log.DebugLevel)
+	log.SetLevel(log.InfoLevel)
 	log.SetFormatter(&log.JSONFormatter{})
 
 	// If testing on Jenkins (-> DYNAMODB_URL is set) then wait for db to be active.
