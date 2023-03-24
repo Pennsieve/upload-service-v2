@@ -27,7 +27,7 @@ func init() {
 
 	manifestFileTableName := os.Getenv("MANIFEST_FILE_TABLE")
 	manifestTableName := os.Getenv("MANIFEST_TABLE")
-	archiverBucket = os.Getenv("ARCHIVER_BUCKET")
+	archiverBucket = os.Getenv("ARCHIVE_BUCKET")
 
 	cfg, err := config.LoadDefaultConfig(context.Background())
 	if err != nil {
