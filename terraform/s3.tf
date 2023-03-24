@@ -67,6 +67,14 @@ resource "aws_s3_bucket_policy" "manifest_archive_bucket_policy" {
   policy = data.aws_iam_policy_document.archive_bucket_iam_policy_document.json
 }
 
+// Enable Bucket Versioning on Manifest Archives
+resource "aws_s3_bucket_versioning" "manifest_archive_versioning" {
+  bucket = aws_s3_bucket.manifest_archive_bucket.id
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
 resource "aws_s3_bucket_server_side_encryption_configuration" "manifest_archive_bucket_encryption" {
   bucket = aws_s3_bucket.manifest_archive_bucket.bucket
 

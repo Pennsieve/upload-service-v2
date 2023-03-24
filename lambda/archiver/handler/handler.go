@@ -57,7 +57,7 @@ func ManifestHandler(event ArchiveEvent) error {
 		}).Info("Manifest Archiver called.")
 
 	ctx := context.Background()
-	csvFileName := fmt.Sprintf("manifest_archive_%s", event.ManifestId)
+	csvFileName := fmt.Sprintf("manifest_archive_%s.csv", event.ManifestId)
 	_, err := store.writeCSVFile(ctx, csvFileName, event.ManifestId)
 
 	_, err = store.writeManifestToS3(ctx, csvFileName, event.OrganizationId, event.DatasetId)
@@ -66,6 +66,12 @@ func ManifestHandler(event ArchiveEvent) error {
 		return err
 	}
 
+	log.WithFields(
+		log.Fields{
+			"manifest_id":    event.ManifestId,
+			"tableName":      store.tableName,
+			"manifestStatus": manifest.Archived.String(),
+		}).Debug("trying to update status of manifest")
 	err = store.UpdateManifestStatus(ctx, store.tableName, event.ManifestId, manifest.Archived)
 	if err != nil {
 		log.WithFields(
@@ -76,6 +82,7 @@ func ManifestHandler(event ArchiveEvent) error {
 			}).Error("Cannot update manifest to 'Archived'.")
 		return err
 	}
+	log.Debug("Updated status of manifest")
 
 	err = store.removeManifestFiles(ctx, event.ManifestId)
 	if err != nil {
