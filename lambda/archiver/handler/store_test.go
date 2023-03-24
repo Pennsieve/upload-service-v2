@@ -201,6 +201,11 @@ func testRemoveManifestFiles(t *testing.T) {
 	assert.NoError(t, err, "Should be able to create manifest files.")
 	assert.Equal(t, 100, stat.NrFilesUpdated, "Number of updated files should match input")
 
+	// Check that files are there
+	resFiles, _, err := store.GetFilesPaginated(ctx, store.fileTableName, manifestId, sql.NullString{Valid: false}, 100, nil)
+	assert.NoError(t, err, "shoudl be able to get files")
+	assert.Len(t, resFiles, 100, "Should have 100 records")
+
 	// This should remove all files
 	err = store.removeManifestFiles(ctx, manifestId)
 	assert.NoError(t, err, "Should be able to remove files.")
