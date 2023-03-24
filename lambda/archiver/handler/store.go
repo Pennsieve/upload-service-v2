@@ -146,7 +146,14 @@ func (s *ArchiverStore) removeManifestFiles(ctx context.Context, manifestId stri
 		return err
 	}
 
-	removeFilesFromManifest(ctx, files, s.fileTableName, manifestId)
+	err = removeFilesFromManifest(ctx, files, s.fileTableName, manifestId)
+	if err != nil {
+		log.WithFields(
+			log.Fields{
+				"manifest_id": manifestId,
+			},
+		).Error("Error removing files from manifest: ", err)
+	}
 
 	for len(startKey) != 0 {
 		files, startKey, err = s.GetFilesPaginated(ctx, s.fileTableName, manifestId, sql.NullString{Valid: false}, 25, startKey)
@@ -154,7 +161,14 @@ func (s *ArchiverStore) removeManifestFiles(ctx context.Context, manifestId stri
 			return err
 		}
 
-		removeFilesFromManifest(ctx, files, s.fileTableName, manifestId)
+		err = removeFilesFromManifest(ctx, files, s.fileTableName, manifestId)
+		if err != nil {
+			log.WithFields(
+				log.Fields{
+					"manifest_id": manifestId,
+				},
+			).Error("Error removing files from manifest: ", err)
+		}
 	}
 
 	return nil
