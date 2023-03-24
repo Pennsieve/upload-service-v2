@@ -169,7 +169,7 @@ func testRemoveManifestFiles(t *testing.T) {
 	//manifestId := "0002"
 	ctx := context.Background()
 	manifestId := "Manifest:0003"
-	err := store.CreateManifest(ctx, manifestTableName, dydb.ManifestTable{
+	err := store.dy.CreateManifest(ctx, manifestTableName, dydb.ManifestTable{
 		ManifestId:     manifestId,
 		DatasetId:      1,
 		DatasetNodeId:  "N:Dataset:0002",
@@ -197,12 +197,12 @@ func testRemoveManifestFiles(t *testing.T) {
 	}
 
 	// Adding files to upload
-	stat, err := store.SyncFiles(manifestId, testFileDTOs, nil, store.tableName, store.fileTableName)
+	stat, err := store.dy.SyncFiles(manifestId, testFileDTOs, nil, store.tableName, store.fileTableName)
 	assert.NoError(t, err, "Should be able to create manifest files.")
 	assert.Equal(t, 100, stat.NrFilesUpdated, "Number of updated files should match input")
 
 	// Check that files are there
-	resFiles, _, err := store.GetFilesPaginated(ctx, store.fileTableName, manifestId, sql.NullString{Valid: false}, 100, nil)
+	resFiles, _, err := store.dy.GetFilesPaginated(ctx, store.fileTableName, manifestId, sql.NullString{Valid: false}, 100, nil)
 	assert.NoError(t, err, "shoudl be able to get files")
 	assert.Len(t, resFiles, 100, "Should have 100 records")
 
@@ -211,7 +211,7 @@ func testRemoveManifestFiles(t *testing.T) {
 	assert.NoError(t, err, "Should be able to remove files.")
 
 	// Try to get files from dynamoDB for manifest, which should be empty
-	resFiles, next, err := store.GetFilesPaginated(ctx, store.fileTableName, manifestId, sql.NullString{Valid: false}, 100, nil)
+	resFiles, next, err := store.dy.GetFilesPaginated(ctx, store.fileTableName, manifestId, sql.NullString{Valid: false}, 100, nil)
 	assert.NoError(t, err, "Should be able to get paginated files even if no files exist.")
 	assert.Len(t, next, 0, "Should not be any pointer to next data")
 	assert.Len(t, resFiles, 0, "All files should be deleted")
@@ -249,7 +249,7 @@ func testWriteCSVToS3(t *testing.T) {
 func populateManifest(ctx context.Context, store *ArchiverStore, manifestId string) error {
 
 	//manifestId := "0002"
-	err := store.CreateManifest(ctx, manifestTableName, dydb.ManifestTable{
+	err := store.dy.CreateManifest(ctx, manifestTableName, dydb.ManifestTable{
 		ManifestId:     manifestId,
 		DatasetId:      1,
 		DatasetNodeId:  "N:Dataset:0002",
@@ -289,14 +289,10 @@ func populateManifest(ctx context.Context, store *ArchiverStore, manifestId stri
 	}
 
 	// Adding files to upload
-	stat, err := store.SyncFiles(manifestId, testFileDTOs, nil, store.tableName, store.fileTableName)
+	_, err := store.dy.SyncFiles(manifestId, testFileDTOs, nil, store.tableName, store.fileTableName)
 	if err != nil {
 		return err
 	}
-
-	fmt.Println("STAT")
-	fmt.Println(stat.NrFilesUpdated)
-	fmt.Println(stat.FailedFiles)
 
 	return nil
 }

@@ -12,7 +12,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	dydbModels "github.com/pennsieve/pennsieve-go-core/pkg/models/dydb"
-	"github.com/pennsieve/pennsieve-go-core/pkg/queries/dydb"
 	log "github.com/sirupsen/logrus"
 	"os"
 	"time"
@@ -20,7 +19,7 @@ import (
 
 // ArchiverStore provides the Queries interface.
 type ArchiverStore struct {
-	*dydb.Queries
+	dy            *ServiceDyQueries
 	dynamodb      *dynamodb.Client
 	s3Client      *s3.Client
 	fileTableName string
@@ -32,7 +31,7 @@ func NewArchiverStore(dy *dynamodb.Client, s3Client *s3.Client, fileTableName st
 	return &ArchiverStore{
 		dynamodb:      dy,
 		s3Client:      s3Client,
-		Queries:       dydb.New(dy),
+		dy:            NewServiceDyQueries(dy),
 		fileTableName: fileTableName,
 		tableName:     tableName,
 	}
@@ -57,7 +56,7 @@ func (s *ArchiverStore) writeCSVFile(ctx context.Context, fileName string, manif
 	var files []dydbModels.ManifestFileTable
 	pageSize := int32(200)
 
-	files, lastEntry, err := s.GetFilesPaginated(ctx, s.fileTableName, manifestId, sql.NullString{Valid: false}, pageSize, nil)
+	files, lastEntry, err := s.dy.GetFilesPaginated(ctx, s.fileTableName, manifestId, sql.NullString{Valid: false}, pageSize, nil)
 
 	if len(files) > 0 {
 
@@ -80,7 +79,7 @@ func (s *ArchiverStore) writeCSVFile(ctx context.Context, fileName string, manif
 
 		// If there are more entries, get next page and write files.
 		for len(lastEntry) != 0 {
-			files, lastEntry, err = s.GetFilesPaginated(ctx, s.fileTableName, manifestId, sql.NullString{Valid: false}, pageSize, lastEntry)
+			files, lastEntry, err = s.dy.GetFilesPaginated(ctx, s.fileTableName, manifestId, sql.NullString{Valid: false}, pageSize, lastEntry)
 
 			for _, f := range files {
 				rowSlice := f.ToSlice()
@@ -141,7 +140,7 @@ func (s *ArchiverStore) removeManifestFiles(ctx context.Context, manifestId stri
 	startKey = nil
 
 	// Get First Page
-	files, startKey, err = s.GetFilesPaginated(ctx, s.fileTableName, manifestId, sql.NullString{Valid: false}, 25, startKey)
+	files, startKey, err = s.dy.GetFilesPaginated(ctx, s.fileTableName, manifestId, sql.NullString{Valid: false}, 25, startKey)
 	if err != nil {
 		return err
 	}
@@ -158,7 +157,7 @@ func (s *ArchiverStore) removeManifestFiles(ctx context.Context, manifestId stri
 	}
 
 	for len(startKey) != 0 {
-		files, startKey, err = s.GetFilesPaginated(ctx, s.fileTableName, manifestId, sql.NullString{Valid: false}, 25, startKey)
+		files, startKey, err = s.dy.GetFilesPaginated(ctx, s.fileTableName, manifestId, sql.NullString{Valid: false}, 25, startKey)
 		if err != nil {
 			return err
 		}

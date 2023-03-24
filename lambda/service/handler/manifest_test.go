@@ -267,7 +267,7 @@ func testCreateGetManifest(t *testing.T, store *UploadServiceStore) {
 
 	// Create Manifest
 	ctx := context.Background()
-	err := store.CreateManifest(ctx, manifestTableName, tb)
+	err := store.dy.CreateManifest(ctx, manifestTableName, tb)
 	assert.Nil(t, err, "Manifest 1 could not be created")
 
 	// Create second upload
@@ -281,7 +281,7 @@ func testCreateGetManifest(t *testing.T, store *UploadServiceStore) {
 		DateCreated:    time.Now().Unix(),
 	}
 
-	err = store.CreateManifest(ctx, manifestTableName, tb2)
+	err = store.dy.CreateManifest(ctx, manifestTableName, tb2)
 	assert.Nil(t, err, "Manifest 2 could not be created")
 
 	// Create second upload
@@ -295,11 +295,11 @@ func testCreateGetManifest(t *testing.T, store *UploadServiceStore) {
 		DateCreated:    time.Now().Unix(),
 	}
 
-	err = store.CreateManifest(ctx, manifestTableName, tb3)
+	err = store.dy.CreateManifest(ctx, manifestTableName, tb3)
 	assert.Nil(t, err, "Manifest 3 could not be created")
 
 	// Get Manifest
-	out, err := store.GetManifestsForDataset(ctx, "upload-table", "N:Dataset:1234")
+	out, err := store.dy.GetManifestsForDataset(ctx, "upload-table", "N:Dataset:1234")
 	assert.Nil(t, err, "Manifest could not be fetched")
 	assert.Equal(t, 1, len(out))
 	assert.Equal(t, "1111", out[0].ManifestId)
@@ -307,7 +307,7 @@ func testCreateGetManifest(t *testing.T, store *UploadServiceStore) {
 	assert.Equal(t, int64(1), out[0].UserId)
 
 	// Check that there are two manifests for N:Dataset:5678
-	out, err = store.GetManifestsForDataset(ctx, "upload-table", "N:Dataset:5678")
+	out, err = store.dy.GetManifestsForDataset(ctx, "upload-table", "N:Dataset:5678")
 	assert.Nil(t, err, "Manifest could not be fetched")
 	assert.Equal(t, 2, len(out))
 	assert.Equal(t, "2222", out[0].ManifestId)
@@ -318,7 +318,7 @@ func testAddFiles(t *testing.T, store *UploadServiceStore) {
 
 	ctx := context.Background()
 	manifestId := "0002"
-	err := store.CreateManifest(ctx, manifestTableName, dydb.ManifestTable{
+	err := store.dy.CreateManifest(ctx, manifestTableName, dydb.ManifestTable{
 		ManifestId:     manifestId,
 		DatasetId:      1,
 		DatasetNodeId:  "N:Dataset:0002",
@@ -356,7 +356,7 @@ func testAddFiles(t *testing.T, store *UploadServiceStore) {
 	}
 
 	// Adding files to upload
-	result, err := store.SyncFiles(manifestId, testFileDTOs, nil, store.tableName, store.fileTableName)
+	result, err := store.dy.SyncFiles(manifestId, testFileDTOs, nil, store.tableName, store.fileTableName)
 	assert.NoError(t, err)
 
 	// Checking returned status

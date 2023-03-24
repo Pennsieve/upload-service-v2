@@ -72,7 +72,7 @@ func ManifestHandler(event ArchiveEvent) error {
 			"tableName":      store.tableName,
 			"manifestStatus": manifest.Archived.String(),
 		}).Debug("trying to update status of manifest")
-	err = store.UpdateManifestStatus(ctx, store.tableName, event.ManifestId, manifest.Archived)
+	err = store.dy.UpdateManifestStatus(ctx, store.tableName, event.ManifestId, manifest.Archived)
 	if err != nil {
 		log.WithFields(
 			log.Fields{

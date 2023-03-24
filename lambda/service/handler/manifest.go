@@ -46,7 +46,7 @@ func getManifestRoute(_ events.APIGatewayV2HTTPRequest, claims *authorizer.Claim
 	fileTable := os.Getenv("MANIFEST_FILE_TABLE")
 	ctx := context.Background()
 
-	manifests, err := store.GetManifestsForDataset(ctx, table, claims.DatasetClaim.NodeId)
+	manifests, err := store.dy.GetManifestsForDataset(ctx, table, claims.DatasetClaim.NodeId)
 	if err != nil {
 		message := "Error: Unable to get manifests for dataset: " + claims.DatasetClaim.NodeId + " ||| " + fmt.Sprint(err)
 		apiResponse = events.APIGatewayV2HTTPResponse{
@@ -62,7 +62,7 @@ func getManifestRoute(_ events.APIGatewayV2HTTPRequest, claims *authorizer.Claim
 		var s manifest.Status
 		mStatus := s.ManifestStatusMap(m.Status)
 		if m.Status != manifest.Completed.String() {
-			mStatus, err = store.CheckUpdateManifestStatus(ctx, fileTable, table, m.ManifestId, m.Status)
+			mStatus, err = store.dy.CheckUpdateManifestStatus(ctx, fileTable, table, m.ManifestId, m.Status)
 			if err != nil {
 				log.Error(err)
 			}
@@ -148,7 +148,7 @@ func postManifestRoute(request events.APIGatewayV2HTTPRequest, claims *authorize
 			DateCreated:    time.Now().Unix(),
 		}
 
-		err := store.CreateManifest(context.Background(), store.tableName, *activeManifest)
+		err := store.dy.CreateManifest(context.Background(), store.tableName, *activeManifest)
 		if err != nil {
 			message := "Error: Could not create manifest |||| Manifest ID: " + res.ID
 			apiResponse = events.APIGatewayV2HTTPResponse{
@@ -160,7 +160,7 @@ func postManifestRoute(request events.APIGatewayV2HTTPRequest, claims *authorize
 		// Check that manifest exists.
 		log.Debug("Has existing manifest")
 
-		activeManifest, err = store.GetManifestById(context.Background(), store.tableName, res.ID)
+		activeManifest, err = store.dy.GetManifestById(context.Background(), store.tableName, res.ID)
 		if err != nil {
 			message := "Error: Invalid ManifestID |||| Manifest ID: " + res.ID
 			apiResponse = events.APIGatewayV2HTTPResponse{
@@ -176,7 +176,7 @@ func postManifestRoute(request events.APIGatewayV2HTTPRequest, claims *authorize
 	upload.PackageTypeResolver(res.Files)
 
 	// ADDING FILES TO MANIFEST
-	addFilesResponse, err := store.SyncFiles(activeManifest.ManifestId, res.Files, nil, store.tableName, store.fileTableName)
+	addFilesResponse, err := store.dy.SyncFiles(activeManifest.ManifestId, res.Files, nil, store.tableName, store.fileTableName)
 	if err != nil {
 		log.WithFields(
 			log.Fields{
@@ -201,7 +201,7 @@ func postManifestRoute(request events.APIGatewayV2HTTPRequest, claims *authorize
 
 	// If the manifest is not marked as completed, check for completeness if sync is not adding files
 	if activeManifest.Status != manifest.Completed.String() && addFilesResponse.NrFilesUpdated == 0 {
-		_, err = store.CheckUpdateManifestStatus(context.Background(), store.fileTableName, store.tableName, activeManifest.ManifestId, activeManifest.Status)
+		_, err = store.dy.CheckUpdateManifestStatus(context.Background(), store.fileTableName, store.tableName, activeManifest.ManifestId, activeManifest.Status)
 		if err != nil {
 			log.Error(fmt.Sprintf("Could not check/update Manifest Status: %v", err))
 		}
@@ -274,7 +274,7 @@ func getManifestFilesRoute(request events.APIGatewayV2HTTPRequest, _ *authorizer
 	}
 
 	//var mf *dbTable.ManifestFileTable
-	manifestFiles, lastKey, err := store.GetFilesPaginated(context.Background(), table, manifestId, status, limit, startKey)
+	manifestFiles, lastKey, err := store.dy.GetFilesPaginated(context.Background(), table, manifestId, status, limit, startKey)
 	if err != nil {
 		message := "Error: Unable to get files for manifests: " + manifestId + " ||| " + fmt.Sprint(err)
 		apiResponse = events.APIGatewayV2HTTPResponse{
@@ -385,7 +385,7 @@ func getManifestFilesStatusRoute(request events.APIGatewayV2HTTPRequest, claims 
 		Query table
 	*/
 	//var mf *dbTable.ManifestFileTable
-	files, lastKey, err := store.GetFilesPaginated(context.Background(), store.fileTableName, manifestId, status, 500, startKey)
+	files, lastKey, err := store.dy.GetFilesPaginated(context.Background(), store.fileTableName, manifestId, status, 500, startKey)
 	if err != nil {
 		message := "Error: Unable to get manifests for dataset: " + claims.DatasetClaim.NodeId + " ||| " + fmt.Sprint(err)
 		apiResponse = events.APIGatewayV2HTTPResponse{
@@ -402,7 +402,7 @@ func getManifestFilesStatusRoute(request events.APIGatewayV2HTTPRequest, claims 
 	// Update status for returned items to "Verified"
 	if updateStatus {
 		for _, f := range UploadIds {
-			err = store.UpdateFileTableStatus(context.Background(), store.fileTableName, manifestId, f, manifestFile.Verified, "")
+			err = store.dy.UpdateFileTableStatus(context.Background(), store.fileTableName, manifestId, f, manifestFile.Verified, "")
 			if err != nil {
 				fmt.Println("Error updating table: ", err)
 			}
