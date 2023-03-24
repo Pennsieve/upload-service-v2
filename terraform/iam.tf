@@ -277,6 +277,40 @@ data "aws_iam_policy_document" "upload_service_v2_iam_policy_document" {
 }
 
 ##############################
+# ARCHIVER-LAMBDA   #
+##############################
+
+data "aws_iam_policy_document" "archive_bucket_iam_policy_document" {
+
+  statement {
+    sid    = "ForceSSLOnlyAccess"
+    effect = "Deny"
+
+    resources = [
+      "arn:aws:s3:::pennsieve-${var.environment_name}-manifest-archive-${data.terraform_remote_state.region.outputs.aws_region_shortname}",
+      "arn:aws:s3:::pennsieve-${var.environment_name}-manifest-archive-${data.terraform_remote_state.region.outputs.aws_region_shortname}/*",
+    ]
+
+    actions = [
+      "s3:*",
+    ]
+
+    principals {
+      type        = "*"
+      identifiers = ["*"]
+    }
+
+    condition {
+      test     = "Bool"
+      values   = ["false"]
+      variable = "aws:SecureTransport"
+    }
+  }
+}
+
+
+
+##############################
 # MOVE-TRIGGER-LAMBDA   #
 ##############################
 

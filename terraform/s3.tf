@@ -64,7 +64,7 @@ resource "aws_s3_bucket" "manifest_archive_bucket" {
 
 resource "aws_s3_bucket_policy" "manifest_archive_bucket_policy" {
   bucket = aws_s3_bucket.manifest_archive_bucket.bucket
-  policy = data.aws_iam_policy_document.uploads_bucket_iam_policy_document.json
+  policy = data.aws_iam_policy_document.archive_bucket_iam_policy_document.json
 }
 
 resource "aws_s3_bucket_server_side_encryption_configuration" "manifest_archive_bucket_encryption" {
