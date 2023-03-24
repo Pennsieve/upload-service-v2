@@ -289,7 +289,7 @@ func populateManifest(ctx context.Context, store *ArchiverStore, manifestId stri
 	}
 
 	// Adding files to upload
-	_, err := store.dy.SyncFiles(manifestId, testFileDTOs, nil, store.tableName, store.fileTableName)
+	_, err = store.dy.SyncFiles(manifestId, testFileDTOs, nil, store.tableName, store.fileTableName)
 	if err != nil {
 		return err
 	}
