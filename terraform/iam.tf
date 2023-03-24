@@ -136,7 +136,29 @@ data "aws_iam_policy_document" "upload_service_v2_iam_policy_document" {
 
     resources = [
       aws_s3_bucket.uploads_s3_bucket.arn,
-      "${aws_s3_bucket.uploads_s3_bucket.arn}/*"
+      "${aws_s3_bucket.uploads_s3_bucket.arn}/*",
+    ]
+  }
+
+  statement {
+    sid = "ArchiverBucketAccess"
+    effect = "Allow"
+
+    actions = [
+      "s3:ListBucket",
+      "s3:GetObject",
+      "s3:GetObjectAttributes",
+      "s3:DeleteObject",
+      "s3:PutObject",
+      "s3:ListBucketMultipartUploads",
+      "s3:AbortMultipartUpload",
+      "s3:ListMultipartUploadParts",
+      "s3:PutObjectTagging"
+    ]
+
+    resources = [
+      aws_s3_bucket.manifest_archive_bucket.arn,
+      "${aws_s3_bucket.manifest_archive_bucket}/*"
     ]
   }
 
