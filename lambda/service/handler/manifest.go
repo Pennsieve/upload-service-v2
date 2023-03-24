@@ -28,21 +28,12 @@ import (
 	"time"
 )
 
-type ArchiveEvent struct {
-	ManifestId string `json:"manifest_id"`
-}
-
 // DynamoDBDescribeTableAPI defines the interface for the DescribeTable function.
 // We use this interface to enable unit testing.
 type DynamoDBDescribeTableAPI interface {
 	DescribeTable(ctx context.Context,
 		params *dynamodb.DescribeTableInput,
 		optFns ...func(*dynamodb.Options)) (*dynamodb.DescribeTableOutput, error)
-}
-
-// GetTableInfo retrieves information about the table.
-func GetTableInfo(c context.Context, api DynamoDBDescribeTableAPI, input *dynamodb.DescribeTableInput) (*dynamodb.DescribeTableOutput, error) {
-	return api.DescribeTable(c, input)
 }
 
 // getManifestRoute returns a list of manifests for a given dataset
@@ -157,7 +148,13 @@ func postManifestRoute(request events.APIGatewayV2HTTPRequest, claims *authorize
 			DateCreated:    time.Now().Unix(),
 		}
 
-		store.CreateManifest(context.Background(), store.tableName, *activeManifest)
+		err := store.CreateManifest(context.Background(), store.tableName, *activeManifest)
+		if err != nil {
+			message := "Error: Could not create manifest |||| Manifest ID: " + res.ID
+			apiResponse = events.APIGatewayV2HTTPResponse{
+				Body: gateway.CreateErrorMessage(message, 500), StatusCode: 500}
+			return &apiResponse, nil
+		}
 
 	} else {
 		// Check that manifest exists.
@@ -217,7 +214,7 @@ func postManifestRoute(request events.APIGatewayV2HTTPRequest, claims *authorize
 }
 
 // getManifestFilesRoute returns a paginated list of files for a manifest with a provided ID
-func getManifestFilesRoute(request events.APIGatewayV2HTTPRequest, claims *authorizer.Claims) (*events.APIGatewayV2HTTPResponse, error) {
+func getManifestFilesRoute(request events.APIGatewayV2HTTPRequest, _ *authorizer.Claims) (*events.APIGatewayV2HTTPResponse, error) {
 
 	apiResponse := events.APIGatewayV2HTTPResponse{}
 	queryParams := request.QueryStringParameters
@@ -448,7 +445,11 @@ func postManifestArchiveRoute(request events.APIGatewayV2HTTPRequest, claims *au
 	// This is redundant as request is already authorized but no harm in checking twice.
 
 	// Set Manifest to "archiving"
-	eventData := ArchiveEvent{ManifestId: manifestId}
+	eventData := ArchiveEvent{
+		ManifestId:     manifestId,
+		OrganizationId: claims.OrgClaim.IntId,
+		DatasetId:      claims.DatasetClaim.IntId,
+	}
 
 	// Call ArchiveLambda in asynchronous way.
 	payload, err := json.Marshal(eventData)
@@ -463,7 +464,19 @@ func postManifestArchiveRoute(request events.APIGatewayV2HTTPRequest, claims *au
 			Payload:        payload,
 		},
 	)
-	// Return lambda
+	if err != nil {
+		message := "Error: could not invoke manifest archiver workflow"
+		apiResponse = events.APIGatewayV2HTTPResponse{
+			Body: gateway.CreateErrorMessage(message, 500), StatusCode: 500}
+		return &apiResponse, nil
+	}
 
+	// Return Success Message
+	responseBody := ArchivePostResponse{
+		Message:    "Manifest archive workflow triggered.",
+		ManifestId: manifestId,
+	}
+	jsonBody, _ := json.Marshal(responseBody)
+	apiResponse = events.APIGatewayV2HTTPResponse{Body: string(jsonBody), StatusCode: 200}
 	return &apiResponse, nil
 }

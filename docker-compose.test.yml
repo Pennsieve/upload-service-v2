@@ -33,12 +33,12 @@ services:
       context: .
       dockerfile: Dockerfile.test
     depends_on:
-      - minio
+      - minio-ci
       - dynamodb-ci
       - pennsievedb-ci
     environment:
       - DYNAMODB_URL=http://dynamodb-ci:8000
-      - MINIO_URL=http://minio:9000
+      - MINIO_URL=http://minio-ci:9000
       - POSTGRES_HOST=pennsievedb-ci
       - MANIFEST_FILE_TABLE=manifest-file-table
       - MANIFEST_TABLE=manifest-table
@@ -50,6 +50,17 @@ services:
 
   # Local S3 Storage
   minio:
+    image: minio/minio
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: server --console-address ":9001" /data
+    volumes:
+      - $PWD/miniodata:/data
+    networks:
+      - upload-tests
+
+  minio-ci:
     image: minio/minio
     environment:
       MINIO_ROOT_USER: minioadmin

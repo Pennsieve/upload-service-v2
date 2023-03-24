@@ -29,4 +29,5 @@ fargate/upload-move/app/*
 #dynamodb test data
 test-dynamodb-data/
 testdata/
+miniodata/
 
