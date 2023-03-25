@@ -12,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	types2 "github.com/aws/aws-sdk-go-v2/service/lambda/types"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/google/uuid"
 	"github.com/pennsieve/pennsieve-go-core/pkg/authorizer"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/dydb"
@@ -479,4 +480,53 @@ func postManifestArchiveRoute(request events.APIGatewayV2HTTPRequest, claims *au
 	jsonBody, _ := json.Marshal(responseBody)
 	apiResponse = events.APIGatewayV2HTTPResponse{Body: string(jsonBody), StatusCode: 200}
 	return &apiResponse, nil
+}
+
+// getManifestArchiveUrl returns a pre-signed url for downloading an archived manifest
+func getManifestArchiveUrl(request events.APIGatewayV2HTTPRequest, claims *authorizer.Claims) (*events.APIGatewayV2HTTPResponse, error) {
+	apiResponse := events.APIGatewayV2HTTPResponse{}
+	queryParams := request.QueryStringParameters
+
+	var manifestId string
+	var found bool
+	if manifestId, found = queryParams["manifest_id"]; !found {
+		message := "Error: ManifestID not specified"
+		apiResponse = events.APIGatewayV2HTTPResponse{
+			Body: gateway.CreateErrorMessage(message, 400), StatusCode: 400}
+		return &apiResponse, nil
+	}
+
+	manifestLocation := fmt.Sprintf("O%d/D%d/manifest_archive_%s.csv",
+		claims.OrgClaim.IntId, claims.DatasetClaim.IntId, manifestId)
+
+	preSignClient := s3.NewPresignClient(store.s3Client)
+	ctx := context.Background()
+	preSignResult, err := preSignClient.PresignGetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(archiveBucket),
+		Key:    aws.String(manifestLocation),
+	},
+		s3.WithPresignExpires(time.Minute*15),
+	)
+
+	if err != nil {
+		message := "Error: could not create pre-signed url for object"
+		apiResponse = events.APIGatewayV2HTTPResponse{
+			Body: gateway.CreateErrorMessage(message, 500), StatusCode: 500}
+		return &apiResponse, nil
+	}
+
+	responseBody := ArchiveGetResponse{
+		Message: "Navigating to this URL will download the manifest file.",
+		Url:     preSignResult.URL,
+	}
+
+	jsonBody, _ := json.Marshal(responseBody)
+
+	response := events.APIGatewayV2HTTPResponse{
+		StatusCode: 200,
+		Body:       string(jsonBody),
+	}
+
+	return &response, nil
+
 }

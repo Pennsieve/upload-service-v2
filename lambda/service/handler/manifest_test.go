@@ -7,6 +7,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/dydb"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/fileInfo/fileType"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/manifest"
@@ -46,6 +47,28 @@ func getClient() *dynamodb.Client {
 
 	svc := dynamodb.NewFromConfig(cfg)
 	return svc
+}
+
+func getS3Client() *s3.Client {
+
+	testDBUri := getEnv("MINIO_URL", "http://localhost:9002")
+
+	cfg, err := config.LoadDefaultConfig(context.TODO(),
+		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider("minioadmin", "minioadmin", "")),
+		config.WithEndpointResolverWithOptions(aws.EndpointResolverWithOptionsFunc(
+			func(service, region string, options ...interface{}) (aws.Endpoint, error) {
+				return aws.Endpoint{URL: testDBUri, HostnameImmutable: true}, nil
+			})),
+	)
+	if err != nil {
+		log.Error("Cannot create Minio resource")
+		panic(err)
+	}
+
+	s3Client := s3.NewFromConfig(cfg)
+
+	return s3Client
+
 }
 
 func TestMain(m *testing.M) {
@@ -243,7 +266,7 @@ func TestManifest(t *testing.T) {
 		t.Run(scenario, func(t *testing.T) {
 			client := getClient()
 
-			s3Client := test.MockS3{}
+			s3Client := getS3Client()
 			mockLambda := test.MockLambda{}
 
 			store := NewUploadServiceStore(client, s3Client, &mockLambda, manifestFileTableName, manifestTableName)

@@ -14,11 +14,8 @@ import (
 	"regexp"
 )
 
-//var manifestFileTableName string
-//var manifestTableName string
-//var client *dynamodb.Client
-
 var store *UploadServiceStore
+var archiveBucket string
 
 // init runs on cold start of lambda and gets jwt key-sets from Cognito user pools.
 func init() {
@@ -33,6 +30,7 @@ func init() {
 
 	manifestFileTableName := os.Getenv("MANIFEST_FILE_TABLE")
 	manifestTableName := os.Getenv("MANIFEST_TABLE")
+	archiveBucket = os.Getenv("ARCHIVE_BUCKET")
 
 	cfg, err := config.LoadDefaultConfig(context.Background())
 	if err != nil {
@@ -89,11 +87,10 @@ func ManifestHandler(request events.APIGatewayV2HTTPRequest) (*events.APIGateway
 	case "/manifest/archive":
 		switch request.RequestContext.HTTP.Method {
 		case "GET":
-			// Return zipped file containing the manifest
-
-			//if authorized = authorizer.HasRole(*claims, permissions.ViewFiles); authorized {
-			//	apiResponse, err = getManifestRoute(request, claims)
-			//}
+			// Return pre-signed url to download the manifest CSV file
+			if authorized = authorizer.HasRole(*claims, permissions.ViewFiles); authorized {
+				apiResponse, err = getManifestArchiveUrl(request, claims)
+			}
 		case "DELETE":
 			// Completely removes a previously archived manifest (archive must be archived before deleting)
 
@@ -106,10 +103,6 @@ func ManifestHandler(request events.APIGatewayV2HTTPRequest) (*events.APIGateway
 				apiResponse, err = postManifestArchiveRoute(request, claims)
 			}
 		}
-	case "/manifest/{id}/updates":
-		//if authorized = checkOwner(*claims, manifestId); authorized {
-		//	apiResponse, err = handleManifestIdUpdatesRoute(request, claims)
-		//}
 	default:
 		log.Fatalln("Incorrect Route")
 	}
