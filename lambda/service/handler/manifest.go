@@ -499,6 +499,13 @@ func getManifestArchiveUrl(request events.APIGatewayV2HTTPRequest, claims *autho
 	manifestLocation := fmt.Sprintf("O%d/D%d/manifest_archive_%s.csv",
 		claims.OrgClaim.IntId, claims.DatasetClaim.IntId, manifestId)
 
+	log.WithFields(
+		log.Fields{
+			"manifest_id":     manifestId,
+			"organization_id": claims.OrgClaim.IntId,
+			"dataset_id":      claims.DatasetClaim.NodeId,
+		}).Info(fmt.Sprintf("Getting Pre-signed url for: %s", manifestLocation))
+
 	preSignClient := s3.NewPresignClient(store.s3Client)
 	ctx := context.Background()
 	preSignResult, err := preSignClient.PresignGetObject(ctx, &s3.GetObjectInput{
@@ -509,6 +516,13 @@ func getManifestArchiveUrl(request events.APIGatewayV2HTTPRequest, claims *autho
 	)
 
 	if err != nil {
+		log.WithFields(
+			log.Fields{
+				"manifest_id":     manifestId,
+				"organization_id": claims.OrgClaim.IntId,
+				"dataset_id":      claims.DatasetClaim.NodeId,
+			}).Error(fmt.Sprintf("Cannot create pre-signed url: %v", err))
+
 		message := "Error: could not create pre-signed url for object"
 		apiResponse = events.APIGatewayV2HTTPResponse{
 			Body: gateway.CreateErrorMessage(message, 500), StatusCode: 500}
