@@ -51,6 +51,7 @@ resource "aws_lambda_function" "service_lambda" {
   environment {
     variables = {
       ENV = var.environment_name
+      ARCHIVE_BUCKET = aws_s3_bucket.manifest_archive_bucket.id,
       PENNSIEVE_DOMAIN = data.terraform_remote_state.account.outputs.domain_name,
       MANIFEST_TABLE = aws_dynamodb_table.manifest_dynamo_table.name,
       MANIFEST_FILE_TABLE = aws_dynamodb_table.manifest_files_dynamo_table.name,
