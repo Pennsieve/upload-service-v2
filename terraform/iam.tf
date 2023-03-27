@@ -227,6 +227,7 @@ data "aws_iam_policy_document" "upload_service_v2_iam_policy_document" {
     effect = "Allow"
 
     actions = [
+      "dynamodb:DeleteItem",
       "dynamodb:DescribeTable",
       "dynamodb:BatchGetItem",
       "dynamodb:GetItem",
