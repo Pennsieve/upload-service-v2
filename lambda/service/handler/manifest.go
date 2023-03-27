@@ -169,6 +169,13 @@ func postManifestRoute(request events.APIGatewayV2HTTPRequest, claims *authorize
 			return &apiResponse, nil
 		}
 
+		// Check that manifest is not archived.
+		if activeManifest.Status == manifest.Archived.String() {
+			message := "Cannot sync with an 'archived' manifest. Archived manifests can be downloaded as a CSV file."
+			apiResponse = events.APIGatewayV2HTTPResponse{
+				Body: gateway.CreateErrorMessage(message, 400), StatusCode: 400}
+			return &apiResponse, nil
+		}
 	}
 
 	// MERGE PACKAGES FOR SPECIFIC FILETYPES
@@ -229,14 +236,6 @@ func getManifestFilesRoute(request events.APIGatewayV2HTTPRequest, _ *authorizer
 		return &apiResponse, nil
 	}
 
-	//cfg, err := config.LoadDefaultConfig(context.Background())
-	//if err != nil {
-	//	panic("unable to load SDK config, " + err.Error())
-	//}
-
-	// Create an Amazon DynamoDB client.
-	//client := dynamodb.NewFromConfig(cfg)
-
 	table := os.Getenv("MANIFEST_FILE_TABLE")
 
 	var limit int32
@@ -248,6 +247,23 @@ func getManifestFilesRoute(request events.APIGatewayV2HTTPRequest, _ *authorizer
 		}
 	} else {
 		limit = int32(20)
+	}
+
+	// Check that Manifest exists
+	activeManifest, err := store.dy.GetManifestById(context.Background(), store.tableName, manifestId)
+	if err != nil {
+		message := "Error: Invalid ManifestID |||| Manifest ID: " + manifestId
+		apiResponse = events.APIGatewayV2HTTPResponse{
+			Body: gateway.CreateErrorMessage(message, 400), StatusCode: 400}
+		return &apiResponse, nil
+	}
+
+	// Check that manifest is not archived.
+	if activeManifest.Status == manifest.Archived.String() {
+		message := "Cannot sync with an 'archived' manifest. Archived manifests can be downloaded as a CSV file."
+		apiResponse = events.APIGatewayV2HTTPResponse{
+			Body: gateway.CreateErrorMessage(message, 400), StatusCode: 400}
+		return &apiResponse, nil
 	}
 
 	status := sql.NullString{}
