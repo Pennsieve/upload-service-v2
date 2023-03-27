@@ -544,3 +544,39 @@ func getManifestArchiveUrl(request events.APIGatewayV2HTTPRequest, claims *autho
 	return &response, nil
 
 }
+
+// deleteManifestRoute removes manifest from manifest Table. Requires manifest to be archived previously.
+func deleteManifestRoute(request events.APIGatewayV2HTTPRequest, claims *authorizer.Claims) (*events.APIGatewayV2HTTPResponse, error) {
+	apiResponse := events.APIGatewayV2HTTPResponse{}
+	queryParams := request.QueryStringParameters
+
+	var manifestId string
+	var found bool
+	if manifestId, found = queryParams["manifest_id"]; !found {
+		message := "Error: ManifestID not specified"
+		apiResponse = events.APIGatewayV2HTTPResponse{
+			Body: gateway.CreateErrorMessage(message, 400), StatusCode: 400}
+		return &apiResponse, nil
+	}
+
+	ctx := context.Background()
+	err := store.dy.DeleteManifest(ctx, store.tableName, manifestId)
+	if err != nil {
+		log.WithFields(
+			log.Fields{
+				"manifest_id":     manifestId,
+				"organization_id": claims.OrgClaim.IntId,
+				"dataset_id":      claims.DatasetClaim.NodeId,
+			}).Error(err.Error())
+
+		apiResponse = events.APIGatewayV2HTTPResponse{
+			Body: gateway.CreateErrorMessage(err.Error(), 500), StatusCode: 500}
+		return &apiResponse, nil
+	}
+
+	responseBody := ArchiveDeleteResponse{Message: "Success"}
+	jsonBody, _ := json.Marshal(responseBody)
+	response := events.APIGatewayV2HTTPResponse{StatusCode: 200, Body: string(jsonBody)}
+	return &response, nil
+
+}

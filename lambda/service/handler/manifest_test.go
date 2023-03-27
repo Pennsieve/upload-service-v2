@@ -262,6 +262,7 @@ func TestManifest(t *testing.T) {
 	){
 		"create and get upload": testCreateGetManifest,
 		"Add files to upload":   testAddFiles,
+		"Test delete manifest":  testDeleteManifest,
 	} {
 		t.Run(scenario, func(t *testing.T) {
 			client := getClient()
@@ -274,6 +275,44 @@ func TestManifest(t *testing.T) {
 			fn(t, store)
 		})
 	}
+}
+
+func testDeleteManifest(t *testing.T, store *UploadServiceStore) {
+
+	manifestId := "manifest_12345"
+	tb := dydb.ManifestTable{
+		ManifestId:     manifestId,
+		DatasetId:      1,
+		DatasetNodeId:  "N:Dataset:12345",
+		OrganizationId: 1,
+		UserId:         1,
+		Status:         "Unknown",
+		DateCreated:    time.Now().Unix(),
+	}
+
+	// Create Manifest
+	ctx := context.Background()
+	err := store.dy.CreateManifest(ctx, manifestTableName, tb)
+	assert.Nil(t, err, "Manifest could not be created")
+
+	res, err := store.dy.GetManifestById(ctx, manifestTableName, manifestId)
+	assert.NoError(t, err)
+	assert.Equal(t, manifestId, res.ManifestId)
+
+	// Deleting should not work
+	err = store.dy.DeleteManifest(ctx, manifestTableName, manifestId)
+	log.Println(err)
+	assert.Error(t, err, "should return a not archived error")
+
+	// Archive manifest
+	err = store.dy.UpdateManifestStatus(ctx, manifestTableName, manifestId, manifest.Archived)
+	assert.NoError(t, err)
+
+	// Delete manifest
+	log.Println(err)
+	err = store.dy.DeleteManifest(ctx, manifestTableName, manifestId)
+	assert.NoError(t, err)
+
 }
 
 func testCreateGetManifest(t *testing.T, store *UploadServiceStore) {

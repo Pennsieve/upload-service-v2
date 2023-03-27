@@ -94,9 +94,9 @@ func ManifestHandler(request events.APIGatewayV2HTTPRequest) (*events.APIGateway
 		case "DELETE":
 			// Completely removes a previously archived manifest (archive must be archived before deleting)
 
-			//if authorized = authorizer.HasRole(*claims, permissions.ViewFiles); authorized {
-			//	apiResponse, err = getManifestRoute(request, claims)
-			//}
+			if authorized = authorizer.HasRole(*claims, permissions.CreateDeleteFiles); authorized {
+				apiResponse, err = deleteManifestRoute(request, claims)
+			}
 		case "POST":
 			// Archive manifest
 			if authorized = authorizer.HasRole(*claims, permissions.CreateDeleteFiles); authorized {

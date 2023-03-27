@@ -3,6 +3,9 @@ package handler
 import (
 	"context"
 	"database/sql"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/manifest"
 	dyQueries "github.com/pennsieve/pennsieve-go-core/pkg/queries/dydb"
 )
@@ -10,11 +13,11 @@ import (
 // ServiceDyQueries is the Service Queries Struct embedding the shared Queries struct
 type ServiceDyQueries struct {
 	*dyQueries.Queries
-	db dyQueries.DB
+	db *dynamodb.Client
 }
 
 // NewServiceDyQueries returns a new instance of an ServiceDyQueries object
-func NewServiceDyQueries(db dyQueries.DB) *ServiceDyQueries {
+func NewServiceDyQueries(db *dynamodb.Client) *ServiceDyQueries {
 	q := dyQueries.New(db)
 	return &ServiceDyQueries{
 		q,
@@ -62,4 +65,36 @@ func (q *ServiceDyQueries) CheckUpdateManifestStatus(ctx context.Context, manife
 
 	return setStatus, nil
 
+}
+
+// DeleteManifest deletes a manifest from the manifest table
+func (q *ServiceDyQueries) DeleteManifest(ctx context.Context, manifestTableName string, manifestId string) error {
+
+	// Check existing manifest exist and get status
+	m, err := q.GetManifestById(ctx, manifestTableName, manifestId)
+	if err != nil {
+		return &ManifestNotExistError{
+			id: manifestId,
+		}
+	}
+
+	// Only allow deleting when manifest is archived.
+	if m.Status != manifest.Archived.String() {
+		return &ManifestNotArchivedError{
+			id:     manifestId,
+			status: m.Status,
+		}
+	}
+
+	_, err = q.db.DeleteItem(ctx, &dynamodb.DeleteItemInput{
+		Key: map[string]types.AttributeValue{
+			"ManifestId": &types.AttributeValueMemberS{Value: manifestId},
+		},
+		TableName: aws.String(manifestTableName),
+	})
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
