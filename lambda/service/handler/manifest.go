@@ -442,9 +442,8 @@ func postManifestArchiveRoute(request events.APIGatewayV2HTTPRequest, claims *au
 		return &apiResponse, nil
 	}
 
-	var removeFiles bool
-	var err error
-	if removeFiles, err = strconv.ParseBool(queryParams["remove"]); err != nil {
+	removeFiles, err := strconv.ParseBool(queryParams["remove"])
+	if err != nil {
 		message := "Error: Incorrectly specified 'remove' parameter"
 		apiResponse = events.APIGatewayV2HTTPResponse{
 			Body: gateway.CreateErrorMessage(message, 400), StatusCode: 400}
