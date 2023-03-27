@@ -20,6 +20,7 @@ type ArchiveEvent struct {
 	ManifestId     string `json:"manifest_id"`
 	OrganizationId int64  `json:"organization_id"`
 	DatasetId      int64  `json:"dataset_id"`
+	RemoveFromDB   bool   `json:"remove_from_db"`
 }
 
 type ManifestNotExistError struct {

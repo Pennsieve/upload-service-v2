@@ -442,6 +442,15 @@ func postManifestArchiveRoute(request events.APIGatewayV2HTTPRequest, claims *au
 		return &apiResponse, nil
 	}
 
+	var removeFiles bool
+	var err error
+	if removeFiles, err = strconv.ParseBool(queryParams["remove"]); err == nil {
+		message := "Error: Incorrectly specified 'remove' parameter"
+		apiResponse = events.APIGatewayV2HTTPResponse{
+			Body: gateway.CreateErrorMessage(message, 400), StatusCode: 400}
+		return &apiResponse, nil
+	}
+
 	// Verify that manifestID belongs to DatasetID in Claim.
 	// This is redundant as request is already authorized but no harm in checking twice.
 
@@ -450,6 +459,7 @@ func postManifestArchiveRoute(request events.APIGatewayV2HTTPRequest, claims *au
 		ManifestId:     manifestId,
 		OrganizationId: claims.OrgClaim.IntId,
 		DatasetId:      claims.DatasetClaim.IntId,
+		RemoveFromDB:   removeFiles,
 	}
 
 	// Call ArchiveLambda in asynchronous way.

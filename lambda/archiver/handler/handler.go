@@ -45,6 +45,7 @@ type ArchiveEvent struct {
 	ManifestId     string `json:"manifest_id"`
 	OrganizationId int64  `json:"organization_id"`
 	DatasetId      int64  `json:"dataset_id"`
+	RemoveFromDB   bool   `json:"remove_from_db"`
 }
 
 func ManifestHandler(event ArchiveEvent) error {
@@ -61,32 +62,33 @@ func ManifestHandler(event ArchiveEvent) error {
 	_, err := store.writeCSVFile(ctx, csvFileName, event.ManifestId)
 
 	_, err = store.writeManifestToS3(ctx, csvFileName, event.OrganizationId, event.DatasetId)
-
 	if err != nil {
 		return err
 	}
 
-	log.WithFields(
-		log.Fields{
-			"manifest_id":    event.ManifestId,
-			"tableName":      store.tableName,
-			"manifestStatus": manifest.Archived.String(),
-		}).Debug("trying to update status of manifest")
-	err = store.dy.UpdateManifestStatus(ctx, store.tableName, event.ManifestId, manifest.Archived)
-	if err != nil {
+	if event.RemoveFromDB {
 		log.WithFields(
 			log.Fields{
-				"manifest_id":     event.ManifestId,
-				"organization_id": event.OrganizationId,
-				"dataset_id":      event.DatasetId,
-			}).Error("Cannot update manifest to 'Archived'.")
-		return err
-	}
-	log.Debug("Updated status of manifest")
+				"manifest_id":    event.ManifestId,
+				"tableName":      store.tableName,
+				"manifestStatus": manifest.Archived.String(),
+			}).Debug("trying to update status of manifest")
+		err = store.dy.UpdateManifestStatus(ctx, store.tableName, event.ManifestId, manifest.Archived)
+		if err != nil {
+			log.WithFields(
+				log.Fields{
+					"manifest_id":     event.ManifestId,
+					"organization_id": event.OrganizationId,
+					"dataset_id":      event.DatasetId,
+				}).Error("Cannot update manifest to 'Archived'.")
+			return err
+		}
+		log.Debug("Updated status of manifest")
 
-	err = store.removeManifestFiles(ctx, event.ManifestId)
-	if err != nil {
-		return err
+		err = store.removeManifestFiles(ctx, event.ManifestId)
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil

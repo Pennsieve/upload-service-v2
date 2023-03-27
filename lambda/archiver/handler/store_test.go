@@ -112,6 +112,7 @@ func TestArchiver(t *testing.T) {
 	for scenario, fn := range map[string]func(
 		tt *testing.T,
 	){
+		"test handler":                             testHandler,
 		"write manifest to CSV file":               testWriteManifestCsv,
 		"write CSV to S3":                          testWriteCSVToS3,
 		"remove rows from file-table for manifest": testRemoveManifestFiles,
@@ -125,6 +126,42 @@ func TestArchiver(t *testing.T) {
 			fn(t)
 		})
 	}
+}
+
+func testHandler(t *testing.T) {
+
+	ctx := context.Background()
+	manifestId := "Manifest:0004"
+	err := populateManifest(ctx, store, manifestId)
+	assert.NoError(t, err)
+
+	// Should archive event without deleting files from DB
+	err = ManifestHandler(ArchiveEvent{
+		ManifestId:     manifestId,
+		OrganizationId: 1,
+		DatasetId:      1,
+		RemoveFromDB:   false,
+	})
+	assert.NoError(t, err)
+
+	// Check files are still present
+	files, _, err := store.dy.GetFilesPaginated(ctx, manifestFileTableName, manifestId, sql.NullString{Valid: false}, 100, nil)
+	assert.NoError(t, err)
+	assert.Len(t, files, 2)
+
+	// Should archive event and delete files from DB
+	err = ManifestHandler(ArchiveEvent{
+		ManifestId:     manifestId,
+		OrganizationId: 1,
+		DatasetId:      1,
+		RemoveFromDB:   true,
+	})
+	assert.NoError(t, err)
+
+	files, _, err = store.dy.GetFilesPaginated(ctx, manifestFileTableName, manifestId, sql.NullString{Valid: false}, 100, nil)
+	assert.NoError(t, err)
+	assert.Len(t, files, 0)
+
 }
 
 func testWriteManifestCsv(t *testing.T) {
