@@ -25,6 +25,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // UploadHandlerStore provides the Queries interface and a db instance.
@@ -177,12 +178,16 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 		}
 
 		// Update activity Log
-		var evnts []interface{}
+		var evnts []changelog.Event
 		for _, pkg := range packages {
-			event := changelog.PackageCreateEvent{
-				Id:     pkg.Id,
-				Name:   pkg.Name,
-				NodeId: pkg.NodeId,
+			event := changelog.Event{
+				EventType: changelog.CreatePackage,
+				EventDetail: changelog.PackageCreateEvent{
+					Id:     pkg.Id,
+					Name:   pkg.Name,
+					NodeId: pkg.NodeId,
+				},
+				Timestamp: time.Now(),
 			}
 			evnts = append(evnts, event)
 		}
@@ -196,7 +201,11 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 
 		log.Info(params)
 
-		err = ChangelogClient.EmitEvents(context.Background(), params)
+		mes := changelog.Message{
+			DatasetChangelogEventJob: params,
+		}
+
+		err = ChangelogClient.EmitEvents(context.Background(), mes)
 		if err != nil {
 			log.Error("Error with notifying Changelog about imported records: ", err)
 		}
