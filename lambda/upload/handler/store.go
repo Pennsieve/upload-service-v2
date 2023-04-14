@@ -12,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3Types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/google/uuid"
+	"github.com/pennsieve/pennsieve-go-core/pkg/changelog"
 	"github.com/pennsieve/pennsieve-go-core/pkg/domain"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/dydb"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/fileInfo/objectType"
@@ -92,7 +93,7 @@ func (s *UploadHandlerStore) execTx(ctx context.Context, fn func(queries *Upload
 
 // ImportFiles creates rows for uploaded files in Packages and Files tables as a transaction
 // All files belong to a single manifest, and therefor single dataset in a single organization.
-func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, ownerId int, files []uploadFile.UploadFile, manifest *dydb.ManifestTable) error {
+func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, orgId int, ownerId int, files []uploadFile.UploadFile, manifest *dydb.ManifestTable) error {
 
 	err := s.execTx(ctx, func(qtx *UploadPgQueries) error {
 		// Verify assumptions
@@ -163,16 +164,39 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, own
 			return err
 		}
 
+		// Update storage for packages, datasets, and org
+		err = qtx.UpdateStorage(allFileParams, packages, manifest.DatasetId, manifest.OrganizationId)
+		if err != nil {
+			return err
+		}
+
 		// Notify SNS that files were imported.
 		err = s.PublishToSNS(returnedFiles)
 		if err != nil {
 			log.Error("Error with notifying SNS that records are imported.", err)
 		}
 
-		// Update storage for packages, datasets, and org
-		err = qtx.UpdateStorage(allFileParams, packages, manifest.DatasetId, manifest.OrganizationId)
+		// Update activity Log
+		var evnts []interface{}
+		for _, file := range returnedFiles {
+			event := changelog.PackageCreateEvent{
+				Id:     int64(file.PackageId),
+				Name:   file.Name,
+				NodeId: file.Id,
+			}
+			evnts = append(evnts, event)
+		}
+
+		params := changelog.MessageParams{
+			OrganizationId: int64(orgId),
+			DatasetId:      int64(datasetId),
+			UserId:         int64(ownerId),
+			Events:         evnts,
+		}
+
+		err = ChangelogClient.EmitEvents(context.Background(), params)
 		if err != nil {
-			return err
+			log.Error("Error with notifying Changelog about imported records: ", err)
 		}
 
 		return nil
@@ -263,7 +287,7 @@ func (s *UploadHandlerStore) Handler(ctx context.Context, sqsEvent events.SQSEve
 			continue
 		}
 
-		err = s.ImportFiles(ctx, int(manifest.DatasetId), int(manifest.OrganizationId), uploadFilesForManifest, manifest)
+		err = s.ImportFiles(ctx, int(manifest.DatasetId), int(manifest.OrganizationId), int(manifest.UserId), uploadFilesForManifest, manifest)
 		if err != nil {
 			log.Error("Unable to create packages: ", err)
 			batchItemFailures = addToFailedFiles(uploadFilesForManifest, s3KeySQSMessageMap, batchItemFailures)

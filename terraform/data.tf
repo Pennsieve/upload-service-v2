@@ -83,6 +83,7 @@ data "terraform_remote_state" "etl_infrastructure" {
   }
 }
 
+
 # Import AWS Default SecretsManager KMS Key
 data "aws_kms_key" "ssm_kms_key" {
   key_id = "alias/aws/secretsmanager"
