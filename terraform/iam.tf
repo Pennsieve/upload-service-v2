@@ -264,6 +264,19 @@ data "aws_iam_policy_document" "upload_service_v2_iam_policy_document" {
     ]
   }
 
+  statement {
+    sid    = "PostChangeLogMessages"
+    effect = "Allow"
+
+    actions = [
+      "sqs:SendMessage",
+    ]
+
+    resources = [
+      data.terraform_remote_state.platform_infrastructure.outputs.jobs_queue_arn,
+      "${data.terraform_remote_state.platform_infrastructure.outputs.jobs_queue_arn}/*",
+    ]
+  }
 
   statement {
     sid    = "LambdaReadFromEventsPermission"
