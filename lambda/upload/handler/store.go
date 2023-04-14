@@ -195,7 +195,7 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 		params := changelog.MessageParams{
 			OrganizationId: int64(orgId),
 			DatasetId:      int64(datasetId),
-			UserId:         int64(ownerId),
+			UserId:         "N:user:51bcab0c-827d-494e-a428-80c178ab2df7",
 			Events:         evnts,
 			TraceId:        "",
 			Id:             uuid.NewString(),
