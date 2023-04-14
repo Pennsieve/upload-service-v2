@@ -181,7 +181,7 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 		var evnts []changelog.Event
 		for _, pkg := range packages {
 			event := changelog.Event{
-				EventType: changelog.CreatePackage,
+				EventType: changelog.CreatePackage.String(),
 				EventDetail: changelog.PackageCreateEvent{
 					Id:     pkg.Id,
 					Name:   pkg.Name,
@@ -197,6 +197,8 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 			DatasetId:      int64(datasetId),
 			UserId:         int64(ownerId),
 			Events:         evnts,
+			TraceId:        "",
+			Id:             uuid.NewString(),
 		}
 
 		log.Info(params)
