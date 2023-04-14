@@ -94,7 +94,7 @@ func (s *UploadHandlerStore) execTx(ctx context.Context, fn func(queries *Upload
 
 // ImportFiles creates rows for uploaded files in Packages and Files tables as a transaction
 // All files belong to a single manifest, and therefor single dataset in a single organization.
-func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, orgId int, ownerId int, files []uploadFile.UploadFile, manifest *dydb.ManifestTable) error {
+func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, orgId int, user pgdb.User, files []uploadFile.UploadFile, manifest *dydb.ManifestTable) error {
 
 	err := s.execTx(ctx, func(qtx *UploadPgQueries) error {
 		// Verify assumptions
@@ -111,14 +111,14 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 		folderMap := getUploadFolderMap(files, "")
 
 		// 2. Iterate over folders and create them if they do not exist in organization
-		folderPackageMap, err := qtx.GetCreateUploadFolders(datasetId, ownerId, folderMap)
+		folderPackageMap, err := qtx.GetCreateUploadFolders(datasetId, int(user.Id), folderMap)
 		if err != nil {
 			log.Error("Unable to create folders in ImportFiles function: ", err)
 			return err
 		}
 
 		// 3. Create Package Params to add files to "packages" table.
-		pkgParams, err := getPackageParams(datasetId, ownerId, files, folderPackageMap)
+		pkgParams, err := getPackageParams(datasetId, int(user.Id), files, folderPackageMap)
 		if err != nil {
 			log.Error("Unable to parse package parameters: ", err)
 			return err
@@ -195,7 +195,7 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 		params := changelog.MessageParams{
 			OrganizationId: int64(orgId),
 			DatasetId:      int64(datasetId),
-			UserId:         "N:user:51bcab0c-827d-494e-a428-80c178ab2df7",
+			UserId:         user.NodeId,
 			Events:         evnts,
 			TraceId:        "",
 			Id:             uuid.NewString(),
@@ -293,6 +293,14 @@ func (s *UploadHandlerStore) Handler(ctx context.Context, sqsEvent events.SQSEve
 			continue
 		}
 
+		// Get User
+		user, err := s.pg.GetUserById(ctx, manifest.UserId)
+		if err != nil {
+			log.Error("Unable to get user.", err)
+			batchItemFailures = addToFailedFiles(uploadFilesForManifest, s3KeySQSMessageMap, batchItemFailures)
+			continue
+		}
+
 		err = s.WithOrg(int(manifest.OrganizationId))
 		if err != nil {
 			log.Error("Unable to set search path.", err)
@@ -300,7 +308,7 @@ func (s *UploadHandlerStore) Handler(ctx context.Context, sqsEvent events.SQSEve
 			continue
 		}
 
-		err = s.ImportFiles(ctx, int(manifest.DatasetId), int(manifest.OrganizationId), int(manifest.UserId), uploadFilesForManifest, manifest)
+		err = s.ImportFiles(ctx, int(manifest.DatasetId), int(manifest.OrganizationId), *user, uploadFilesForManifest, manifest)
 		if err != nil {
 			log.Error("Unable to create packages: ", err)
 			batchItemFailures = addToFailedFiles(uploadFilesForManifest, s3KeySQSMessageMap, batchItemFailures)
