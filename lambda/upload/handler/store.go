@@ -194,6 +194,8 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 			Events:         evnts,
 		}
 
+		log.Info(params)
+
 		err = ChangelogClient.EmitEvents(context.Background(), params)
 		if err != nil {
 			log.Error("Error with notifying Changelog about imported records: ", err)

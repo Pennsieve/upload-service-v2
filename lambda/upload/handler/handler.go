@@ -35,8 +35,6 @@ func init() {
 		log.SetLevel(ll)
 	}
 
-	jobSQSQueueId := os.Getenv("JOBS_QUEUE_ID")
-
 	cfg, err := config.LoadDefaultConfig(context.Background(), config.WithRegion("us-east-1"))
 	if err != nil {
 		log.Fatalf("LoadDefaultConfig: %v\n", err)
@@ -44,11 +42,12 @@ func init() {
 
 	ManifestFileTableName = os.Getenv("MANIFEST_FILE_TABLE")
 	ManifestTableName = os.Getenv("MANIFEST_TABLE")
+	jobSQSQueueId := os.Getenv("JOBS_QUEUE_ID")
 	SNSClient = sns.NewFromConfig(cfg)
 	S3Client = s3.NewFromConfig(cfg)
 	SNSTopic = os.Getenv("IMPORTED_SNS_TOPIC")
 	DynamoClient = dynamodb.NewFromConfig(cfg)
-	ChangelogClient = changelog.NewChangeLogClient(*sqs.NewFromConfig(cfg), jobSQSQueueId)
+	ChangelogClient = changelog.NewClient(*sqs.NewFromConfig(cfg), jobSQSQueueId)
 }
 
 // Handler implements the function that is called when new SQS Events arrive.
