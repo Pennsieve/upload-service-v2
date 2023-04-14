@@ -278,6 +278,21 @@ data "aws_iam_policy_document" "upload_service_v2_iam_policy_document" {
     ]
   }
 
+  // Interact with JobService KMS key
+  statement {
+    sid    = "KMSDecryptMessages"
+    effect = "Allow"
+
+    actions = [
+      "kms:Decrypt",
+      "kms:GenerateDataKey",
+    ]
+
+    resources = [
+      data.terraform_remote_state.platform_infrastructure.outputs.jobs_kms_key_arn,
+    ]
+  }
+
   statement {
     sid    = "LambdaReadFromEventsPermission"
     effect = "Allow"
