@@ -178,11 +178,11 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 
 		// Update activity Log
 		var evnts []interface{}
-		for _, file := range returnedFiles {
+		for _, pkg := range packages {
 			event := changelog.PackageCreateEvent{
-				Id:     int64(file.PackageId),
-				Name:   file.Name,
-				NodeId: file.Id,
+				Id:     pkg.Id,
+				Name:   pkg.Name,
+				NodeId: pkg.NodeId,
 			}
 			evnts = append(evnts, event)
 		}
