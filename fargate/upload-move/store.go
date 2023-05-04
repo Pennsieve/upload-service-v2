@@ -68,11 +68,15 @@ func (s *UploadMoveStore) GetManifestStorageBucket(manifestId string) (*storageO
 
 	// Get manifest from dynamodb based on id
 	manifest, err := s.dy.GetManifestById(context.Background(), TableName, manifestId)
+	if err != nil {
+		log.WithFields(log.Fields{"manifestId": manifestId}).Error("Error getting manifest: %v", err)
+		return nil, err
+	}
 
 	//var o dbTable.Organization
 	org, err := s.pg.GetOrganization(context.Background(), manifest.OrganizationId)
 	if err != nil {
-		log.Println("Error getting organization: ", err)
+		log.WithFields(log.Fields{"manifestId": manifestId, "organizationId": manifest.OrganizationId}).Error("Error getting organization: %v", err)
 		return nil, err
 	}
 
