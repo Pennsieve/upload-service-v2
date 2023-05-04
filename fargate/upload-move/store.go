@@ -69,14 +69,14 @@ func (s *UploadMoveStore) GetManifestStorageBucket(manifestId string) (*storageO
 	// Get manifest from dynamodb based on id
 	manifest, err := s.dy.GetManifestById(context.Background(), TableName, manifestId)
 	if err != nil {
-		log.WithFields(log.Fields{"manifestId": manifestId, "error": err}).Error("Error getting manifest")
+		log.WithFields(log.Fields{"manifest_id": manifestId, "error": err}).Error("Error getting manifest")
 		return nil, err
 	}
 
 	//var o dbTable.Organization
 	org, err := s.pg.GetOrganization(context.Background(), manifest.OrganizationId)
 	if err != nil {
-		log.WithFields(log.Fields{"manifestId": manifestId, "organizationId": manifest.OrganizationId, "error": err}).Error("Error getting organization")
+		log.WithFields(log.Fields{"manifest_id": manifestId, "organization_id": manifest.OrganizationId, "error": err}).Error("Error getting organization")
 		return nil, err
 	}
 
@@ -120,13 +120,15 @@ func (s *UploadMoveStore) manifestFileWalk(walker fileWalk) error {
 
 		out, err := p.NextPage(context.TODO())
 		if err != nil {
-			panic(err)
+			log.Error("error getting next page of dynamodb query results", err)
+			continue
 		}
 
 		var pItems []Item
 		err = attributevalue.UnmarshalListOfMaps(out.Items, &pItems)
 		if err != nil {
-			panic(err)
+			log.WithFields(log.Fields{"raw_items": out.Items}).Error("error parsing dynamodb query result page", err)
+			continue
 		}
 
 		// Add items to the channel
@@ -164,7 +166,7 @@ func (s *UploadMoveStore) moveFile(workerId int32, items <-chan Item) error {
 				log.Fields{
 					"manifest_id": item.ManifestId,
 					"upload_id":   item.UploadId,
-				}).Error("Error getting storage bucket for manifest: ", err)
+				}).Errorf("Error getting storage bucket for manifest: %v", err)
 			return err
 		}
 
