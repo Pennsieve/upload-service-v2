@@ -87,7 +87,6 @@ func main() {
 	for w := 1; w <= nrWorkers; w++ {
 		processWg.Add(1)
 		log.Debug("starting worker:", w)
-		w := int32(w)
 		go store.moveFile(w, walker)
 	}
 

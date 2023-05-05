@@ -143,7 +143,7 @@ func (s *UploadMoveStore) manifestFileWalk(walker fileWalk) error {
 }
 
 // moveFile accepts an item from the channel and implements the move workflow for that item.
-func (s *UploadMoveStore) moveFile(workerId int32, items <-chan Item) {
+func (s *UploadMoveStore) moveFile(workerId int, items <-chan Item) {
 
 	// Close worker after it completes.
 	// This happens when the items channel closes.
