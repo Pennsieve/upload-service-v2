@@ -114,7 +114,7 @@ func (s *UploadMoveStore) manifestFileWalk(walker fileWalk) error {
 	})
 
 	log.Debug("In manifest file walk")
-
+	var pageNumber int
 	for p.HasMorePages() {
 		log.Debug("Getting page from dynamodb")
 
@@ -135,14 +135,15 @@ func (s *UploadMoveStore) manifestFileWalk(walker fileWalk) error {
 		for _, item := range pItems {
 			walker <- item
 		}
-
+		log.WithFields(log.Fields{"page_number": pageNumber, "item_count": out.Count}).Debug("added items to channel")
+		pageNumber++
 	}
 
 	return nil
 }
 
 // moveFile accepts an item from the channel and implements the move workflow for that item.
-func (s *UploadMoveStore) moveFile(workerId int32, items <-chan Item) error {
+func (s *UploadMoveStore) moveFile(workerId int, items <-chan Item) {
 
 	// Close worker after it completes.
 	// This happens when the items channel closes.
@@ -167,7 +168,7 @@ func (s *UploadMoveStore) moveFile(workerId int32, items <-chan Item) error {
 					"manifest_id": item.ManifestId,
 					"upload_id":   item.UploadId,
 				}).Errorf("Error getting storage bucket for manifest: %v", err)
-			return err
+			continue
 		}
 
 		log.Debug(fmt.Sprintf("%d - %s - %s", workerId, item.UploadId, stOrgItem.storageBucket))
@@ -301,8 +302,6 @@ func (s *UploadMoveStore) moveFile(workerId int32, items <-chan Item) error {
 		}
 
 	}
-
-	return nil
 }
 
 // simpleCopyFile copy files between buckets using simple file copy method.
