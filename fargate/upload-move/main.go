@@ -88,12 +88,7 @@ func main() {
 		processWg.Add(1)
 		log.Debug("starting worker:", w)
 		w := int32(w)
-		go func(workerId int32) {
-			err := store.moveFile(workerId, walker)
-			if err != nil {
-				log.Error("Error in Move Worker:", err)
-			}
-		}(w)
+		go store.moveFile(w, walker)
 	}
 
 	// Wait until all processors are completed.
