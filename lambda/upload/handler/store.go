@@ -83,7 +83,15 @@ func (s *UploadHandlerStore) execTx(ctx context.Context, fn func(queries *Upload
 
 	err = fn(q)
 	if err != nil {
+		log.WithFields(log.Fields{
+			"service": "Upload-service",
+		}).Warn("Rolling back transaction.")
+
 		if rbErr := tx.Rollback(); rbErr != nil {
+			log.WithFields(log.Fields{
+				"service": "Upload-service",
+			}).Error("Error while rolling back transaction.")
+
 			return fmt.Errorf("tx err: %v, rb err: %v", err, rbErr)
 		}
 		return err
@@ -97,6 +105,15 @@ func (s *UploadHandlerStore) execTx(ctx context.Context, fn func(queries *Upload
 func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, orgId int, user pgdb.User, files []uploadFile.UploadFile, manifest *dydb.ManifestTable) error {
 
 	err := s.execTx(ctx, func(qtx *UploadPgQueries) error {
+
+		contextLogger := log.WithFields(log.Fields{
+			"service":     "Upload-service",
+			"manifest_id": manifest.ManifestId,
+			"dataset_id":  manifest.DatasetNodeId,
+			"org_id":      manifest.OrganizationId,
+			"user":        fmt.Sprintf("%s %s", user.FirstName, user.LastName),
+		})
+
 		// Verify assumptions
 		for _, f := range files {
 			if f.ManifestId != manifest.ManifestId {
@@ -113,20 +130,20 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 		// 2. Iterate over folders and create them if they do not exist in organization
 		folderPackageMap, err := qtx.GetCreateUploadFolders(datasetId, int(user.Id), folderMap)
 		if err != nil {
-			log.Error("Unable to create folders in ImportFiles function: ", err)
+			contextLogger.Error("Unable to create folders in ImportFiles function: ", err)
 			return err
 		}
 
 		// 3. Create Package Params to add files to "packages" table.
 		pkgParams, err := getPackageParams(datasetId, int(user.Id), files, folderPackageMap)
 		if err != nil {
-			log.Error("Unable to parse package parameters: ", err)
+			contextLogger.Error("Unable to parse package parameters: ", err)
 			return err
 		}
 
 		packages, err := qtx.AddPackages(context.Background(), pkgParams)
 		if err != nil {
-			log.Error("Error creating a package: ", err)
+			contextLogger.Error("Error creating packages: ", err)
 			return err
 		}
 
@@ -134,13 +151,14 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 		packageMap := map[string]pgdb.Package{}
 		for _, p := range packages {
 			packageMap[p.NodeId] = p
+			contextLogger.Info(fmt.Sprintf("Package created: %s", p.NodeId))
 		}
 
 		var allFileParams []pgdb.FileParams
 		for i, f := range files {
 			packageNodeId := fmt.Sprintf("N:package:%s", f.UploadId)
 			if len(files[i].MergePackageId) > 0 {
-				log.Debug("USING MERGED PACKAGE")
+				contextLogger.Debug("USING MERGED PACKAGE")
 				packageNodeId = fmt.Sprintf("N:package:%s", files[i].MergePackageId)
 			}
 
@@ -162,19 +180,25 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 
 		returnedFiles, err := qtx.AddFiles(context.Background(), allFileParams)
 		if err != nil {
+			contextLogger.Error("Unable to add files to postgres.", err)
 			return err
+		}
+
+		for _, f := range returnedFiles {
+			contextLogger.Debug(fmt.Sprintf("File created: %s", f.UUID))
 		}
 
 		// Update storage for packages, datasets, and org
 		err = qtx.UpdateStorage(allFileParams, packages, manifest.DatasetId, manifest.OrganizationId)
 		if err != nil {
+			contextLogger.Error("Unable to update storage.")
 			return err
 		}
 
 		// Notify SNS that files were imported.
 		err = s.PublishToSNS(returnedFiles)
 		if err != nil {
-			log.Error("Error with notifying SNS that records are imported.", err)
+			contextLogger.Error("Error with notifying SNS that records are imported.", err)
 		}
 
 		// Update activity Log
@@ -201,15 +225,13 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 			Id:             uuid.NewString(),
 		}
 
-		log.Info(params)
-
 		mes := changelog.Message{
 			DatasetChangelogEventJob: params,
 		}
 
 		err = ChangelogClient.EmitEvents(context.Background(), mes)
 		if err != nil {
-			log.Error("Error with notifying Changelog about imported records: ", err)
+			contextLogger.Error("Error with notifying Changelog about imported records: ", err)
 		}
 
 		return nil
@@ -264,7 +286,7 @@ func (s *UploadHandlerStore) Handler(ctx context.Context, sqsEvent events.SQSEve
 	// 2. Match against Manifest and create uploadFiles
 	uploadFiles, orphanEntries, err := s.dy.GetUploadFiles(uploadEntries)
 	if orphanEntries != nil {
-		log.Info("Files uploaded that don't belong to a manifest.")
+		log.Warn("Files uploaded that don't belong to a manifest.")
 		// These files somehow did parse correctly in the GetUploadEntries method.
 		err := s.deleteOrphanFiles(orphanEntries)
 		if err != nil {
@@ -301,17 +323,38 @@ func (s *UploadHandlerStore) Handler(ctx context.Context, sqsEvent events.SQSEve
 			continue
 		}
 
+		contextLogger := log.WithFields(log.Fields{
+			"service":     "Upload-service",
+			"manifest_id": manifest.ManifestId,
+			"dataset_id":  manifest.DatasetNodeId,
+			"org_id":      manifest.OrganizationId,
+			"user":        fmt.Sprintf("%s %s", user.FirstName, user.LastName),
+		})
+
 		err = s.WithOrg(int(manifest.OrganizationId))
 		if err != nil {
-			log.Error("Unable to set search path.", err)
+			contextLogger.Error("Unable to set search path.", err)
 			batchItemFailures = addToFailedFiles(uploadFilesForManifest, s3KeySQSMessageMap, batchItemFailures)
 			continue
 		}
 
 		err = s.ImportFiles(ctx, int(manifest.DatasetId), int(manifest.OrganizationId), *user, uploadFilesForManifest, manifest)
 		if err != nil {
-			log.Error("Unable to create packages: ", err)
-			batchItemFailures = addToFailedFiles(uploadFilesForManifest, s3KeySQSMessageMap, batchItemFailures)
+			contextLogger.Error("Error in batch create packages: ", err)
+
+			// Try to import each file individually and add item to batchItemFailures if it fails.
+			// This will ensure that only the files that cause the failure will be returned to the sqs queue
+			for _, f := range uploadFilesForManifest {
+				singleFileArr := []uploadFile.UploadFile{f}
+				err = s.ImportFiles(ctx, int(manifest.DatasetId), int(manifest.OrganizationId), *user, singleFileArr, manifest)
+				if err != nil {
+					batchItemFailures = addToFailedFiles(singleFileArr, s3KeySQSMessageMap, batchItemFailures)
+					contextLogger.WithFields(
+						log.Fields{
+							"upload_id": f.UploadId,
+						}).Error("Error when creating package: ", err)
+				}
+			}
 			continue
 		}
 
@@ -320,7 +363,7 @@ func (s *UploadHandlerStore) Handler(ctx context.Context, sqsEvent events.SQSEve
 		if err != nil {
 			// Status is not correctly updated in Manifest but files are completely imported.
 			// This should not return the failed files.
-			log.Error(err)
+			contextLogger.Error(err)
 			continue
 		}
 
@@ -340,6 +383,10 @@ func (s *UploadHandlerStore) deleteOrphanFiles(files []OrphanS3File) error {
 
 	var keys []s3Types.ObjectIdentifier
 	for _, f := range files {
+		log.WithFields(log.Fields{
+			"service": "Upload-service",
+		}).Warn(fmt.Sprintf("Deleting file %s/%s", f.S3Bucket, f.S3Key))
+
 		if f.S3Bucket != s3Bucket {
 			return errors.New("not all orphan files have the same bucket")
 		}
