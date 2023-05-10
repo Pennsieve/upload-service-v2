@@ -32,11 +32,15 @@ func NewUploadPgQueries(db pgQueries.DBTX) *UploadPgQueries {
 // Assumes map keys are absolute paths in the dataset
 func (q *UploadPgQueries) GetCreateUploadFolders(datasetId int, ownerId int, folders uploadFolder.UploadFolderMap) (pgdb.PackageMap, error) {
 
+	contextLogger := log.WithFields(log.Fields{
+		"service": "Upload-service",
+	})
+
 	// Get Root Folders
 	p := pgdb.Package{}
 	rootChildren, err := q.GetPackageChildren(context.Background(), &p, datasetId, true)
 	if err != nil {
-		log.WithFields(
+		contextLogger.WithFields(
 			log.Fields{
 				"dataset_id": datasetId,
 			}).Error("Error getting root folders:  ", err)
@@ -74,7 +78,7 @@ func (q *UploadPgQueries) GetCreateUploadFolders(datasetId int, ownerId int, fol
 			// Add children of current folder to existing folders
 			children, _ := q.GetPackageChildren(context.Background(), &folder, datasetId, true)
 			if err != nil {
-				log.WithFields(
+				contextLogger.WithFields(
 					log.Fields{
 						"dataset_id":       datasetId,
 						"folder":           folder.Name,
@@ -103,7 +107,7 @@ func (q *UploadPgQueries) GetCreateUploadFolders(datasetId int, ownerId int, fol
 
 			result, err := q.AddFolder(context.Background(), pkgParams)
 			if err != nil {
-				log.WithFields(
+				contextLogger.WithFields(
 					log.Fields{
 						"dataset_id": datasetId,
 						"folder":     folders[path].Name,
@@ -122,26 +126,28 @@ func (q *UploadPgQueries) GetCreateUploadFolders(datasetId int, ownerId int, fol
 	}
 
 	return existingFolders, nil
-
 }
 
 // UpdateStorage updates storage in packages, dataset and organization for uploaded package
 // 	* Typically needs to be wrapped in Transaction as this contains multiple insert queries.
 func (q *UploadPgQueries) UpdateStorage(files []pgdb.FileParams, packages []pgdb.Package, datasetId int64, orgId int64) error {
 
+	ctx := context.Background()
+	contextLogger := log.WithFields(log.Fields{
+		"service": "Upload-service",
+	})
+
 	packageMap := map[int]pgdb.Package{}
 	for _, p := range packages {
 		packageMap[int(p.Id)] = p
 	}
-
-	ctx := context.Background()
 
 	// Update all packageSize
 	for _, f := range files {
 
 		err := q.IncrementPackageStorage(ctx, int64(f.PackageId), f.Size)
 		if err != nil {
-			log.Error("Error incrementing package")
+			contextLogger.Error("Error incrementing package")
 			return err
 		}
 
@@ -149,20 +155,20 @@ func (q *UploadPgQueries) UpdateStorage(files []pgdb.FileParams, packages []pgdb
 		if pkg.ParentId.Valid {
 			err = q.IncrementPackageStorageAncestors(ctx, pkg.ParentId.Int64, f.Size)
 			if err != nil {
-				log.Error("Error incrementing package ancestors")
+				contextLogger.Error("Error incrementing package ancestors")
 				return err
 			}
 		}
 
 		err = q.IncrementDatasetStorage(ctx, datasetId, f.Size)
 		if err != nil {
-			log.Error("Error incrementing dataset.")
+			contextLogger.Error("Error incrementing dataset.")
 			return err
 		}
 
 		err = q.IncrementOrganizationStorage(ctx, orgId, f.Size)
 		if err != nil {
-			log.Error("Error incrementing organization")
+			contextLogger.Error("Error incrementing organization")
 			return err
 		}
 	}
