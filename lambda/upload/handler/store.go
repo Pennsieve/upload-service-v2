@@ -224,7 +224,7 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 
 	log.Debug("Total storage added to dataset: ", storageMap.total)
 	for p, v := range storageMap.packages {
-		log.Debug(fmt.Sprintf("Package %s storage incremented by %d", p, v))
+		log.Debug(fmt.Sprintf("Package %d storage incremented by %d", p, v))
 	}
 
 	_, err = s.execTx(ctx, func(qtx *UploadPgQueries) (interface{}, error) {
