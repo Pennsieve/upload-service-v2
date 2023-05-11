@@ -46,6 +46,11 @@ type PackagesAndFiles struct {
 	files    []pgdb.File
 }
 
+type storageUpdateParams struct {
+	total    int64
+	packages map[int64]int64
+}
+
 // NewUploadHandlerStore returns a UploadHandlerStore object which implements the Queries
 func NewUploadHandlerStore(db *sql.DB, dy *dynamodb.Client, sns domain.SnsAPI, s3 domain.S3API, fileTableName string, tableName string, snsTopic string) *UploadHandlerStore {
 	return &UploadHandlerStore{
@@ -145,7 +150,6 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 		return err
 	}
 
-	// 3. Create Package Params to add files to "packages" table.
 	folderPackageMap := res.(pgdb.PackageMap)
 	pkgParams, err := getPackageParams(datasetId, int(user.Id), files, folderPackageMap)
 	if err != nil {
@@ -153,6 +157,7 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 		return err
 	}
 
+	// 3. Create Package Params to add files to "packages" table.
 	res, err = s.execTx(ctx, func(qtx *UploadPgQueries) (interface{}, error) {
 		packages, err := qtx.AddPackages(context.Background(), pkgParams)
 		if err != nil {
@@ -197,16 +202,6 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 			return nil, err
 		}
 
-		// Update package storage on individual package.
-		// TODO: Handle update ancestors, dataset, and org separately to prevent db-locking
-		for _, f := range returnedFiles {
-			err := qtx.IncrementPackageStorage(ctx, int64(f.PackageId), f.Size)
-			if err != nil {
-				contextLogger.Error("Error incrementing package.", err)
-				return nil, err
-			}
-		}
-
 		response := PackagesAndFiles{
 			packages: packages,
 			files:    returnedFiles,
@@ -223,7 +218,40 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 		return err
 	}
 
+	// 5. Update storage for Packages, Dataset and Organization.
 	result := res.(PackagesAndFiles)
+	storageMap, err := s.createStorageUpdateMap(ctx, result)
+
+	log.Debug("Total storage added to dataset: ", storageMap.total)
+	for p, v := range storageMap.packages {
+		log.Debug(fmt.Sprintf("Package %s storage incremented by %d", p, v))
+	}
+
+	_, err = s.execTx(ctx, func(qtx *UploadPgQueries) (interface{}, error) {
+
+		err = qtx.IncrementOrganizationStorage(ctx, int64(orgId), storageMap.total)
+		if err != nil {
+			return nil, err
+		}
+
+		err = qtx.IncrementDatasetStorage(ctx, int64(datasetId), storageMap.total)
+		if err != nil {
+			return nil, err
+		}
+
+		for p, value := range storageMap.packages {
+			err = qtx.IncrementPackageStorage(ctx, p, value)
+			if err != nil {
+				return nil, err
+			}
+		}
+
+		return nil, nil
+	})
+	if err != nil {
+		log.Error("Unable to update storage for Packages, Dataset and Organization.")
+	}
+
 	for _, f := range result.files {
 		contextLogger.Info(fmt.Sprintf("File created: %s", f.UUID))
 	}
@@ -268,6 +296,41 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 	}
 
 	return nil
+}
+
+// createStorageUpdateMap returns object with information on how to update storage for packages, dataset, and org.
+func (s *UploadHandlerStore) createStorageUpdateMap(ctx context.Context, pf PackagesAndFiles) (*storageUpdateParams, error) {
+
+	storageMap := storageUpdateParams{
+		total:    0,
+		packages: map[int64]int64{},
+	}
+
+	for _, curPackage := range pf.packages {
+		var packageSize int64
+		if curPackage.Size.Valid {
+			packageSize = curPackage.Size.Int64
+		} else {
+			log.Warn("Trying to get size of package failed: ", curPackage.NodeId)
+			continue
+		}
+
+		parentIds, err := s.pg.GetPackageAncestorIds(ctx, curPackage.Id)
+		if err != nil {
+			return nil, err
+		}
+
+		// Add to individual packages in map
+		for _, p := range parentIds {
+			storageMap.packages[p] += packageSize
+		}
+
+		// Add to total storage for Dataset and Organization
+		storageMap.total += packageSize
+	}
+
+	return &storageMap, nil
+
 }
 
 // Handler is the primary entrypoint that handles importing files and is called by the Lambda
