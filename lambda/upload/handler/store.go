@@ -41,6 +41,11 @@ type UploadHandlerStore struct {
 	tableName     string
 }
 
+type PackagesAndFiles struct {
+	packages []pgdb.Package
+	files    []pgdb.File
+}
+
 // NewUploadHandlerStore returns a UploadHandlerStore object which implements the Queries
 func NewUploadHandlerStore(db *sql.DB, dy *dynamodb.Client, sns domain.SnsAPI, s3 domain.S3API, fileTableName string, tableName string, snsTopic string) *UploadHandlerStore {
 	return &UploadHandlerStore{
@@ -64,7 +69,7 @@ func (s *UploadHandlerStore) WithOrg(orgId int) error {
 }
 
 // execTx wraps a function in a transaction.
-func (s *UploadHandlerStore) execTx(ctx context.Context, fn func(queries *UploadPgQueries) error) error {
+func (s *UploadHandlerStore) execTx(ctx context.Context, fn func(queries *UploadPgQueries) (interface{}, error)) (interface{}, error) {
 
 	// NOTE: When you create a new transaction (as below), the s.pgdb is NOT part of the transaction.
 	// This has the following impact
@@ -76,12 +81,12 @@ func (s *UploadHandlerStore) execTx(ctx context.Context, fn func(queries *Upload
 
 	tx, err := s.pgdb.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return err, nil
 	}
 
 	q := NewUploadPgQueries(tx)
 
-	err = fn(q)
+	result, err := fn(q)
 	if err != nil {
 		log.WithFields(log.Fields{
 			"service": "Upload-service",
@@ -92,59 +97,67 @@ func (s *UploadHandlerStore) execTx(ctx context.Context, fn func(queries *Upload
 				"service": "Upload-service",
 			}).Error("Error while rolling back transaction.")
 
-			return fmt.Errorf("tx err: %v, rb err: %v", err, rbErr)
+			return nil, fmt.Errorf("tx err: %v, rb err: %v", err, rbErr)
 		}
-		return err
+		return nil, err
 	}
 
-	return tx.Commit()
+	return result, tx.Commit()
 }
 
 // ImportFiles creates rows for uploaded files in Packages and Files tables as a transaction
 // All files belong to a single manifest, and therefor single dataset in a single organization.
 func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, orgId int, user pgdb.User, files []uploadFile.UploadFile, manifest *dydb.ManifestTable) error {
 
-	err := s.execTx(ctx, func(qtx *UploadPgQueries) error {
+	contextLogger := log.WithFields(log.Fields{
+		"service":     "Upload-service",
+		"manifest_id": manifest.ManifestId,
+		"dataset_id":  manifest.DatasetNodeId,
+		"org_id":      manifest.OrganizationId,
+		"user":        fmt.Sprintf("%s %s", user.FirstName, user.LastName),
+	})
 
-		contextLogger := log.WithFields(log.Fields{
-			"service":     "Upload-service",
-			"manifest_id": manifest.ManifestId,
-			"dataset_id":  manifest.DatasetNodeId,
-			"org_id":      manifest.OrganizationId,
-			"user":        fmt.Sprintf("%s %s", user.FirstName, user.LastName),
-		})
-
-		// Verify assumptions
-		for _, f := range files {
-			if f.ManifestId != manifest.ManifestId {
-				return errors.New("not all files belong to the same manifest (required for ImportFiles method)")
-			}
+	// Verify assumptions
+	for _, f := range files {
+		if f.ManifestId != manifest.ManifestId {
+			return errors.New("not all files belong to the same manifest (required for ImportFiles method)")
 		}
+	}
 
-		var f uploadFile.UploadFile
-		f.Sort(files)
+	var f uploadFile.UploadFile
+	f.Sort(files)
 
-		// 1. Iterate over files and return map of folders and sub-folders
-		folderMap := getUploadFolderMap(files, "")
+	// 1. Iterate over files and return map of folders and sub-folders
+	folderMap := getUploadFolderMap(files, "")
 
-		// 2. Iterate over folders and create them if they do not exist in organization
+	// 2. Iterate over folders and create them if they do not exist in organization
+	// This will lock rows in db for concurrent Lambda handlers so wrapping in its own TX to minimize time.
+	res, err := s.execTx(ctx, func(qtx *UploadPgQueries) (interface{}, error) {
 		folderPackageMap, err := qtx.GetCreateUploadFolders(datasetId, int(user.Id), folderMap)
 		if err != nil {
 			contextLogger.Error("Unable to create folders in ImportFiles function: ", err)
-			return err
+			return nil, err
 		}
+		return folderPackageMap, nil
+	})
+	if err != nil {
+		contextLogger.Error("Unable to create folders. ", err)
+		return err
+	}
 
-		// 3. Create Package Params to add files to "packages" table.
-		pkgParams, err := getPackageParams(datasetId, int(user.Id), files, folderPackageMap)
-		if err != nil {
-			contextLogger.Error("Unable to parse package parameters: ", err)
-			return err
-		}
+	// 3. Create Package Params to add files to "packages" table.
+	folderPackageMap := res.(pgdb.PackageMap)
+	pkgParams, err := getPackageParams(datasetId, int(user.Id), files, folderPackageMap)
+	if err != nil {
+		contextLogger.Error("Unable to parse package parameters: ", err)
+		return err
+	}
 
+	res, err = s.execTx(ctx, func(qtx *UploadPgQueries) (interface{}, error) {
 		packages, err := qtx.AddPackages(context.Background(), pkgParams)
 		if err != nil {
 			contextLogger.Error("Error creating packages: ", err)
-			return err
+			return nil, err
 		}
 
 		// 4. Associate Files with Packages
@@ -181,63 +194,80 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 		returnedFiles, err := qtx.AddFiles(context.Background(), allFileParams)
 		if err != nil {
 			contextLogger.Error("Unable to add files to postgres.", err)
-			return err
+			return nil, err
 		}
 
+		// Update package storage on individual package.
+		// TODO: Handle update ancestors, dataset, and org separately to prevent db-locking
 		for _, f := range returnedFiles {
-			contextLogger.Debug(fmt.Sprintf("File created: %s", f.UUID))
-		}
-
-		// Update storage for packages, datasets, and org
-		err = qtx.UpdateStorage(allFileParams, packages, manifest.DatasetId, manifest.OrganizationId)
-		if err != nil {
-			contextLogger.Error("Unable to update storage.")
-			return err
-		}
-
-		// Notify SNS that files were imported.
-		err = s.PublishToSNS(returnedFiles)
-		if err != nil {
-			contextLogger.Error("Error with notifying SNS that records are imported.", err)
-		}
-
-		// Update activity Log
-		var evnts []changelog.Event
-		for _, pkg := range packages {
-			event := changelog.Event{
-				EventType: changelog.CreatePackage,
-				EventDetail: changelog.PackageCreateEvent{
-					Id:     pkg.Id,
-					Name:   pkg.Name,
-					NodeId: pkg.NodeId,
-				},
-				Timestamp: time.Now(),
+			err := qtx.IncrementPackageStorage(ctx, int64(f.PackageId), f.Size)
+			if err != nil {
+				contextLogger.Error("Error incrementing package.", err)
+				return nil, err
 			}
-			evnts = append(evnts, event)
 		}
 
-		params := changelog.MessageParams{
-			OrganizationId: int64(orgId),
-			DatasetId:      int64(datasetId),
-			UserId:         user.NodeId,
-			Events:         evnts,
-			TraceId:        "",
-			Id:             uuid.NewString(),
+		response := PackagesAndFiles{
+			packages: packages,
+			files:    returnedFiles,
 		}
 
-		mes := changelog.Message{
-			DatasetChangelogEventJob: params,
-		}
-
-		err = ChangelogClient.EmitEvents(context.Background(), mes)
-		if err != nil {
-			contextLogger.Error("Error with notifying Changelog about imported records: ", err)
-		}
-
-		return nil
+		return response, nil
 	})
 
-	return err
+	if err != nil {
+		if err != nil {
+			contextLogger.Error("Unable to create Packages and/or Files. ", err)
+			return err
+		}
+		return err
+	}
+
+	result := res.(PackagesAndFiles)
+	for _, f := range result.files {
+		contextLogger.Info(fmt.Sprintf("File created: %s", f.UUID))
+	}
+
+	// Notify SNS that files were imported.
+	err = s.PublishToSNS(result.files)
+	if err != nil {
+		contextLogger.Error("Error with notifying SNS that records are imported.", err)
+	}
+
+	// Update activity Log
+	var evnts []changelog.Event
+	for _, pkg := range result.packages {
+		event := changelog.Event{
+			EventType: changelog.CreatePackage,
+			EventDetail: changelog.PackageCreateEvent{
+				Id:     pkg.Id,
+				Name:   pkg.Name,
+				NodeId: pkg.NodeId,
+			},
+			Timestamp: time.Now(),
+		}
+		evnts = append(evnts, event)
+	}
+
+	params := changelog.MessageParams{
+		OrganizationId: int64(orgId),
+		DatasetId:      int64(datasetId),
+		UserId:         user.NodeId,
+		Events:         evnts,
+		TraceId:        "",
+		Id:             uuid.NewString(),
+	}
+
+	mes := changelog.Message{
+		DatasetChangelogEventJob: params,
+	}
+
+	err = ChangelogClient.EmitEvents(context.Background(), mes)
+	if err != nil {
+		contextLogger.Error("Error with notifying Changelog about imported records: ", err)
+	}
+
+	return nil
 }
 
 // Handler is the primary entrypoint that handles importing files and is called by the Lambda
@@ -357,6 +387,8 @@ func (s *UploadHandlerStore) Handler(ctx context.Context, sqsEvent events.SQSEve
 			}
 			continue
 		}
+
+		// Notify
 
 		// Update entries in manifest to IMPORTED for all files
 		err = s.dy.updateManifestFileStatus(uploadFilesForManifest, manifestId)
