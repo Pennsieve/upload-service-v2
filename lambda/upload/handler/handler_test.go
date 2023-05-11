@@ -444,7 +444,8 @@ func generateManifestFilesAndEvents(params []tesManifestFileParams, manifestId s
 		}
 
 		sqsMessage := events.SQSMessage{
-			Body: string(evtJson),
+			MessageId: fmt.Sprintf("message-id-for-%s/%s", p.path, p.name),
+			Body:      string(evtJson),
 		}
 
 		sqsMessages = append(sqsMessages, sqsMessage)

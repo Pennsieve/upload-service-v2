@@ -32,7 +32,7 @@ import (
 // Can happen if AWS sends out the same S3 create object event more than once.
 // This could be a local variable to ImportFiles(). Just here in case the Lambda gets used more than once
 // we get a little more de-duplication.
-var seenFileUUIDs = map[uuid.UUID]bool{}
+var seenFileUUIDs = map[uuid.UUID]int{}
 
 // UploadHandlerStore provides the Queries interface and a db instance.
 type UploadHandlerStore struct {
@@ -184,9 +184,13 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 			// for a given file more than once. If more than one instance
 			// ended up in this batch, here we ensure only one is sent
 			// to AddFiles() below.
-			if seen := seenFileUUIDs[fileUUID]; !seen {
-				seenFileUUIDs[fileUUID] = true
+			if seen, ok := seenFileUUIDs[fileUUID]; !ok {
+				seenFileUUIDs[fileUUID] = 1
 				allFileParams = append(allFileParams, file)
+			} else {
+				seenCount := seen + 1
+				seenFileUUIDs[fileUUID] = seenCount
+				contextLogger.WithFields(log.Fields{"duplicate_file_uuid": fileUUID, "seen_count": seenCount}).Warn("duplicate uuid")
 			}
 		}
 
