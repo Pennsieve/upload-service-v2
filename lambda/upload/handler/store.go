@@ -306,27 +306,20 @@ func (s *UploadHandlerStore) createStorageUpdateMap(ctx context.Context, pf Pack
 		packages: map[int64]int64{},
 	}
 
-	for _, curPackage := range pf.packages {
-		var packageSize int64
-		if curPackage.Size.Valid {
-			packageSize = curPackage.Size.Int64
-		} else {
-			log.Warn("Trying to get size of package failed: ", curPackage.NodeId)
-			continue
-		}
+	for _, curFile := range pf.files {
 
-		parentIds, err := s.pg.GetPackageAncestorIds(ctx, curPackage.Id)
+		parentIds, err := s.pg.GetPackageAncestorIds(ctx, int64(curFile.PackageId))
 		if err != nil {
 			return nil, err
 		}
 
 		// Add to individual packages in map
 		for _, p := range parentIds {
-			storageMap.packages[p] += packageSize
+			storageMap.packages[p] += curFile.Size
 		}
 
 		// Add to total storage for Dataset and Organization
-		storageMap.total += packageSize
+		storageMap.total += curFile.Size
 	}
 
 	return &storageMap, nil
