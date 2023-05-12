@@ -157,7 +157,7 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 		return err
 	}
 
-	// 3. Create Package Params to add files to "packages" table.
+	// 3. Create packages and Files in Transaction
 	res, err = s.execTx(ctx, func(qtx *UploadPgQueries) (interface{}, error) {
 		packages, err := qtx.AddPackages(context.Background(), pkgParams)
 		if err != nil {
@@ -165,7 +165,6 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 			return nil, err
 		}
 
-		// 4. Associate Files with Packages
 		packageMap := map[string]pgdb.Package{}
 		for _, p := range packages {
 			packageMap[p.NodeId] = p
@@ -209,7 +208,6 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 
 		return response, nil
 	})
-
 	if err != nil {
 		if err != nil {
 			contextLogger.Error("Unable to create Packages and/or Files. ", err)
@@ -218,15 +216,13 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 		return err
 	}
 
-	// 5. Update storage for Packages, Dataset and Organization.
 	result := res.(PackagesAndFiles)
-	storageMap, err := s.createStorageUpdateMap(ctx, result)
-
-	log.Debug("Total storage added to dataset: ", storageMap.total)
-	for p, v := range storageMap.packages {
-		log.Debug(fmt.Sprintf("Package %d storage incremented by %d", p, v))
+	for _, f := range result.files {
+		contextLogger.Info(fmt.Sprintf("Package and File created: %s", f.UUID))
 	}
 
+	// 4. Update storage for Packages, Dataset and Organization.
+	storageMap, err := s.createStorageUpdateMap(ctx, result)
 	_, err = s.execTx(ctx, func(qtx *UploadPgQueries) (interface{}, error) {
 
 		err = qtx.IncrementOrganizationStorage(ctx, int64(orgId), storageMap.total)
@@ -252,17 +248,18 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 		log.Error("Unable to update storage for Packages, Dataset and Organization.")
 	}
 
-	for _, f := range result.files {
-		contextLogger.Info(fmt.Sprintf("File created: %s", f.UUID))
+	log.Debug("Total storage added to dataset: ", storageMap.total)
+	for p, v := range storageMap.packages {
+		log.Debug(fmt.Sprintf("Package %d storage incremented by %d", p, v))
 	}
 
-	// Notify SNS that files were imported.
+	// 5. Notify SNS that files were imported.
 	err = s.PublishToSNS(result.files)
 	if err != nil {
 		contextLogger.Error("Error with notifying SNS that records are imported.", err)
 	}
 
-	// Update activity Log
+	// 6. Update activity Log
 	var evnts []changelog.Event
 	for _, pkg := range result.packages {
 		event := changelog.Event{
@@ -282,7 +279,7 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 		DatasetId:      int64(datasetId),
 		UserId:         user.NodeId,
 		Events:         evnts,
-		TraceId:        "",
+		TraceId:        manifest.ManifestId,
 		Id:             uuid.NewString(),
 	}
 
@@ -296,34 +293,6 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 	}
 
 	return nil
-}
-
-// createStorageUpdateMap returns object with information on how to update storage for packages, dataset, and org.
-func (s *UploadHandlerStore) createStorageUpdateMap(ctx context.Context, pf PackagesAndFiles) (*storageUpdateParams, error) {
-
-	storageMap := storageUpdateParams{
-		total:    0,
-		packages: map[int64]int64{},
-	}
-
-	for _, curFile := range pf.files {
-
-		parentIds, err := s.pg.GetPackageAncestorIds(ctx, int64(curFile.PackageId))
-		if err != nil {
-			return nil, err
-		}
-
-		// Add to individual packages in map
-		for _, p := range parentIds {
-			storageMap.packages[p] += curFile.Size
-		}
-
-		// Add to total storage for Dataset and Organization
-		storageMap.total += curFile.Size
-	}
-
-	return &storageMap, nil
-
 }
 
 // Handler is the primary entrypoint that handles importing files and is called by the Lambda
@@ -503,6 +472,34 @@ func (s *UploadHandlerStore) deleteOrphanFiles(files []OrphanS3File) error {
 	}
 
 	return nil
+
+}
+
+// createStorageUpdateMap returns object with information on how to update storage for packages, dataset, and org.
+func (s *UploadHandlerStore) createStorageUpdateMap(ctx context.Context, pf PackagesAndFiles) (*storageUpdateParams, error) {
+
+	storageMap := storageUpdateParams{
+		total:    0,
+		packages: map[int64]int64{},
+	}
+
+	for _, curFile := range pf.files {
+
+		parentIds, err := s.pg.GetPackageAncestorIds(ctx, int64(curFile.PackageId))
+		if err != nil {
+			return nil, err
+		}
+
+		// Add to individual packages in map
+		for _, p := range parentIds {
+			storageMap.packages[p] += curFile.Size
+		}
+
+		// Add to total storage for Dataset and Organization
+		storageMap.total += curFile.Size
+	}
+
+	return &storageMap, nil
 
 }
 
