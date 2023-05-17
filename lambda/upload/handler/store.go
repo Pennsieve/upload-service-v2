@@ -28,6 +28,12 @@ import (
 	"time"
 )
 
+// seenFileUUIDs allows this Lambda to avoid trying to create the same file in Postgres more than once.
+// Can happen if AWS sends out the same S3 create object event more than once.
+// This could be a local variable to ImportFiles(). Just here in case the Lambda gets used more than once
+// we get a little more de-duplication.
+var seenFileUUIDs = map[uuid.UUID]int{}
+
 // UploadHandlerStore provides the Queries interface and a db instance.
 type UploadHandlerStore struct {
 	pg            *UploadPgQueries
@@ -178,7 +184,7 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 				contextLogger.Debug("USING MERGED PACKAGE")
 				packageNodeId = fmt.Sprintf("N:package:%s", files[i].MergePackageId)
 			}
-
+			fileUUID := uuid.MustParse(files[i].UploadId)
 			file := pgdb.FileParams{
 				PackageId:  int(packageMap[packageNodeId].Id),
 				Name:       files[i].Name,
@@ -188,11 +194,21 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 				ObjectType: objectType.Source,
 				Size:       files[i].Size,
 				CheckSum:   files[i].ETag,
-				UUID:       uuid.MustParse(files[i].UploadId),
+				UUID:       fileUUID,
 				Sha256:     files[i].Sha256,
 			}
-
-			allFileParams = append(allFileParams, file)
+			// S3 may send a create object event
+			// for a given file more than once. If more than one instance
+			// ended up in this batch, here we ensure only one is sent
+			// to AddFiles() below.
+			if seen, ok := seenFileUUIDs[fileUUID]; !ok {
+				seenFileUUIDs[fileUUID] = 1
+				allFileParams = append(allFileParams, file)
+			} else {
+				seenCount := seen + 1
+				seenFileUUIDs[fileUUID] = seenCount
+				contextLogger.WithFields(log.Fields{"duplicate_file_uuid": fileUUID, "seen_count": seenCount}).Warn("duplicate uuid")
+			}
 		}
 
 		returnedFiles, err := qtx.AddFiles(context.Background(), allFileParams)
