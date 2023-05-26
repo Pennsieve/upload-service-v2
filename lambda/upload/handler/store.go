@@ -408,7 +408,18 @@ func (s *UploadHandlerStore) Handler(ctx context.Context, sqsEvent events.SQSEve
 						log.Fields{
 							"upload_id": f.UploadId,
 						}).Error("Error when creating package: ", err)
+
+					continue
 				}
+
+				// Update entries in manifest to IMPORTED for single file
+				err = s.dy.updateManifestFileStatus(singleFileArr, manifestId)
+				if err != nil {
+					// Status is not correctly updated in Manifest but files are completely imported.
+					// This should not return the failed files.
+					contextLogger.Error("Unable to update manifest file", err)
+				}
+
 			}
 			continue
 		}
