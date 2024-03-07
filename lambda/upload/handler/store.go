@@ -361,7 +361,7 @@ func (s *UploadHandlerStore) Handler(ctx context.Context, sqsEvent events.SQSEve
 		// These files somehow did parse correctly in the GetUploadEntries method.
 		err := s.deleteOrphanFiles(orphanEntries)
 		if err != nil {
-			log.Error("unable to delete orphan files")
+			log.Error("Unable to delete orphan files")
 		}
 	}
 	if err != nil {
@@ -381,7 +381,11 @@ func (s *UploadHandlerStore) Handler(ctx context.Context, sqsEvent events.SQSEve
 		// Get manifest from dynamodb
 		manifest, err := s.dy.GetManifestById(ctx, s.tableName, manifestId)
 		if err != nil {
-			log.Error("GetManifestById: Unable to get manifest.", err)
+			log.WithFields(log.Fields{
+				"manifest_id": manifest.ManifestId,
+				"dataset_id":  manifest.DatasetNodeId,
+				"org_id":      manifest.OrganizationId,
+			}).Error("GetManifestById: Unable to get manifest.", err)
 			batchItemFailures = addToFailedFiles(uploadFilesForManifest, s3KeySQSMessageMap, batchItemFailures)
 			continue
 		}
@@ -389,13 +393,16 @@ func (s *UploadHandlerStore) Handler(ctx context.Context, sqsEvent events.SQSEve
 		// Get User
 		user, err := s.pg.GetUserById(ctx, manifest.UserId)
 		if err != nil {
-			log.Error("Unable to get user.", err)
+			log.WithFields(log.Fields{
+				"manifest_id": manifest.ManifestId,
+				"dataset_id":  manifest.DatasetNodeId,
+				"org_id":      manifest.OrganizationId,
+			}).Error("Unable to get user.", err)
 			batchItemFailures = addToFailedFiles(uploadFilesForManifest, s3KeySQSMessageMap, batchItemFailures)
 			continue
 		}
 
 		contextLogger := log.WithFields(log.Fields{
-			"service":     "Upload-service",
 			"manifest_id": manifest.ManifestId,
 			"dataset_id":  manifest.DatasetNodeId,
 			"org_id":      manifest.OrganizationId,
@@ -424,7 +431,18 @@ func (s *UploadHandlerStore) Handler(ctx context.Context, sqsEvent events.SQSEve
 						log.Fields{
 							"upload_id": f.UploadId,
 						}).Error("Error when creating package: ", err)
+
+					continue
 				}
+
+				// Update entries in manifest to IMPORTED for single file
+				err = s.dy.updateManifestFileStatus(singleFileArr, manifestId)
+				if err != nil {
+					// Status is not correctly updated in Manifest but files are completely imported.
+					// This should not return the failed files.
+					contextLogger.Error("Unable to update manifest file", err)
+				}
+
 			}
 			continue
 		}
