@@ -3,7 +3,6 @@ package handler
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -19,6 +18,8 @@ func (s *UploadHandlerStore) GetUploadEntries(fileEvents []events.SQSMessage) ([
 	var entries []UploadEntry
 	var orphanFiles []OrphanS3File
 
+	var uploadIdMap = map[string]struct{}{}
+
 	for _, message := range fileEvents {
 		parsedS3Event := events.S3Event{}
 		if err := json.Unmarshal([]byte(message.Body), &parsedS3Event); err != nil {
@@ -28,18 +29,43 @@ func (s *UploadHandlerStore) GetUploadEntries(fileEvents []events.SQSMessage) ([
 
 		entry, err := s.uploadEntryFromS3Event(&parsedS3Event)
 		if err != nil {
-			orphanFile := OrphanS3File{
-				S3Bucket: parsedS3Event.Records[0].S3.Bucket.Name,
-				S3Key:    parsedS3Event.Records[0].S3.Object.Key,
-				ETag:     parsedS3Event.Records[0].S3.Object.ETag,
+			switch err.(type) {
+			case *S3FileNotExistError:
+				parsedErr := err.(*S3FileNotExistError)
+				log.WithFields(
+					log.Fields{
+						"manifest_id": parsedErr.ManifestId,
+						"upload_id":   parsedErr.UploadId,
+					},
+				).Warn(fmt.Sprintf("Unable to get HEAD object %s / %s",
+					parsedErr.S3Bucket, parsedErr.S3Key))
+
+				// Ignore sqs event as the file does not exist (for some reason)
+				continue
+			case *S3FileMalFormedError:
+				orphanFile := OrphanS3File{
+					S3Bucket: parsedS3Event.Records[0].S3.Bucket.Name,
+					S3Key:    parsedS3Event.Records[0].S3.Object.Key,
+					ETag:     parsedS3Event.Records[0].S3.Object.ETag,
+				}
+
+				orphanFiles = append(orphanFiles, orphanFile)
+				log.Warn(fmt.Sprintf("Unable to parse s3-key %s into expected format: ", orphanFile.S3Key), err)
+
+				// Do not add sqs event to records as it is already added to the OrphanFiles list
+				continue
 			}
 
-			orphanFiles = append(orphanFiles, orphanFile)
-			log.Info("Unable to parse s3-key into expected format: ", err)
-			continue
 		}
 
-		entries = append(entries, *entry)
+		if _, found := uploadIdMap[entry.UploadId]; found {
+			// Ignore upload entry and send warning log.
+			log.Warn(fmt.Sprintf("Duplicate UploadID found in SQS events: %s/%s", entry.ManifestId, entry.UploadId))
+		} else {
+			entries = append(entries, *entry)
+			uploadIdMap[entry.UploadId] = struct{}{}
+		}
+
 	}
 
 	return entries, orphanFiles, nil
@@ -51,8 +77,10 @@ func (s *UploadHandlerStore) uploadEntryFromS3Event(event *events.S3Event) (*Upl
 	res := r.FindStringSubmatch(event.Records[0].S3.Object.Key)
 
 	if res == nil {
-		return nil, errors.New(fmt.Sprintf("File does not contain the required S3-Key components: %s",
-			event.Records[0].S3.Object.Key))
+		return nil, &S3FileMalFormedError{
+			S3Bucket: event.Records[0].S3.Bucket.Name,
+			S3Key:    event.Records[0].S3.Object.Key,
+		}
 	}
 
 	// Found standard upload manifest/key combination
@@ -70,13 +98,13 @@ func (s *UploadHandlerStore) uploadEntryFromS3Event(event *events.S3Event) (*Upl
 	}
 	result, err := s.S3Client.HeadObject(context.Background(), &headObj)
 	if err != nil {
-		log.Println(err)
-		log.WithFields(
-			log.Fields{
-				"manifest_id": manifestId,
-				"upload_id":   uploadId,
-			},
-		).Warn(fmt.Sprintf("Unable to get HEAD object %s / %s", s3Bucket, s3Key))
+
+		return nil, &S3FileNotExistError{
+			S3Bucket:   s3Bucket,
+			S3Key:      s3Key,
+			ManifestId: manifestId,
+			UploadId:   uploadId,
+		}
 	}
 
 	response := UploadEntry{

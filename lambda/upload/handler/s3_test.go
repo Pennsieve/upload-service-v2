@@ -18,6 +18,7 @@ func TestS3(t *testing.T) {
 	){
 		"test correctly formed SQS message and S3Key":   testCorrectSQSMessage,
 		"test incorrectly formed SQS message and S3Key": testInCorrectSQSMessage,
+		"test duplicate keys in SQS events":             testDuplicateKey,
 	} {
 		t.Run(scenario, func(t *testing.T) {
 			client := getDynamoDBClient()
@@ -34,6 +35,42 @@ func TestS3(t *testing.T) {
 			fn(t, store)
 		})
 	}
+}
+
+func testDuplicateKey(t *testing.T, store *UploadHandlerStore) {
+	manifestId := "00000000-0000-0000-0000-000000000000"
+	uploadId := "00000000-1111-1111-1111-000000000000"
+
+	validFileEvent := events.S3Event{Records: []events.S3EventRecord{
+		{
+			S3: events.S3Entity{
+				Bucket: events.S3Bucket{
+					Name: "testBucket",
+				},
+				Object: events.S3Object{
+					Key: fmt.Sprintf("%s/%s", manifestId, uploadId),
+				},
+			},
+		},
+	}}
+
+	validEventBody, _ := json.Marshal(validFileEvent)
+
+	testSQSMessages := []events.SQSMessage{
+		{
+			Body: string(validEventBody),
+		},
+		{
+			Body: string(validEventBody),
+		},
+	}
+
+	entries, orphanEntries, err := store.GetUploadEntries(testSQSMessages)
+	assert.NoError(t, err)
+	assert.Nil(t, orphanEntries, "should not have orphan entries as all messages are correctly formed.")
+	assert.Len(t, entries, 1, "should have single entry as both entry represent the same event")
+	assert.Equal(t, entries[0].UploadId, uploadId)
+
 }
 
 func testCorrectSQSMessage(t *testing.T, store *UploadHandlerStore) {
