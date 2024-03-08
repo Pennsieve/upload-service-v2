@@ -232,7 +232,7 @@ func TestMain(m *testing.M) {
 		GrantReadACP:               nil,
 		GrantWrite:                 nil,
 		GrantWriteACP:              nil,
-		ObjectLockEnabledForBucket: false,
+		ObjectLockEnabledForBucket: aws.Bool(false),
 		ObjectOwnership:            "",
 	})
 	if err != nil {
@@ -248,7 +248,7 @@ func TestMain(m *testing.M) {
 		GrantReadACP:               nil,
 		GrantWrite:                 nil,
 		GrantWriteACP:              nil,
-		ObjectLockEnabledForBucket: false,
+		ObjectLockEnabledForBucket: aws.Bool(false),
 		ObjectOwnership:            "",
 	})
 	if err != nil {
