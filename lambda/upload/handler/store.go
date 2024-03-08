@@ -22,6 +22,7 @@ import (
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/pgdb"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/uploadFile"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/uploadFolder"
+	"github.com/pusher/pusher-http-go/v5"
 	log "github.com/sirupsen/logrus"
 	"regexp"
 	"strings"
@@ -456,6 +457,24 @@ func (s *UploadHandlerStore) Handler(ctx context.Context, sqsEvent events.SQSEve
 			// This should not return the failed files.
 			contextLogger.Error(err)
 			continue
+		}
+
+		// Notify Pusher of successful uploads
+		var events []pusher.Event
+		for _, u := range uploadFilesForManifest {
+			event := pusher.Event{
+				Channel:  manifest.DatasetNodeId,
+				Name:     "file-upload",
+				Data:     map[string]string{"path": u.Path, "name": u.Name},
+				SocketID: nil,
+				Info:     nil,
+			}
+			events = append(events, event)
+
+		}
+		_, err = PusherClient.TriggerBatch(events)
+		if err != nil {
+			log.Warnf(err.Error())
 		}
 
 	}
