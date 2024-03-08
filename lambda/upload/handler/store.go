@@ -461,9 +461,10 @@ func (s *UploadHandlerStore) Handler(ctx context.Context, sqsEvent events.SQSEve
 
 		// Notify Pusher of successful uploads
 		var events []pusher.Event
+		channelName := strings.Replace(manifest.DatasetNodeId, ":", ";", -1)
 		for _, u := range uploadFilesForManifest {
 			event := pusher.Event{
-				Channel:  manifest.DatasetNodeId,
+				Channel:  channelName,
 				Name:     "file-upload",
 				Data:     map[string]string{"path": u.Path, "name": u.Name},
 				SocketID: nil,
