@@ -489,7 +489,7 @@ func (s *UploadHandlerStore) deleteOrphanFiles(files []OrphanS3File) error {
 
 	f := s3Types.Delete{
 		Objects: keys,
-		Quiet:   false,
+		Quiet:   aws.Bool(false),
 	}
 
 	params := s3.DeleteObjectsInput{
