@@ -2,12 +2,18 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"github.com/aws/aws-lambda-go/events"
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/sns"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
+	"github.com/aws/aws-sdk-go-v2/service/ssm"
+	"github.com/pennsieve/pennsieve-go-core/pkg/models/pusher"
+
 	"github.com/pennsieve/pennsieve-go-core/pkg/changelog"
 	pgQueries "github.com/pennsieve/pennsieve-go-core/pkg/queries/pgdb"
 	log "github.com/sirupsen/logrus"
@@ -22,6 +28,7 @@ var (
 	DynamoClient          *dynamodb.Client
 	ManifestTableName     string
 	ManifestFileTableName string
+	PusherConfig          *pusher.Config
 )
 
 // init runs on cold start of lambda and gets jwt key-sets from Cognito user pools.
@@ -39,6 +46,26 @@ func init() {
 	if err != nil {
 		log.Fatalf("LoadDefaultConfig: %v\n", err)
 	}
+
+	// Get Pusher Config
+	ssmsvc := ssm.NewFromConfig(cfg)
+	param, err := ssmsvc.GetParameter(context.Background(), &ssm.GetParameterInput{
+		Name:           aws.String("/ops/pusher-config2"),
+		WithDecryption: aws.Bool(true),
+	})
+	if err != nil {
+		log.Fatalf("LoadDefaultConfig: %v\n", err)
+	}
+
+	value := *param.Parameter.Value
+	fmt.Println(value)
+
+	err = json.Unmarshal([]byte(value), &PusherConfig)
+	if err != nil {
+		log.Fatalf("ConvertPusherCongifToStruct: %v\n", err)
+	}
+
+	fmt.Println(PusherConfig)
 
 	ManifestFileTableName = os.Getenv("MANIFEST_FILE_TABLE")
 	ManifestTableName = os.Getenv("MANIFEST_TABLE")
