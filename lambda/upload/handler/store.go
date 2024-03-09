@@ -39,6 +39,7 @@ var seenFileUUIDs = map[uuid.UUID]int{}
 type UploadHandlerStore struct {
 	pg            *UploadPgQueries
 	dy            *UploadDyQueries
+	pusherClient  *pusher.Client
 	pgdb          *sql.DB
 	dynamodb      *dynamodb.Client
 	SNSClient     domain.SnsAPI
@@ -59,10 +60,13 @@ type storageUpdateParams struct {
 }
 
 // NewUploadHandlerStore returns a UploadHandlerStore object which implements the Queries
-func NewUploadHandlerStore(db *sql.DB, dy *dynamodb.Client, sns domain.SnsAPI, s3 domain.S3API, fileTableName string, tableName string, snsTopic string) *UploadHandlerStore {
+func NewUploadHandlerStore(db *sql.DB, dy *dynamodb.Client, sns domain.SnsAPI,
+	s3 domain.S3API, fileTableName string, tableName string, snsTopic string,
+	pc *pusher.Client) *UploadHandlerStore {
 	return &UploadHandlerStore{
 		pgdb:          db,
 		dynamodb:      dy,
+		pusherClient:  pc,
 		SNSClient:     sns,
 		SNSTopic:      snsTopic,
 		S3Client:      s3,
@@ -461,11 +465,11 @@ func (s *UploadHandlerStore) Handler(ctx context.Context, sqsEvent events.SQSEve
 
 		// Notify Pusher of successful uploads
 		var events []pusher.Event
-		channelName := strings.ReplaceAll(manifest.DatasetNodeId, ":", ";")
-		fmt.Println(channelName)
+		chName := strings.ReplaceAll(strings.Clone(manifest.DatasetNodeId), ":", ";")
+		fmt.Println(chName)
 		for _, u := range uploadFilesForManifest {
 			event := pusher.Event{
-				Channel:  channelName,
+				Channel:  chName,
 				Name:     "file-upload",
 				Data:     map[string]string{"path": u.Path, "name": u.Name},
 				SocketID: nil,
@@ -474,11 +478,10 @@ func (s *UploadHandlerStore) Handler(ctx context.Context, sqsEvent events.SQSEve
 			events = append(events, event)
 
 		}
-		_, err = PusherClient.TriggerBatch(events)
+		_, err = s.pusherClient.TriggerBatch(events)
 		if err != nil {
 			log.Warnf(err.Error())
 		}
-
 	}
 
 	response.BatchItemFailures = batchItemFailures
