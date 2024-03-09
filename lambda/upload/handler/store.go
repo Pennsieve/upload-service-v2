@@ -316,7 +316,7 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 	}
 
 	// 7. Notify Pusher
-	chName := strings.ReplaceAll(manifest.DatasetNodeId, "N:Dataset:", "dataset-")
+	chName := strings.ReplaceAll(manifest.DatasetNodeId, "N:dataset:", "dataset-")
 	var pusherData []ps.UploadMessageItem
 	for _, pkg := range result.packages {
 		packageInfo := ps.UploadMessageItem{
