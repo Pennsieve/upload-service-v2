@@ -20,6 +20,7 @@ import (
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/packageInfo/packageState"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/packageInfo/packageType"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/pgdb"
+	ps "github.com/pennsieve/pennsieve-go-core/pkg/models/pusher"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/uploadFile"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/uploadFolder"
 	"github.com/pusher/pusher-http-go/v5"
@@ -39,11 +40,11 @@ var seenFileUUIDs = map[uuid.UUID]int{}
 type UploadHandlerStore struct {
 	pg            *UploadPgQueries
 	dy            *UploadDyQueries
-	pusherClient  *pusher.Client
 	pgdb          *sql.DB
 	dynamodb      *dynamodb.Client
 	SNSClient     domain.SnsAPI
 	S3Client      domain.S3API
+	pusherClient  domain.PusherAPI
 	SNSTopic      string
 	fileTableName string
 	tableName     string
@@ -123,7 +124,8 @@ func (s *UploadHandlerStore) execTx(ctx context.Context, fn func(queries *Upload
 
 // ImportFiles creates rows for uploaded files in Packages and Files tables as a transaction
 // All files belong to a single manifest, and therefor single dataset in a single organization.
-func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, orgId int, user pgdb.User, files []uploadFile.UploadFile, manifest *dydb.ManifestTable) error {
+func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, orgId int, user pgdb.User,
+	files []uploadFile.UploadFile, manifest *dydb.ManifestTable) error {
 
 	contextLogger := log.WithFields(log.Fields{
 		"service":     "Upload-service",
@@ -313,6 +315,23 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 		contextLogger.Error("Error with notifying Changelog about imported records: ", err)
 	}
 
+	// 7. Notify Pusher
+	chName := strings.ReplaceAll(manifest.DatasetNodeId, "N:Dataset:", "dataset-")
+	var pusherData []ps.UploadMessageItem
+	for _, pkg := range result.packages {
+		packageInfo := ps.UploadMessageItem{
+			Name:     pkg.Name,
+			NodeId:   pkg.NodeId,
+			ParentId: pkg.ParentId,
+			UploadId: pkg.ImportId,
+		}
+		pusherData = append(pusherData, packageInfo)
+	}
+	err = s.pusherClient.Trigger(chName, "upload-event", pusherData)
+	if err != nil {
+		log.Warnf(err.Error())
+	}
+
 	return nil
 }
 
@@ -452,8 +471,6 @@ func (s *UploadHandlerStore) Handler(ctx context.Context, sqsEvent events.SQSEve
 			continue
 		}
 
-		// Notify
-
 		// Update entries in manifest to IMPORTED for all files
 		err = s.dy.updateManifestFileStatus(uploadFilesForManifest, manifestId)
 		if err != nil {
@@ -461,26 +478,6 @@ func (s *UploadHandlerStore) Handler(ctx context.Context, sqsEvent events.SQSEve
 			// This should not return the failed files.
 			contextLogger.Error(err)
 			continue
-		}
-
-		// Notify Pusher of successful uploads
-		var events []pusher.Event
-		chName := strings.ReplaceAll(strings.Clone(manifest.DatasetNodeId), ":", ";")
-		fmt.Println(chName)
-		for _, u := range uploadFilesForManifest {
-			event := pusher.Event{
-				Channel:  chName,
-				Name:     "file-upload",
-				Data:     map[string]string{"path": u.Path, "name": u.Name},
-				SocketID: nil,
-				Info:     nil,
-			}
-			events = append(events, event)
-
-		}
-		_, err = s.pusherClient.TriggerBatch(events)
-		if err != nil {
-			log.Warnf(err.Error())
 		}
 	}
 
