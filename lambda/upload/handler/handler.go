@@ -94,7 +94,15 @@ func Handler(ctx context.Context, sqsEvent events.SQSEvent) (events.SQSEventResp
 	}
 
 	// Define store without Postgres connection (as this is different depending on the manifest/org)
-	s := NewUploadHandlerStore(db, DynamoClient, SNSClient, S3Client, ManifestFileTableName, ManifestTableName, SNSTopic)
+	s := NewUploadHandlerStore(
+		db,
+		DynamoClient,
+		SNSClient,
+		S3Client,
+		ManifestFileTableName,
+		ManifestTableName,
+		SNSTopic,
+		PusherClient)
 
 	eventResponse, err = s.Handler(ctx, sqsEvent)
 	if err != nil {

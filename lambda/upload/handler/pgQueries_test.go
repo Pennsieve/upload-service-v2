@@ -12,6 +12,7 @@ import (
 	"github.com/pennsieve/pennsieve-go-core/pkg/queries/pgdb"
 	testHelpers "github.com/pennsieve/pennsieve-go-core/test"
 	"github.com/pennsieve/pennsieve-upload-service-v2/upload/test"
+	"github.com/pusher/pusher-http-go/v5"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"testing"
@@ -34,7 +35,7 @@ func TestPgQueries(t *testing.T) {
 
 			mSNS := test.MockSNS{}
 			mS3 := test.MockS3{}
-			store := NewUploadHandlerStore(pgdbClient, client, mSNS, mS3, ManifestFileTableName, ManifestTableName, SNSTopic)
+			store := NewUploadHandlerStore(pgdbClient, client, mSNS, mS3, ManifestFileTableName, ManifestTableName, SNSTopic, &pusher.Client{})
 
 			fn(t, store)
 		})
