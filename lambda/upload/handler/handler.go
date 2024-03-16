@@ -49,7 +49,7 @@ func init() {
 
 	ssmsvc := ssm.NewFromConfig(cfg)
 	param, err := ssmsvc.GetParameter(context.Background(), &ssm.GetParameterInput{
-		Name:           aws.String("/ops/pusher-config2"),
+		Name:           aws.String("/ops/pusher-config"),
 		WithDecryption: aws.Bool(true),
 	})
 	if err != nil {
