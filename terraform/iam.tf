@@ -657,6 +657,10 @@ data "aws_iam_policy_document" "upload_fargate_iam_policy_document" {
       "${data.terraform_remote_state.platform_infrastructure.outputs.storage_bucket_arn}/*",
       data.terraform_remote_state.platform_infrastructure.outputs.sparc_storage_bucket_arn,
       "${data.terraform_remote_state.platform_infrastructure.outputs.sparc_storage_bucket_arn}/*",
+      data.terraform_remote_state.platform_infrastructure.outputs.rejoin_storage_bucket_arn,
+      "${data.terraform_remote_state.platform_infrastructure.outputs.rejoin_storage_bucket_arn}/*",
+      data.terraform_remote_state.platform_infrastructure.outputs.precision_storage_bucket_arn,
+      "${data.terraform_remote_state.platform_infrastructure.outputs.precision_storage_bucket_arn}/*",
       aws_s3_bucket.uploads_s3_bucket.arn,
       "${aws_s3_bucket.uploads_s3_bucket.arn}/*",
     ]
