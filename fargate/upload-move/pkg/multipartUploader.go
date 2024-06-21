@@ -17,7 +17,7 @@ import (
 
 // maxPartSize constant for number of bits in 50 megabyte chunk
 // this corresponds with max file size of 500GB per file as copy can do max 10,000 parts.
-const maxPartSize = 50 * 1024 * 1024
+const maxPartSize = 105 * 1024 * 1024
 
 // nrCopyWorkers number of threads for multipart uploader
 const nrCopyWorkers = 10
