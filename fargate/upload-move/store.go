@@ -15,6 +15,7 @@ import (
 	pgQeuries "github.com/pennsieve/pennsieve-go-core/pkg/queries/pgdb"
 	"github.com/pennsieve/pennsieve-upload-service-v2/upload-move-files/pkg"
 	log "github.com/sirupsen/logrus"
+	"time"
 )
 
 // UploadMoveStore provides the Queries interface and a db instance.
@@ -146,7 +147,7 @@ func (s *UploadMoveStore) manifestFileWalk(walker fileWalk) error {
 }
 
 // moveFile accepts an item from the channel and implements the move workflow for that item.
-func (s *UploadMoveStore) moveFile(workerId int, items <-chan Item) {
+func (s *UploadMoveStore) moveFile(workerId int, timeout time.Duration, items <-chan Item) {
 
 	// Close worker after it completes.
 	// This happens when the items channel closes.
@@ -217,7 +218,7 @@ func (s *UploadMoveStore) moveFile(workerId int, items <-chan Item) {
 				moveSuccess = true
 			}
 		} else {
-			err = pkg.MultiPartCopy(s.s3, fileSize, uploadBucket, sourceKey, stOrgItem.storageBucket, targetPath)
+			err = pkg.MultiPartCopy(s.s3, timeout, fileSize, uploadBucket, sourceKey, stOrgItem.storageBucket, targetPath)
 			if err != nil {
 				log.Error(fmt.Sprintf("Unable to copy item from  %s to %s, %v\n", sourcePath, targetPath, err))
 				err = s.dy.UpdateFileTableStatus(context.Background(), FileTableName, item.ManifestId, item.UploadId, manifestFile.Failed, err.Error())

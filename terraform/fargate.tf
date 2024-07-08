@@ -13,6 +13,7 @@ data "template_file" "task_definition" {
     manifest_files_table_name = aws_dynamodb_table.manifest_files_dynamo_table.name
     upload_bucket             = aws_s3_bucket.uploads_s3_bucket.id
     storage_bucket            = data.terraform_remote_state.platform_infrastructure.outputs.storage_bucket_id
+    file_move_timeout         = var.file_move_timeout
     docker_hub_credentials    = data.terraform_remote_state.platform_infrastructure.outputs.docker_hub_credentials_arn
     rds_proxy_endpoint        = data.terraform_remote_state.pennsieve_postgres.outputs.rds_proxy_endpoint
     image_tag                 = var.image_tag

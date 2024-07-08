@@ -23,14 +23,14 @@ const maxPartSize = 105 * 1024 * 1024
 const nrCopyWorkers = 10
 
 // MultiPartCopy function that starts, perform each part upload, and completes the copy
-func MultiPartCopy(svc *s3.Client, fileSize int64, sourceBucket string, sourceKey string, destBucket string, destKey string) error {
+func MultiPartCopy(svc *s3.Client, timeout time.Duration, fileSize int64, sourceBucket string, sourceKey string, destBucket string, destKey string) error {
 
 	partWalker := make(chan s3.UploadPartCopyInput, nrCopyWorkers)
 	results := make(chan s3types.CompletedPart, nrCopyWorkers)
 
 	parts := make([]s3types.CompletedPart, 0)
 
-	ctx, cancelFn := context.WithTimeout(context.TODO(), 30*time.Minute)
+	ctx, cancelFn := context.WithTimeout(context.TODO(), timeout)
 	defer cancelFn()
 
 	//struct for starting a multipart upload
