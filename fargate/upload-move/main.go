@@ -83,11 +83,13 @@ func main() {
 		}
 	}()
 
+	timeout := FileMoveTimeout()
+
 	// Initiate the upload workers
 	for w := 1; w <= nrWorkers; w++ {
 		processWg.Add(1)
 		log.Debug("starting worker:", w)
-		go store.moveFile(w, walker)
+		go store.moveFile(w, timeout, walker)
 	}
 
 	// Wait until all processors are completed.
