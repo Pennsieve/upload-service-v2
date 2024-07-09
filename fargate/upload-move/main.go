@@ -9,6 +9,7 @@ import (
 	log "github.com/sirupsen/logrus"
 	"os"
 	"sync"
+	"time"
 )
 
 var uploadBucket string
@@ -66,6 +67,10 @@ func main() {
 	//goland:noinspection GoUnhandledErrorResult
 	defer store.db.Close()
 
+	// start database keepalive
+	ticker := time.NewTicker(1 * time.Minute)
+	go store.KeepAlive(context.Background(), ticker)
+
 	uploadBucket = os.Getenv("UPLOAD_BUCKET")
 	defaultStorageBucket = os.Getenv("STORAGE_BUCKET")
 
@@ -94,6 +99,9 @@ func main() {
 
 	// Wait until all processors are completed.
 	processWg.Wait()
+
+	// stop database keepalive
+	ticker.Stop()
 
 	log.Println("Finished with task.")
 }
