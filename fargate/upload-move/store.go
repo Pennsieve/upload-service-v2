@@ -62,6 +62,13 @@ func (s *UploadMoveStore) KeepAlive(ctx context.Context, ticker *time.Ticker) {
 		_, err := s.db.QueryContext(ctx, "SELECT 1 as value FROM (VALUES(1)) i")
 		if err != nil {
 			log.Error(fmt.Sprintf("KeepAlive query failed: %v", err))
+			db, err := pgQeuries.ConnectRDS()
+			if err != nil {
+				log.Error(fmt.Sprintf("KeepAlive ConnectRDS failed: %v", err))
+			} else {
+				// replace the database connection
+				s.db = db
+			}
 		}
 	}
 }
