@@ -57,6 +57,15 @@ func (s *UploadMoveStore) execPgTx(ctx context.Context, fn func(*pgQeuries.Queri
 	return tx.Commit()
 }
 
+func (s *UploadMoveStore) KeepAlive(ctx context.Context, ticker *time.Ticker) {
+	for range ticker.C {
+		_, err := s.db.QueryContext(ctx, "SELECT 1 as value FROM (VALUES(1)) i")
+		if err != nil {
+			log.Error(fmt.Sprintf("KeepAlive query failed: %v", err))
+		}
+	}
+}
+
 // GetManifestStorageBucket returns the storage bucket associated with organization for manifest.
 func (s *UploadMoveStore) GetManifestStorageBucket(manifestId string) (*storageOrgItem, error) {
 
