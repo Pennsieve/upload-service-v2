@@ -58,16 +58,41 @@ func (s *UploadMoveStore) execPgTx(ctx context.Context, fn func(*pgQeuries.Queri
 }
 
 func (s *UploadMoveStore) KeepAlive(ctx context.Context, ticker *time.Ticker) {
+	counter := 0
+	numbers := make([]int, 0)
 	for range ticker.C {
-		_, err := s.db.QueryContext(ctx, "SELECT 1 as value FROM (VALUES(1)) i")
+		counter += 1
+		query := fmt.Sprintf("SELECT %d as value FROM (VALUES(1)) i;", counter)
+		log.Info(fmt.Sprintf("KeepAlive (%d) starting (query: %s)", counter, query))
+		rows, err := s.db.QueryContext(ctx, query)
 		if err != nil {
-			log.Error(fmt.Sprintf("KeepAlive query failed: %v", err))
+			log.Error(fmt.Sprintf("KeepAlive (%d) query error: %v", counter, err))
 			db, err := pgQeuries.ConnectRDS()
 			if err != nil {
-				log.Error(fmt.Sprintf("KeepAlive ConnectRDS failed: %v", err))
+				log.Error(fmt.Sprintf("KeepAlive ConnectRDS error: %v", err))
 			} else {
 				// replace the database connection
+				log.Info(fmt.Sprintf("KeepAlive reconnected to RDS"))
 				s.db = db
+			}
+		} else {
+			for rows.Next() {
+				var number int
+				if err := rows.Scan(&number); err != nil {
+					log.Error(fmt.Sprintf("KeepAlive (%d) rows.Scan error: %v", counter, err))
+				} else {
+					log.Info(fmt.Sprintf("KeepAlive (%d) result: %d", counter, number))
+					numbers = append(numbers, number)
+				}
+			}
+
+			err := rows.Close()
+			if err != nil {
+				log.Error(fmt.Sprintf("KeepAlive (%d) rows.Close error: %v", counter, err))
+			}
+
+			if err := rows.Err(); err != nil {
+				log.Error(fmt.Sprintf("KeepAlive (%d) rows.Err error: %v", counter, err))
 			}
 		}
 	}
