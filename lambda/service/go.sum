@@ -121,6 +121,8 @@ github.com/pennsieve/pennsieve-go-core v1.7.6 h1:qy45Y0lZiEwwTWWnWue+WJrA72PB81f
 github.com/pennsieve/pennsieve-go-core v1.7.6/go.mod h1:SAv7Ijk6RW4fo691bv2/XwIvgEJQ+DApL7smDI7Gjqo=
 github.com/pennsieve/pennsieve-go-core v1.8.0 h1:L5O75k6aaVUG5kJqc4IKM6CJhFAWDHrthscySzfvt4g=
 github.com/pennsieve/pennsieve-go-core v1.8.0/go.mod h1:SAv7Ijk6RW4fo691bv2/XwIvgEJQ+DApL7smDI7Gjqo=
+github.com/pennsieve/pennsieve-go-core v1.9.1 h1:ZtmvsOzDWtE9KKNMYPuc6g2XnMrx2mSRvQPj4ndYbhk=
+github.com/pennsieve/pennsieve-go-core v1.9.1/go.mod h1:Gy4mjXzr//CL99kxmRMH85IT97AH31Ge+hzPc2UEt80=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/sirupsen/logrus v1.9.0 h1:trlNQbNUG3OdDrDil03MCb1H2o9nJ1x4/5LYw7byDE0=

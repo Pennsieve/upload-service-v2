@@ -12,7 +12,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue v1.13.9
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.30.4
 	github.com/google/uuid v1.6.0
-	github.com/pennsieve/pennsieve-go-core v1.8.0
+	github.com/pennsieve/pennsieve-go-core v1.9.1
 	github.com/sirupsen/logrus v1.9.3
 	github.com/valyala/fastjson v1.6.4
 )
