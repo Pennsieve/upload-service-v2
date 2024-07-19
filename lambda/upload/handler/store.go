@@ -479,6 +479,13 @@ func (s *UploadHandlerStore) Handler(ctx context.Context, sqsEvent events.SQSEve
 			contextLogger.Error(err)
 			continue
 		}
+
+		// Update Dataset updated_at value.
+		err = s.pg.SetUpdatedAt(ctx, manifest.DatasetId, time.Now())
+		if err != nil {
+			contextLogger.Error(err)
+			continue
+		}
 	}
 
 	response.BatchItemFailures = batchItemFailures
