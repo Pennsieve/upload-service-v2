@@ -169,6 +169,15 @@ func postManifestRoute(request events.APIGatewayV2HTTPRequest, claims *authorize
 			return &apiResponse, nil
 		}
 
+		// Check that manifest belongs to active dataset
+		// This should not be the case, but can happen if the front-end handles things incorrectly
+		if activeManifest.DatasetId != claims.DatasetClaim.IntId {
+			message := "Error: Trying to add files to a manifest that belongs to a different dataset."
+			apiResponse = events.APIGatewayV2HTTPResponse{
+				Body: gateway.CreateErrorMessage(message, 400), StatusCode: 400}
+			return &apiResponse, nil
+		}
+
 		// Check that manifest is not archived.
 		if activeManifest.Status == manifest.Archived.String() {
 			message := "Cannot sync with an 'archived' manifest. Archived manifests can be downloaded as a CSV file."
