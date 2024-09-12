@@ -23,7 +23,6 @@ import (
 	ps "github.com/pennsieve/pennsieve-go-core/pkg/models/pusher"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/uploadFile"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/uploadFolder"
-	"github.com/pusher/pusher-http-go/v5"
 	log "github.com/sirupsen/logrus"
 	"regexp"
 	"strings"
@@ -38,16 +37,17 @@ var seenFileUUIDs = map[uuid.UUID]int{}
 
 // UploadHandlerStore provides the Queries interface and a db instance.
 type UploadHandlerStore struct {
-	pg            *UploadPgQueries
-	dy            *UploadDyQueries
-	pgdb          *sql.DB
-	dynamodb      *dynamodb.Client
-	SNSClient     domain.SnsAPI
-	S3Client      domain.S3API
-	pusherClient  domain.PusherAPI
-	SNSTopic      string
-	fileTableName string
-	tableName     string
+	pg              *UploadPgQueries
+	dy              *UploadDyQueries
+	pgdb            *sql.DB
+	dynamodb        *dynamodb.Client
+	SNSClient       domain.SnsAPI
+	S3Client        domain.S3API
+	pusherClient    domain.PusherAPI
+	changelogClient Changelogger
+	SNSTopic        string
+	fileTableName   string
+	tableName       string
 }
 
 type PackagesAndFiles struct {
@@ -63,18 +63,19 @@ type storageUpdateParams struct {
 // NewUploadHandlerStore returns a UploadHandlerStore object which implements the Queries
 func NewUploadHandlerStore(db *sql.DB, dy *dynamodb.Client, sns domain.SnsAPI,
 	s3 domain.S3API, fileTableName string, tableName string, snsTopic string,
-	pc *pusher.Client) *UploadHandlerStore {
+	pc domain.PusherAPI, changelogger Changelogger) *UploadHandlerStore {
 	return &UploadHandlerStore{
-		pgdb:          db,
-		dynamodb:      dy,
-		pusherClient:  pc,
-		SNSClient:     sns,
-		SNSTopic:      snsTopic,
-		S3Client:      s3,
-		pg:            NewUploadPgQueries(db),
-		dy:            NewUploadDyQueries(dy),
-		fileTableName: fileTableName,
-		tableName:     tableName,
+		pgdb:            db,
+		dynamodb:        dy,
+		pusherClient:    pc,
+		SNSClient:       sns,
+		SNSTopic:        snsTopic,
+		S3Client:        s3,
+		changelogClient: changelogger,
+		pg:              NewUploadPgQueries(db),
+		dy:              NewUploadDyQueries(dy),
+		fileTableName:   fileTableName,
+		tableName:       tableName,
 	}
 }
 
@@ -136,7 +137,9 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 	})
 
 	// Verify assumptions
-	for _, f := range files {
+	for i, f := range files {
+		// avoiding for-loop variable gotcha
+		files[i].Path = trimSlashes(f.Path)
 		if f.ManifestId != manifest.ManifestId {
 			return errors.New("not all files belong to the same manifest (required for ImportFiles method)")
 		}
@@ -147,6 +150,9 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 
 	// 1. Iterate over files and return map of folders and sub-folders
 	folderMap := getUploadFolderMap(files, "")
+	if contextLogger.Logger.IsLevelEnabled(log.DebugLevel) {
+		contextLogger.WithFields(log.Fields{"folderMap": folderMap}).Debug("calculated folder map")
+	}
 
 	// 2. Iterate over folders and create them if they do not exist in organization
 	// This will lock rows in db for concurrent Lambda handlers so wrapping in its own TX to minimize time.
@@ -164,10 +170,17 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 	}
 
 	folderPackageMap := res.(pgdb.PackageMap)
+	if contextLogger.Logger.IsLevelEnabled(log.DebugLevel) {
+		contextLogger.WithFields(log.Fields{"folderPackageMap": folderPackageMap}).Debug("calculated folder package map")
+	}
+
 	pkgParams, err := getPackageParams(datasetId, int(user.Id), files, folderPackageMap)
 	if err != nil {
 		contextLogger.Error("Unable to parse package parameters: ", err)
 		return err
+	}
+	if contextLogger.Logger.IsLevelEnabled(log.DebugLevel) {
+		contextLogger.WithFields(log.Fields{"pkgParams": pkgParams}).Debug("calculated package parameters")
 	}
 
 	// 3. Create packages and Files in Transaction
@@ -310,7 +323,7 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 		DatasetChangelogEventJob: params,
 	}
 
-	err = ChangelogClient.EmitEvents(context.Background(), mes)
+	err = s.changelogClient.EmitEvents(context.Background(), mes)
 	if err != nil {
 		contextLogger.Error("Error with notifying Changelog about imported records: ", err)
 	}
@@ -565,6 +578,16 @@ func (s *UploadHandlerStore) createStorageUpdateMap(ctx context.Context, pf Pack
 
 }
 
+func trimSlashes(path string) string {
+	// Remove leading and trailing "/"
+	leadingSlashes := regexp.MustCompile(`^/+`)
+	trimmed := leadingSlashes.ReplaceAllString(path, "")
+
+	trailingSlashes := regexp.MustCompile(`/+$`)
+	trimmed = trailingSlashes.ReplaceAllString(trimmed, "")
+	return trimmed
+}
+
 // getUploadFolderMap returns an object that maps path name to Folder object.
 func getUploadFolderMap(sortedFiles []uploadFile.UploadFile, targetFolder string) uploadFolder.UploadFolderMap {
 
@@ -573,26 +596,19 @@ func getUploadFolderMap(sortedFiles []uploadFile.UploadFile, targetFolder string
 
 	// Iterate over the files and create the UploadFolder objects.
 	for _, f := range sortedFiles {
+		p := f.Path
 
-		if f.Path == "" {
+		if p == "" {
 			continue
 		}
 
 		// Prepend the target-Folder if it exists
-		p := f.Path
 		if targetFolder != "" {
 			p = strings.Join(
 				[]string{
 					targetFolder, p,
 				}, "/")
 		}
-
-		// Remove leading and trailing "/"
-		leadingSlashes := regexp.MustCompile(`^/+`)
-		p = leadingSlashes.ReplaceAllString(p, "")
-
-		trailingSlashes := regexp.MustCompile(`/+$`)
-		p = trailingSlashes.ReplaceAllString(p, "")
 
 		// Iterate over path segments in a single file and identify folders.
 		pathSegments := strings.Split(p, "/")

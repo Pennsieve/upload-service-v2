@@ -21,8 +21,8 @@ help:
 	@echo "make publish - package and publish lambda function"
 
 test: clean
-	docker-compose -f docker-compose.test.yml down --remove-orphans
-	docker-compose -f docker-compose.test.yml up --exit-code-from local_tests local_tests
+	docker compose -f docker-compose.test.yml down --remove-orphans
+	docker compose -f docker-compose.test.yml up --build --exit-code-from local_tests local_tests
 
 test-ci:
 	mkdir -p test-dynamodb-data
@@ -46,7 +46,7 @@ go-get:
 
 # Spin down active docker containers.
 docker-clean:
-	docker-compose -f docker-compose.test.yml down
+	docker compose -f docker-compose.test.yml down
 
 # Remove dynamodb database
 clean: docker-clean

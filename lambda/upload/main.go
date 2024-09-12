@@ -5,6 +5,9 @@ import (
 	"github.com/pennsieve/pennsieve-upload-service-v2/upload/handler"
 )
 
+func init() {
+	handler.InitializeClients()
+}
 func main() {
 	lambda.Start(handler.Handler)
 }

@@ -27,11 +27,12 @@ var (
 	DynamoClient          *dynamodb.Client
 	ManifestTableName     string
 	ManifestFileTableName string
+	JobSQSQueueId         string
 	PusherConfig          *ps.Config
 	PusherClient          *pusher.Client
 )
 
-// init runs on cold start of lambda and gets jwt key-sets from Cognito user pools.
+// init runs on cold start of lambda and configures logging and looks up env vars.
 func init() {
 
 	log.SetFormatter(&log.JSONFormatter{})
@@ -42,6 +43,16 @@ func init() {
 		log.SetLevel(ll)
 	}
 
+	ManifestFileTableName = os.Getenv("MANIFEST_FILE_TABLE")
+	ManifestTableName = os.Getenv("MANIFEST_TABLE")
+	JobSQSQueueId = os.Getenv("JOBS_QUEUE_ID")
+	SNSTopic = os.Getenv("IMPORTED_SNS_TOPIC")
+}
+
+// InitializeClients initializes the clients required by the Handler. Depends on values
+// that are initialized by the package init() function.
+// Separated out from init() since in its current state it really shouldn't be called when tests run
+func InitializeClients() {
 	cfg, err := config.LoadDefaultConfig(context.Background(), config.WithRegion("us-east-1"))
 	if err != nil {
 		log.Fatalf("LoadDefaultConfig: %v\n", err)
@@ -70,14 +81,11 @@ func init() {
 		}
 	}
 
-	ManifestFileTableName = os.Getenv("MANIFEST_FILE_TABLE")
-	ManifestTableName = os.Getenv("MANIFEST_TABLE")
-	jobSQSQueueId := os.Getenv("JOBS_QUEUE_ID")
 	SNSClient = sns.NewFromConfig(cfg)
 	S3Client = s3.NewFromConfig(cfg)
 	SNSTopic = os.Getenv("IMPORTED_SNS_TOPIC")
 	DynamoClient = dynamodb.NewFromConfig(cfg)
-	ChangelogClient = changelog.NewClient(*sqs.NewFromConfig(cfg), jobSQSQueueId)
+	ChangelogClient = changelog.NewClient(*sqs.NewFromConfig(cfg), JobSQSQueueId)
 }
 
 // Handler implements the function that is called when new SQS Events arrive.
@@ -102,7 +110,8 @@ func Handler(ctx context.Context, sqsEvent events.SQSEvent) (events.SQSEventResp
 		ManifestFileTableName,
 		ManifestTableName,
 		SNSTopic,
-		PusherClient)
+		PusherClient,
+		ChangelogClient)
 
 	eventResponse, err = s.Handler(ctx, sqsEvent)
 	if err != nil {

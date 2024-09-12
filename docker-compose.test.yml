@@ -21,6 +21,7 @@ services:
       - MANIFEST_FILE_TABLE=manifest-file-table
       - MANIFEST_TABLE=manifest-table
       - IMPORTED_SNS_TOPIC=import-topic
+      #- LOG_LEVEL=DEBUG
     volumes:
       - $PWD:/go/src/github.com/pennsieve/upload-service-v2
       - $PWD/../pennsieve-go-core:/go/src/github.com/pennsieve/pennsieve-go-core
