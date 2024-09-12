@@ -22,7 +22,6 @@ import (
 	"github.com/pennsieve/pennsieve-go-core/pkg/queries/pgdb"
 	testHelpers "github.com/pennsieve/pennsieve-go-core/test"
 	"github.com/pennsieve/pennsieve-upload-service-v2/upload/test"
-	"github.com/pusher/pusher-http-go/v5"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"os"
@@ -259,7 +258,8 @@ func TestMain(m *testing.M) {
 	client := getDynamoDBClient()
 
 	mChangelogger := &test.MockChangelogger{}
-	store := NewUploadHandlerStore(pgdbClient, client, mSNS, s3Client, ManifestFileTableName, ManifestTableName, SNSTopic, &pusher.Client{}, mChangelogger)
+	mPusher := test.NewMockPusherClient()
+	store := NewUploadHandlerStore(pgdbClient, client, mSNS, s3Client, ManifestFileTableName, ManifestTableName, SNSTopic, mPusher, mChangelogger)
 
 	manifestId := "00000000-0000-0000-0000-000000000000"
 	err = populateManifest(store, manifestId, 1)
@@ -297,9 +297,10 @@ func TestUploadService(t *testing.T) {
 
 			mSNS := test.MockSNS{}
 			s3Client := test.MockS3{}
+			mPusher := test.NewMockPusherClient()
 			mChangelogger := &test.MockChangelogger{}
 
-			store := NewUploadHandlerStore(pgdbClient, client, mSNS, s3Client, ManifestFileTableName, ManifestTableName, SNSTopic, &pusher.Client{}, mChangelogger)
+			store := NewUploadHandlerStore(pgdbClient, client, mSNS, s3Client, ManifestFileTableName, ManifestTableName, SNSTopic, mPusher, mChangelogger)
 
 			fn(t, store)
 		})

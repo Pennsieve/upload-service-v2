@@ -12,7 +12,6 @@ import (
 	"github.com/pennsieve/pennsieve-go-core/pkg/queries/pgdb"
 	testHelpers "github.com/pennsieve/pennsieve-go-core/test"
 	"github.com/pennsieve/pennsieve-upload-service-v2/upload/test"
-	"github.com/pusher/pusher-http-go/v5"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -39,10 +38,11 @@ func TestStore(t *testing.T) {
 
 			mSNS := test.MockSNS{}
 			mS3 := test.MockS3{}
+			mPusher := test.NewMockPusherClient()
 			mChangelogger := &test.MockChangelogger{}
 
 			store := NewUploadHandlerStore(pgdbClient, client, mSNS, mS3,
-				ManifestFileTableName, ManifestTableName, SNSTopic, &pusher.Client{}, mChangelogger)
+				ManifestFileTableName, ManifestTableName, SNSTopic, mPusher, mChangelogger)
 
 			fn(t, store)
 		})
@@ -304,10 +304,12 @@ func TestStoreWithPG(t *testing.T) {
 	for scenario, fn := range map[string]func(
 		*testing.T, int, *UploadHandlerStore,
 	){
+		"import files":                                    testImportFiles,
 		"import single file at top level":                 testImportFilesSingleFile,
 		"import single file in folder at top level":       testImportFilesSingleFileInFolder,
 		"import single file with leading slash":           testImportFilesSingleWithLeadingSlash,
 		"import single file in folder with leading slash": testImportFilesSingleInFolderWithLeadingSlash,
+		"import files with leading slash in path values":  testImportFilesWithLeadingSlash,
 	} {
 		t.Run(scenario, func(t *testing.T) {
 			t.Cleanup(func() {
@@ -369,10 +371,10 @@ func testImportFilesSingleFile(t *testing.T, orgID int, store *UploadHandlerStor
 
 	if assert.NoError(t, store.ImportFiles(context.Background(), datasetID, orgID, user, files, manifest)) {
 		if test.AssertRowCount(t, store.pgdb, orgID, "packages", 1) {
-			test.AssertExistsOneWhere(t, store.pgdb, orgID, "packages", map[string]any{"name": files[0].Name})
+			test.AssertExistsOneWhere(t, store.pgdb, orgID, "packages", map[string]any{"name": "file1.txt", "parent_id": nil})
 		}
 		if test.AssertRowCount(t, store.pgdb, orgID, "files", 1) {
-			test.AssertExistsOneWhere(t, store.pgdb, orgID, "files", map[string]any{"name": files[0].Name})
+			test.AssertExistsOneWhere(t, store.pgdb, orgID, "files", map[string]any{"name": "file1.txt"})
 		}
 	}
 
@@ -423,8 +425,9 @@ func testImportFilesSingleFileInFolder(t *testing.T, orgID int, store *UploadHan
 	if assert.NoError(t, store.ImportFiles(context.Background(), datasetID, orgID, user, files, manifest)) {
 		// One package for the folder and one for the file
 		if test.AssertRowCount(t, store.pgdb, orgID, "packages", 2) {
-			test.AssertExistsOneWhere(t, store.pgdb, orgID, "packages", map[string]any{"name": "dir1"})
+			test.AssertExistsOneWhere(t, store.pgdb, orgID, "packages", map[string]any{"name": "dir1", "parent_id": nil})
 			test.AssertExistsOneWhere(t, store.pgdb, orgID, "packages", map[string]any{"name": "file1.txt"})
+			test.AssertPackageIsChild(t, store.pgdb, orgID, "file1.txt", "dir1")
 		}
 		if test.AssertRowCount(t, store.pgdb, orgID, "files", 1) {
 			test.AssertExistsOneWhere(t, store.pgdb, orgID, "files", map[string]any{"name": "file1.txt"})
@@ -478,7 +481,7 @@ func testImportFilesSingleWithLeadingSlash(t *testing.T, orgID int, store *Uploa
 	if assert.NoError(t, store.ImportFiles(context.Background(), datasetID, orgID, user, files, manifest)) {
 		// There should only be one package since the path is "/", the import should not create a containing folder.
 		if test.AssertRowCount(t, store.pgdb, orgID, "packages", 1) {
-			test.AssertExistsOneWhere(t, store.pgdb, orgID, "packages", map[string]any{"name": "file1.txt"})
+			test.AssertExistsOneWhere(t, store.pgdb, orgID, "packages", map[string]any{"name": "file1.txt", "parent_id": nil})
 		}
 		if test.AssertRowCount(t, store.pgdb, orgID, "files", 1) {
 			test.AssertExistsOneWhere(t, store.pgdb, orgID, "files", map[string]any{"name": "file1.txt"})
@@ -532,11 +535,258 @@ func testImportFilesSingleInFolderWithLeadingSlash(t *testing.T, orgID int, stor
 	if assert.NoError(t, store.ImportFiles(context.Background(), datasetID, orgID, user, files, manifest)) {
 		// Two packages: dir1 and file1.txt
 		if test.AssertRowCount(t, store.pgdb, orgID, "packages", 2) {
-			test.AssertExistsOneWhere(t, store.pgdb, orgID, "packages", map[string]any{"name": "dir1"})
+			test.AssertExistsOneWhere(t, store.pgdb, orgID, "packages", map[string]any{"name": "dir1", "parent_id": nil})
 			test.AssertExistsOneWhere(t, store.pgdb, orgID, "packages", map[string]any{"name": "file1.txt"})
+			test.AssertPackageIsChild(t, store.pgdb, orgID, "file1.txt", "dir1")
 		}
 		if test.AssertRowCount(t, store.pgdb, orgID, "files", 1) {
 			test.AssertExistsOneWhere(t, store.pgdb, orgID, "files", map[string]any{"name": "file1.txt"})
+		}
+	}
+
+}
+
+func testImportFiles(t *testing.T, orgID int, store *UploadHandlerStore) {
+	datasetID := 1
+	user := pgdbmodels.User{
+		Id:           int64(1),
+		NodeId:       "N:user:99f02be5-009c-4ecd-9006-f016d48628bf",
+		Email:        uuid.NewString(),
+		FirstName:    uuid.NewString(),
+		LastName:     uuid.NewString(),
+		IsSuperAdmin: false,
+		PreferredOrg: int64(orgID),
+	}
+	manifestID := uuid.NewString()
+	manifest := &dydb.ManifestTable{
+		ManifestId:     manifestID,
+		DatasetId:      int64(datasetID),
+		DatasetNodeId:  uuid.NewString(),
+		OrganizationId: int64(orgID),
+		UserId:         user.Id,
+		Status:         "",
+		DateCreated:    0,
+	}
+	files := []uploadFile.UploadFile{
+		{
+			ManifestId:     manifestID,
+			UploadId:       uuid.NewString(),
+			S3Bucket:       uuid.NewString(),
+			S3Key:          uuid.NewString(),
+			Path:           "",
+			Name:           "root1.txt",
+			Extension:      "txt",
+			FileType:       fileType.Text,
+			Type:           packageType.Text,
+			SubType:        "",
+			Icon:           0,
+			Size:           0,
+			ETag:           "",
+			MergePackageId: "",
+			Sha256:         "",
+		},
+		{
+			ManifestId:     manifestID,
+			UploadId:       uuid.NewString(),
+			S3Bucket:       uuid.NewString(),
+			S3Key:          uuid.NewString(),
+			Path:           "dir1",
+			Name:           "file1.txt",
+			Extension:      "txt",
+			FileType:       fileType.Text,
+			Type:           packageType.Text,
+			SubType:        "",
+			Icon:           0,
+			Size:           0,
+			ETag:           "",
+			MergePackageId: "",
+			Sha256:         "",
+		},
+		{
+			ManifestId:     manifestID,
+			UploadId:       uuid.NewString(),
+			S3Bucket:       uuid.NewString(),
+			S3Key:          uuid.NewString(),
+			Path:           "dir1/dir2",
+			Name:           "file1_2.txt",
+			Extension:      "txt",
+			FileType:       fileType.Text,
+			Type:           packageType.Text,
+			SubType:        "",
+			Icon:           0,
+			Size:           0,
+			ETag:           "",
+			MergePackageId: "",
+			Sha256:         "",
+		},
+		{
+			ManifestId:     manifestID,
+			UploadId:       uuid.NewString(),
+			S3Bucket:       uuid.NewString(),
+			S3Key:          uuid.NewString(),
+			Path:           "dir3",
+			Name:           "file3.txt",
+			Extension:      "txt",
+			FileType:       fileType.Text,
+			Type:           packageType.Text,
+			SubType:        "",
+			Icon:           0,
+			Size:           0,
+			ETag:           "",
+			MergePackageId: "",
+			Sha256:         "",
+		},
+	}
+
+	if assert.NoError(t, store.ImportFiles(context.Background(), datasetID, orgID, user, files, manifest)) {
+		if test.AssertRowCount(t, store.pgdb, orgID, "packages", 7) {
+			test.AssertExistsOneWhere(t, store.pgdb, orgID, "packages",
+				map[string]any{"name": "root1.txt", "parent_id": nil})
+
+			test.AssertExistsOneWhere(t, store.pgdb, orgID, "packages", map[string]any{"name": "dir1", "parent_id": nil})
+
+			test.AssertExistsOneWhere(t, store.pgdb, orgID, "packages", map[string]any{"name": "file1.txt"})
+			test.AssertPackageIsChild(t, store.pgdb, orgID, "file1.txt", "dir1")
+
+			test.AssertExistsOneWhere(t, store.pgdb, orgID, "packages", map[string]any{"name": "dir2"})
+			test.AssertPackageIsChild(t, store.pgdb, orgID, "dir2", "dir1")
+
+			test.AssertExistsOneWhere(t, store.pgdb, orgID, "packages", map[string]any{"name": "file1_2.txt"})
+			test.AssertPackageIsChild(t, store.pgdb, orgID, "file1_2.txt", "dir2")
+
+			test.AssertExistsOneWhere(t, store.pgdb, orgID, "packages", map[string]any{"name": "dir3", "parent_id": nil})
+
+			test.AssertExistsOneWhere(t, store.pgdb, orgID, "packages", map[string]any{"name": "file3.txt"})
+			test.AssertPackageIsChild(t, store.pgdb, orgID, "file3.txt", "dir3")
+		}
+		if test.AssertRowCount(t, store.pgdb, orgID, "files", 4) {
+			test.AssertExistsOneWhere(t, store.pgdb, orgID, "files", map[string]any{"name": "root1.txt"})
+			test.AssertExistsOneWhere(t, store.pgdb, orgID, "files", map[string]any{"name": "file1.txt"})
+			test.AssertExistsOneWhere(t, store.pgdb, orgID, "files", map[string]any{"name": "file1_2.txt"})
+			test.AssertExistsOneWhere(t, store.pgdb, orgID, "files", map[string]any{"name": "file3.txt"})
+		}
+	}
+
+}
+
+func testImportFilesWithLeadingSlash(t *testing.T, orgID int, store *UploadHandlerStore) {
+	datasetID := 1
+	user := pgdbmodels.User{
+		Id:           int64(1),
+		NodeId:       "N:user:99f02be5-009c-4ecd-9006-f016d48628bf",
+		Email:        uuid.NewString(),
+		FirstName:    uuid.NewString(),
+		LastName:     uuid.NewString(),
+		IsSuperAdmin: false,
+		PreferredOrg: int64(orgID),
+	}
+	manifestID := uuid.NewString()
+	manifest := &dydb.ManifestTable{
+		ManifestId:     manifestID,
+		DatasetId:      int64(datasetID),
+		DatasetNodeId:  uuid.NewString(),
+		OrganizationId: int64(orgID),
+		UserId:         user.Id,
+		Status:         "",
+		DateCreated:    0,
+	}
+	files := []uploadFile.UploadFile{
+		{
+			ManifestId:     manifestID,
+			UploadId:       uuid.NewString(),
+			S3Bucket:       uuid.NewString(),
+			S3Key:          uuid.NewString(),
+			Path:           "/",
+			Name:           "root1.txt",
+			Extension:      "txt",
+			FileType:       fileType.Text,
+			Type:           packageType.Text,
+			SubType:        "",
+			Icon:           0,
+			Size:           0,
+			ETag:           "",
+			MergePackageId: "",
+			Sha256:         "",
+		},
+		{
+			ManifestId:     manifestID,
+			UploadId:       uuid.NewString(),
+			S3Bucket:       uuid.NewString(),
+			S3Key:          uuid.NewString(),
+			Path:           "/dir1",
+			Name:           "file1.txt",
+			Extension:      "txt",
+			FileType:       fileType.Text,
+			Type:           packageType.Text,
+			SubType:        "",
+			Icon:           0,
+			Size:           0,
+			ETag:           "",
+			MergePackageId: "",
+			Sha256:         "",
+		},
+		{
+			ManifestId:     manifestID,
+			UploadId:       uuid.NewString(),
+			S3Bucket:       uuid.NewString(),
+			S3Key:          uuid.NewString(),
+			Path:           "/dir1/dir2",
+			Name:           "file1_2.txt",
+			Extension:      "txt",
+			FileType:       fileType.Text,
+			Type:           packageType.Text,
+			SubType:        "",
+			Icon:           0,
+			Size:           0,
+			ETag:           "",
+			MergePackageId: "",
+			Sha256:         "",
+		},
+		{
+			ManifestId:     manifestID,
+			UploadId:       uuid.NewString(),
+			S3Bucket:       uuid.NewString(),
+			S3Key:          uuid.NewString(),
+			Path:           "/dir3",
+			Name:           "file3.txt",
+			Extension:      "txt",
+			FileType:       fileType.Text,
+			Type:           packageType.Text,
+			SubType:        "",
+			Icon:           0,
+			Size:           0,
+			ETag:           "",
+			MergePackageId: "",
+			Sha256:         "",
+		},
+	}
+
+	if assert.NoError(t, store.ImportFiles(context.Background(), datasetID, orgID, user, files, manifest)) {
+		if test.AssertRowCount(t, store.pgdb, orgID, "packages", 7) {
+			test.AssertExistsOneWhere(t, store.pgdb, orgID, "packages",
+				map[string]any{"name": "root1.txt", "parent_id": nil})
+
+			test.AssertExistsOneWhere(t, store.pgdb, orgID, "packages", map[string]any{"name": "dir1", "parent_id": nil})
+
+			test.AssertExistsOneWhere(t, store.pgdb, orgID, "packages", map[string]any{"name": "file1.txt"})
+			test.AssertPackageIsChild(t, store.pgdb, orgID, "file1.txt", "dir1")
+
+			test.AssertExistsOneWhere(t, store.pgdb, orgID, "packages", map[string]any{"name": "dir2"})
+			test.AssertPackageIsChild(t, store.pgdb, orgID, "dir2", "dir1")
+
+			test.AssertExistsOneWhere(t, store.pgdb, orgID, "packages", map[string]any{"name": "file1_2.txt"})
+			test.AssertPackageIsChild(t, store.pgdb, orgID, "file1_2.txt", "dir2")
+
+			test.AssertExistsOneWhere(t, store.pgdb, orgID, "packages", map[string]any{"name": "dir3", "parent_id": nil})
+
+			test.AssertExistsOneWhere(t, store.pgdb, orgID, "packages", map[string]any{"name": "file3.txt"})
+			test.AssertPackageIsChild(t, store.pgdb, orgID, "file3.txt", "dir3")
+		}
+		if test.AssertRowCount(t, store.pgdb, orgID, "files", 4) {
+			test.AssertExistsOneWhere(t, store.pgdb, orgID, "files", map[string]any{"name": "root1.txt"})
+			test.AssertExistsOneWhere(t, store.pgdb, orgID, "files", map[string]any{"name": "file1.txt"})
+			test.AssertExistsOneWhere(t, store.pgdb, orgID, "files", map[string]any{"name": "file1_2.txt"})
+			test.AssertExistsOneWhere(t, store.pgdb, orgID, "files", map[string]any{"name": "file3.txt"})
 		}
 	}
 

@@ -44,10 +44,10 @@ type UploadHandlerStore struct {
 	SNSClient       domain.SnsAPI
 	S3Client        domain.S3API
 	pusherClient    domain.PusherAPI
+	changelogClient Changelogger
 	SNSTopic        string
 	fileTableName   string
 	tableName       string
-	changelogClient Changelogger
 }
 
 type PackagesAndFiles struct {
@@ -148,6 +148,9 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 
 	// 1. Iterate over files and return map of folders and sub-folders
 	folderMap := getUploadFolderMap(files, "")
+	if contextLogger.Logger.IsLevelEnabled(log.DebugLevel) {
+		contextLogger.WithFields(log.Fields{"folderMap": folderMap}).Debug("calculated folder map")
+	}
 
 	// 2. Iterate over folders and create them if they do not exist in organization
 	// This will lock rows in db for concurrent Lambda handlers so wrapping in its own TX to minimize time.
@@ -165,10 +168,17 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 	}
 
 	folderPackageMap := res.(pgdb.PackageMap)
+	if contextLogger.Logger.IsLevelEnabled(log.DebugLevel) {
+		contextLogger.WithFields(log.Fields{"folderPackageMap": folderPackageMap}).Debug("calculated folder package map")
+	}
+
 	pkgParams, err := getPackageParams(datasetId, int(user.Id), files, folderPackageMap)
 	if err != nil {
 		contextLogger.Error("Unable to parse package parameters: ", err)
 		return err
+	}
+	if contextLogger.Logger.IsLevelEnabled(log.DebugLevel) {
+		contextLogger.WithFields(log.Fields{"pkgParams": pkgParams}).Debug("calculated package parameters")
 	}
 
 	// 3. Create packages and Files in Transaction
@@ -566,6 +576,16 @@ func (s *UploadHandlerStore) createStorageUpdateMap(ctx context.Context, pf Pack
 
 }
 
+func trimSlashes(path string) string {
+	// Remove leading and trailing "/"
+	leadingSlashes := regexp.MustCompile(`^/+`)
+	trimmed := leadingSlashes.ReplaceAllString(path, "")
+
+	trailingSlashes := regexp.MustCompile(`/+$`)
+	trimmed = trailingSlashes.ReplaceAllString(trimmed, "")
+	return trimmed
+}
+
 // getUploadFolderMap returns an object that maps path name to Folder object.
 func getUploadFolderMap(sortedFiles []uploadFile.UploadFile, targetFolder string) uploadFolder.UploadFolderMap {
 
@@ -574,26 +594,19 @@ func getUploadFolderMap(sortedFiles []uploadFile.UploadFile, targetFolder string
 
 	// Iterate over the files and create the UploadFolder objects.
 	for _, f := range sortedFiles {
+		p := trimSlashes(f.Path)
 
-		if f.Path == "" {
+		if p == "" {
 			continue
 		}
 
 		// Prepend the target-Folder if it exists
-		p := f.Path
 		if targetFolder != "" {
 			p = strings.Join(
 				[]string{
 					targetFolder, p,
 				}, "/")
 		}
-
-		// Remove leading and trailing "/"
-		leadingSlashes := regexp.MustCompile(`^/+`)
-		p = leadingSlashes.ReplaceAllString(p, "")
-
-		trailingSlashes := regexp.MustCompile(`/+$`)
-		p = trailingSlashes.ReplaceAllString(p, "")
 
 		// Iterate over path segments in a single file and identify folders.
 		pathSegments := strings.Split(p, "/")
@@ -668,8 +681,9 @@ func getPackageParams(datasetId int, ownerId int, uploadFiles []uploadFile.Uploa
 		}
 
 		parentId := int64(-1)
-		if file.Path != "" {
-			parentId = pathToFolderMap[file.Path].Id
+		trimmedPath := trimSlashes(file.Path)
+		if trimmedPath != "" {
+			parentId = pathToFolderMap[trimmedPath].Id
 		}
 
 		uploadId := sql.NullString{
