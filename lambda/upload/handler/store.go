@@ -1,5 +1,6 @@
 package handler
 
+import "C"
 import (
 	"context"
 	"database/sql"
@@ -38,16 +39,17 @@ var seenFileUUIDs = map[uuid.UUID]int{}
 
 // UploadHandlerStore provides the Queries interface and a db instance.
 type UploadHandlerStore struct {
-	pg            *UploadPgQueries
-	dy            *UploadDyQueries
-	pgdb          *sql.DB
-	dynamodb      *dynamodb.Client
-	SNSClient     domain.SnsAPI
-	S3Client      domain.S3API
-	pusherClient  domain.PusherAPI
-	SNSTopic      string
-	fileTableName string
-	tableName     string
+	pg              *UploadPgQueries
+	dy              *UploadDyQueries
+	pgdb            *sql.DB
+	dynamodb        *dynamodb.Client
+	SNSClient       domain.SnsAPI
+	S3Client        domain.S3API
+	pusherClient    domain.PusherAPI
+	changelogClient Changelogger
+	SNSTopic        string
+	fileTableName   string
+	tableName       string
 }
 
 type PackagesAndFiles struct {
@@ -63,18 +65,19 @@ type storageUpdateParams struct {
 // NewUploadHandlerStore returns a UploadHandlerStore object which implements the Queries
 func NewUploadHandlerStore(db *sql.DB, dy *dynamodb.Client, sns domain.SnsAPI,
 	s3 domain.S3API, fileTableName string, tableName string, snsTopic string,
-	pc *pusher.Client) *UploadHandlerStore {
+	pc *pusher.Client, changelogger Changelogger) *UploadHandlerStore {
 	return &UploadHandlerStore{
-		pgdb:          db,
-		dynamodb:      dy,
-		pusherClient:  pc,
-		SNSClient:     sns,
-		SNSTopic:      snsTopic,
-		S3Client:      s3,
-		pg:            NewUploadPgQueries(db),
-		dy:            NewUploadDyQueries(dy),
-		fileTableName: fileTableName,
-		tableName:     tableName,
+		pgdb:            db,
+		dynamodb:        dy,
+		pusherClient:    pc,
+		SNSClient:       sns,
+		SNSTopic:        snsTopic,
+		S3Client:        s3,
+		pg:              NewUploadPgQueries(db),
+		dy:              NewUploadDyQueries(dy),
+		fileTableName:   fileTableName,
+		tableName:       tableName,
+		changelogClient: changelogger,
 	}
 }
 
@@ -310,7 +313,7 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 		DatasetChangelogEventJob: params,
 	}
 
-	err = ChangelogClient.EmitEvents(context.Background(), mes)
+	err = s.changelogClient.EmitEvents(context.Background(), mes)
 	if err != nil {
 		contextLogger.Error("Error with notifying Changelog about imported records: ", err)
 	}

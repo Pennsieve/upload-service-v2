@@ -31,7 +31,9 @@ func TestS3(t *testing.T) {
 
 			mSNS := test.MockSNS{}
 			mS3 := test.MockS3{}
-			store := NewUploadHandlerStore(pgdbClient, client, mSNS, mS3, ManifestFileTableName, ManifestTableName, SNSTopic, &pusher.Client{})
+			mChangelogger := &test.MockChangelogger{}
+
+			store := NewUploadHandlerStore(pgdbClient, client, mSNS, mS3, ManifestFileTableName, ManifestTableName, SNSTopic, &pusher.Client{}, mChangelogger)
 
 			fn(t, store)
 		})

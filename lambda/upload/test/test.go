@@ -7,6 +7,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/aws-sdk-go-v2/service/sns"
 	"github.com/aws/smithy-go/middleware"
+	"github.com/pennsieve/pennsieve-go-core/pkg/changelog"
 )
 
 type MockSNS struct{}
@@ -44,4 +45,13 @@ func (s MockS3) DeleteObjects(ctx context.Context, params *s3.DeleteObjectsInput
 		Deleted: deleted,
 	}
 	return &result, nil
+}
+
+type MockChangelogger struct {
+	Messages []changelog.Message
+}
+
+func (m *MockChangelogger) EmitEvents(ctx context.Context, params changelog.Message) error {
+	m.Messages = append(m.Messages, params)
+	return nil
 }

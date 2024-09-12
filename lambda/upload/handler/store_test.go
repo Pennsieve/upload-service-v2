@@ -1,12 +1,21 @@
 package handler
 
 import (
+	"context"
+	"fmt"
+	"github.com/google/uuid"
+	"github.com/pennsieve/pennsieve-go-core/pkg/models/dydb"
+	"github.com/pennsieve/pennsieve-go-core/pkg/models/fileInfo/fileType"
+	"github.com/pennsieve/pennsieve-go-core/pkg/models/packageInfo/packageType"
+	pgdbmodels "github.com/pennsieve/pennsieve-go-core/pkg/models/pgdb"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/uploadFile"
 	"github.com/pennsieve/pennsieve-go-core/pkg/queries/pgdb"
+	testHelpers "github.com/pennsieve/pennsieve-go-core/test"
 	"github.com/pennsieve/pennsieve-upload-service-v2/upload/test"
 	"github.com/pusher/pusher-http-go/v5"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"testing"
 )
 
@@ -30,8 +39,10 @@ func TestStore(t *testing.T) {
 
 			mSNS := test.MockSNS{}
 			mS3 := test.MockS3{}
+			mChangelogger := &test.MockChangelogger{}
+
 			store := NewUploadHandlerStore(pgdbClient, client, mSNS, mS3,
-				ManifestFileTableName, ManifestTableName, SNSTopic, &pusher.Client{})
+				ManifestFileTableName, ManifestTableName, SNSTopic, &pusher.Client{}, mChangelogger)
 
 			fn(t, store)
 		})
@@ -269,4 +280,71 @@ func testDeleteOrphanedFiles(t *testing.T, store *UploadHandlerStore) {
 	err := store.deleteOrphanFiles(files)
 	assert.NoError(t, err)
 
+}
+
+func TestImportFilesLeadingSlash(t *testing.T) {
+	client := getDynamoDBClient()
+
+	pgdbClient, err := pgdb.ConnectENV()
+	if err != nil {
+		log.Fatal("cannot connect to db:", err)
+	}
+
+	mSNS := test.MockSNS{}
+	mS3 := test.MockS3{}
+	mChangelogger := &test.MockChangelogger{}
+
+	orgID := 1
+
+	store := NewUploadHandlerStore(pgdbClient, client, mSNS, mS3,
+		ManifestFileTableName, ManifestTableName, SNSTopic, &pusher.Client{}, mChangelogger)
+	require.NoError(t, store.WithOrg(orgID))
+
+	t.Cleanup(func() {
+		testHelpers.Truncate(t, pgdbClient, orgID, "packages")
+		testHelpers.Truncate(t, pgdbClient, orgID, "files")
+	})
+
+	datasetID := 1
+	user := pgdbmodels.User{
+		Id:           int64(1),
+		NodeId:       "N:user:99f02be5-009c-4ecd-9006-f016d48628bf",
+		Email:        uuid.NewString(),
+		FirstName:    uuid.NewString(),
+		LastName:     uuid.NewString(),
+		IsSuperAdmin: false,
+		PreferredOrg: int64(orgID),
+	}
+	manifestID := uuid.NewString()
+	manifest := &dydb.ManifestTable{
+		ManifestId:     manifestID,
+		DatasetId:      int64(datasetID),
+		DatasetNodeId:  uuid.NewString(),
+		OrganizationId: int64(orgID),
+		UserId:         user.Id,
+		Status:         "",
+		DateCreated:    0,
+	}
+	uploadID := uuid.NewString()
+	files := []uploadFile.UploadFile{
+		{
+			ManifestId:     manifestID,
+			UploadId:       uploadID,
+			S3Bucket:       uuid.NewString(),
+			S3Key:          fmt.Sprintf("%s/%s", manifestID, uploadID),
+			Path:           "",
+			Name:           "file1.txt",
+			Extension:      "txt",
+			FileType:       fileType.Text,
+			Type:           packageType.Text,
+			SubType:        "",
+			Icon:           0,
+			Size:           0,
+			ETag:           "",
+			MergePackageId: "",
+			Sha256:         "",
+		},
+	}
+
+	require.NoError(t, store.ImportFiles(context.Background(), datasetID, orgID, user, files, manifest))
 }

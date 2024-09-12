@@ -102,7 +102,8 @@ func Handler(ctx context.Context, sqsEvent events.SQSEvent) (events.SQSEventResp
 		ManifestFileTableName,
 		ManifestTableName,
 		SNSTopic,
-		PusherClient)
+		PusherClient,
+		ChangelogClient)
 
 	eventResponse, err = s.Handler(ctx, sqsEvent)
 	if err != nil {

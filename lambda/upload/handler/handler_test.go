@@ -257,7 +257,9 @@ func TestMain(m *testing.M) {
 	}
 
 	client := getDynamoDBClient()
-	store := NewUploadHandlerStore(pgdbClient, client, mSNS, s3Client, ManifestFileTableName, ManifestTableName, SNSTopic, &pusher.Client{})
+
+	mChangelogger := &test.MockChangelogger{}
+	store := NewUploadHandlerStore(pgdbClient, client, mSNS, s3Client, ManifestFileTableName, ManifestTableName, SNSTopic, &pusher.Client{}, mChangelogger)
 
 	manifestId := "00000000-0000-0000-0000-000000000000"
 	err = populateManifest(store, manifestId, 1)
@@ -295,8 +297,9 @@ func TestUploadService(t *testing.T) {
 
 			mSNS := test.MockSNS{}
 			s3Client := test.MockS3{}
+			mChangelogger := &test.MockChangelogger{}
 
-			store := NewUploadHandlerStore(pgdbClient, client, mSNS, s3Client, ManifestFileTableName, ManifestTableName, SNSTopic, &pusher.Client{})
+			store := NewUploadHandlerStore(pgdbClient, client, mSNS, s3Client, ManifestFileTableName, ManifestTableName, SNSTopic, &pusher.Client{}, mChangelogger)
 
 			fn(t, store)
 		})
