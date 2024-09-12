@@ -282,7 +282,7 @@ func testDeleteOrphanedFiles(t *testing.T, store *UploadHandlerStore) {
 
 }
 
-func TestImportFilesLeadingSlash(t *testing.T) {
+func TestStoreWithPG(t *testing.T) {
 	client := getDynamoDBClient()
 
 	pgdbClient, err := pgdb.ConnectENV()
@@ -293,18 +293,39 @@ func TestImportFilesLeadingSlash(t *testing.T) {
 	mSNS := test.MockSNS{}
 	mS3 := test.MockS3{}
 	mChangelogger := &test.MockChangelogger{}
+	mPusher := test.NewMockPusherClient()
 
 	orgID := 1
 
 	store := NewUploadHandlerStore(pgdbClient, client, mSNS, mS3,
-		ManifestFileTableName, ManifestTableName, SNSTopic, &pusher.Client{}, mChangelogger)
+		ManifestFileTableName, ManifestTableName, SNSTopic, mPusher, mChangelogger)
 	require.NoError(t, store.WithOrg(orgID))
 
-	t.Cleanup(func() {
-		testHelpers.Truncate(t, pgdbClient, orgID, "packages")
-		testHelpers.Truncate(t, pgdbClient, orgID, "files")
-	})
+	for scenario, fn := range map[string]func(
+		*testing.T, int, *UploadHandlerStore,
+	){
+		"import single file at top level":                 testImportFilesSingleFile,
+		"import single file in folder at top level":       testImportFilesSingleFileInFolder,
+		"import single file with leading slash":           testImportFilesSingleWithLeadingSlash,
+		"import single file in folder with leading slash": testImportFilesSingleInFolderWithLeadingSlash,
+	} {
+		t.Run(scenario, func(t *testing.T) {
+			t.Cleanup(func() {
+				testHelpers.Truncate(t, pgdbClient, orgID, "packages")
+				testHelpers.Truncate(t, pgdbClient, orgID, "files")
+				testHelpers.Truncate(t, store.pgdb, orgID, "package_storage")
+				testHelpers.Truncate(t, store.pgdb, orgID, "organization_storage")
+				testHelpers.Truncate(t, store.pgdb, orgID, "dataset_storage")
+				mChangelogger.Clear()
+				mPusher.Clear()
+			})
 
+			fn(t, orgID, store)
+		})
+	}
+}
+
+func testImportFilesSingleFile(t *testing.T, orgID int, store *UploadHandlerStore) {
 	datasetID := 1
 	user := pgdbmodels.User{
 		Id:           int64(1),
@@ -346,5 +367,159 @@ func TestImportFilesLeadingSlash(t *testing.T) {
 		},
 	}
 
-	require.NoError(t, store.ImportFiles(context.Background(), datasetID, orgID, user, files, manifest))
+	if assert.NoError(t, store.ImportFiles(context.Background(), datasetID, orgID, user, files, manifest)) {
+		test.AssertRowCount(t, store.pgdb, orgID, "packages", 1)
+		test.AssertRowCount(t, store.pgdb, orgID, "files", 1)
+	}
+
+}
+
+func testImportFilesSingleFileInFolder(t *testing.T, orgID int, store *UploadHandlerStore) {
+	datasetID := 1
+	user := pgdbmodels.User{
+		Id:           int64(1),
+		NodeId:       "N:user:99f02be5-009c-4ecd-9006-f016d48628bf",
+		Email:        uuid.NewString(),
+		FirstName:    uuid.NewString(),
+		LastName:     uuid.NewString(),
+		IsSuperAdmin: false,
+		PreferredOrg: int64(orgID),
+	}
+	manifestID := uuid.NewString()
+	manifest := &dydb.ManifestTable{
+		ManifestId:     manifestID,
+		DatasetId:      int64(datasetID),
+		DatasetNodeId:  uuid.NewString(),
+		OrganizationId: int64(orgID),
+		UserId:         user.Id,
+		Status:         "",
+		DateCreated:    0,
+	}
+	uploadID := uuid.NewString()
+	files := []uploadFile.UploadFile{
+		{
+			ManifestId:     manifestID,
+			UploadId:       uploadID,
+			S3Bucket:       uuid.NewString(),
+			S3Key:          fmt.Sprintf("%s/%s", manifestID, uploadID),
+			Path:           "dir1",
+			Name:           "file1.txt",
+			Extension:      "txt",
+			FileType:       fileType.Text,
+			Type:           packageType.Text,
+			SubType:        "",
+			Icon:           0,
+			Size:           0,
+			ETag:           "",
+			MergePackageId: "",
+			Sha256:         "",
+		},
+	}
+
+	if assert.NoError(t, store.ImportFiles(context.Background(), datasetID, orgID, user, files, manifest)) {
+		// One package for the folder and one for the file
+		test.AssertRowCount(t, store.pgdb, orgID, "packages", 2)
+		test.AssertRowCount(t, store.pgdb, orgID, "files", 1)
+	}
+
+}
+
+func testImportFilesSingleWithLeadingSlash(t *testing.T, orgID int, store *UploadHandlerStore) {
+	datasetID := 1
+	user := pgdbmodels.User{
+		Id:           int64(1),
+		NodeId:       "N:user:99f02be5-009c-4ecd-9006-f016d48628bf",
+		Email:        uuid.NewString(),
+		FirstName:    uuid.NewString(),
+		LastName:     uuid.NewString(),
+		IsSuperAdmin: false,
+		PreferredOrg: int64(orgID),
+	}
+	manifestID := uuid.NewString()
+	manifest := &dydb.ManifestTable{
+		ManifestId:     manifestID,
+		DatasetId:      int64(datasetID),
+		DatasetNodeId:  uuid.NewString(),
+		OrganizationId: int64(orgID),
+		UserId:         user.Id,
+		Status:         "",
+		DateCreated:    0,
+	}
+	uploadID := uuid.NewString()
+	files := []uploadFile.UploadFile{
+		{
+			ManifestId:     manifestID,
+			UploadId:       uploadID,
+			S3Bucket:       uuid.NewString(),
+			S3Key:          fmt.Sprintf("%s/%s", manifestID, uploadID),
+			Path:           "/",
+			Name:           "file1.txt",
+			Extension:      "txt",
+			FileType:       fileType.Text,
+			Type:           packageType.Text,
+			SubType:        "",
+			Icon:           0,
+			Size:           0,
+			ETag:           "",
+			MergePackageId: "",
+			Sha256:         "",
+		},
+	}
+
+	if assert.NoError(t, store.ImportFiles(context.Background(), datasetID, orgID, user, files, manifest)) {
+		// There should only be one package since the path is "/", the import should not create a containing folder.
+		test.AssertRowCount(t, store.pgdb, orgID, "packages", 1)
+		test.AssertRowCount(t, store.pgdb, orgID, "files", 1)
+	}
+
+}
+
+func testImportFilesSingleInFolderWithLeadingSlash(t *testing.T, orgID int, store *UploadHandlerStore) {
+	datasetID := 1
+	user := pgdbmodels.User{
+		Id:           int64(1),
+		NodeId:       "N:user:99f02be5-009c-4ecd-9006-f016d48628bf",
+		Email:        uuid.NewString(),
+		FirstName:    uuid.NewString(),
+		LastName:     uuid.NewString(),
+		IsSuperAdmin: false,
+		PreferredOrg: int64(orgID),
+	}
+	manifestID := uuid.NewString()
+	manifest := &dydb.ManifestTable{
+		ManifestId:     manifestID,
+		DatasetId:      int64(datasetID),
+		DatasetNodeId:  uuid.NewString(),
+		OrganizationId: int64(orgID),
+		UserId:         user.Id,
+		Status:         "",
+		DateCreated:    0,
+	}
+	uploadID := uuid.NewString()
+	files := []uploadFile.UploadFile{
+		{
+			ManifestId:     manifestID,
+			UploadId:       uploadID,
+			S3Bucket:       uuid.NewString(),
+			S3Key:          fmt.Sprintf("%s/%s", manifestID, uploadID),
+			Path:           "/dir1",
+			Name:           "file1.txt",
+			Extension:      "txt",
+			FileType:       fileType.Text,
+			Type:           packageType.Text,
+			SubType:        "",
+			Icon:           0,
+			Size:           0,
+			ETag:           "",
+			MergePackageId: "",
+			Sha256:         "",
+		},
+	}
+
+	if assert.NoError(t, store.ImportFiles(context.Background(), datasetID, orgID, user, files, manifest)) {
+		// Two packages: dir1 and file1.txt
+		test.AssertRowCount(t, store.pgdb, orgID, "packages", 2)
+		test.AssertRowCount(t, store.pgdb, orgID, "files", 1)
+	}
+
 }

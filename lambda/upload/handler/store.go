@@ -1,6 +1,5 @@
 package handler
 
-import "C"
 import (
 	"context"
 	"database/sql"
@@ -24,7 +23,6 @@ import (
 	ps "github.com/pennsieve/pennsieve-go-core/pkg/models/pusher"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/uploadFile"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/uploadFolder"
-	"github.com/pusher/pusher-http-go/v5"
 	log "github.com/sirupsen/logrus"
 	"regexp"
 	"strings"
@@ -46,10 +44,10 @@ type UploadHandlerStore struct {
 	SNSClient       domain.SnsAPI
 	S3Client        domain.S3API
 	pusherClient    domain.PusherAPI
-	changelogClient Changelogger
 	SNSTopic        string
 	fileTableName   string
 	tableName       string
+	changelogClient Changelogger
 }
 
 type PackagesAndFiles struct {
@@ -65,7 +63,7 @@ type storageUpdateParams struct {
 // NewUploadHandlerStore returns a UploadHandlerStore object which implements the Queries
 func NewUploadHandlerStore(db *sql.DB, dy *dynamodb.Client, sns domain.SnsAPI,
 	s3 domain.S3API, fileTableName string, tableName string, snsTopic string,
-	pc *pusher.Client, changelogger Changelogger) *UploadHandlerStore {
+	pc domain.PusherAPI, changelogger Changelogger) *UploadHandlerStore {
 	return &UploadHandlerStore{
 		pgdb:            db,
 		dynamodb:        dy,
