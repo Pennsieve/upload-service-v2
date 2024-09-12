@@ -71,11 +71,11 @@ func NewUploadHandlerStore(db *sql.DB, dy *dynamodb.Client, sns domain.SnsAPI,
 		SNSClient:       sns,
 		SNSTopic:        snsTopic,
 		S3Client:        s3,
+		changelogClient: changelogger,
 		pg:              NewUploadPgQueries(db),
 		dy:              NewUploadDyQueries(dy),
 		fileTableName:   fileTableName,
 		tableName:       tableName,
-		changelogClient: changelogger,
 	}
 }
 
