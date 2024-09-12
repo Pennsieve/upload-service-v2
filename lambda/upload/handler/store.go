@@ -137,7 +137,9 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 	})
 
 	// Verify assumptions
-	for _, f := range files {
+	for i, f := range files {
+		// avoiding for-loop variable gotcha
+		files[i].Path = trimSlashes(f.Path)
 		if f.ManifestId != manifest.ManifestId {
 			return errors.New("not all files belong to the same manifest (required for ImportFiles method)")
 		}
@@ -594,7 +596,7 @@ func getUploadFolderMap(sortedFiles []uploadFile.UploadFile, targetFolder string
 
 	// Iterate over the files and create the UploadFolder objects.
 	for _, f := range sortedFiles {
-		p := trimSlashes(f.Path)
+		p := f.Path
 
 		if p == "" {
 			continue
@@ -681,9 +683,8 @@ func getPackageParams(datasetId int, ownerId int, uploadFiles []uploadFile.Uploa
 		}
 
 		parentId := int64(-1)
-		trimmedPath := trimSlashes(file.Path)
-		if trimmedPath != "" {
-			parentId = pathToFolderMap[trimmedPath].Id
+		if file.Path != "" {
+			parentId = pathToFolderMap[file.Path].Id
 		}
 
 		uploadId := sql.NullString{

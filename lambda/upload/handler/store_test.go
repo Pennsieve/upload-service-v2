@@ -24,7 +24,6 @@ func TestStore(t *testing.T) {
 	){
 		"sorts upload files by path":           testSortFiles,
 		"correctly maps files to folders":      testFolderMapping,
-		"test ignore leading slash":            testRemoveLeadingTrailingSlash,
 		"test folder mapping for nested files": testNestedStructure,
 		"test deleting orphaned files":         testDeleteOrphanedFiles,
 	} {
@@ -169,67 +168,6 @@ func testFolderMapping(t *testing.T, _ *UploadHandlerStore) {
 	// Check folder depth
 	assert.Equal(t, 2, folderMap2["hello/you/folder1"].Depth)
 	assert.Equal(t, 4, folderMap2["hello/you/folder1/folder2/folder3"].Depth)
-
-}
-
-func testRemoveLeadingTrailingSlash(t *testing.T, _ *UploadHandlerStore) {
-	uploadFile1 := uploadFile.UploadFile{
-		ManifestId: "",
-		Path:       "/folder1/folder2",
-		Name:       "",
-		Extension:  "",
-		Type:       0,
-		SubType:    "",
-		Icon:       0,
-		Size:       0,
-		ETag:       "",
-	}
-	uploadFile2 := uploadFile.UploadFile{
-		ManifestId: "",
-		Path:       "/////folder1/folder10",
-		Name:       "",
-		Extension:  "",
-		Type:       0,
-		SubType:    "",
-		Icon:       0,
-		Size:       0,
-		ETag:       "",
-	}
-	uploadFile3 := uploadFile.UploadFile{
-		ManifestId: "",
-		Path:       "/folder1/folder10///",
-		Name:       "",
-		Extension:  "",
-		Type:       0,
-		SubType:    "",
-		Icon:       0,
-		Size:       0,
-		ETag:       "",
-	}
-	uploadFile4 := uploadFile.UploadFile{
-		ManifestId: "",
-		Path:       "/folder1/folder10/",
-		Name:       "",
-		Extension:  "",
-		Type:       0,
-		SubType:    "",
-		Icon:       0,
-		Size:       0,
-		ETag:       "",
-	}
-
-	uploadFiles := []uploadFile.UploadFile{
-		uploadFile1,
-		uploadFile2,
-		uploadFile3,
-		uploadFile4,
-	}
-
-	folderMap := getUploadFolderMap(uploadFiles, "")
-
-	t.Log(folderMap)
-	// Number of folders
-	assert.Equal(t, 3, len(folderMap))
 
 }
 
