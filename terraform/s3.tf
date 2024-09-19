@@ -17,6 +17,23 @@ resource "aws_s3_bucket" "uploads_s3_bucket" {
   )
 }
 
+resource "aws_s3_bucket_lifecycle_configuration" "upload_s3_bucket_lifecycle" {
+  bucket = aws_s3_bucket.uploads_s3_bucket.bucket
+
+  rule {
+    id = "expire-partial-uploads"
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+
+    expiration {
+      days = 7
+    }
+    status = "Enabled"
+  }
+}
+
 resource "aws_s3_bucket_policy" "uploads_s3_bucket_policy" {
   bucket = aws_s3_bucket.uploads_s3_bucket.bucket
   policy = data.aws_iam_policy_document.uploads_bucket_iam_policy_document.json
