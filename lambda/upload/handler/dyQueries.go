@@ -88,13 +88,15 @@ func (q *UploadDyQueries) GetUploadFiles(entries []UploadEntry) ([]uploadFile.Up
 
 		// Re-request missing items if for some reason dynamodb does not return all events
 		for len(dbResults.UnprocessedKeys) > 0 {
-			moreResults, err := q.db.BatchGetItem(context.Background(), &batchItemInput)
+			dbResults, err = q.db.BatchGetItem(context.Background(), &dynamodb.BatchGetItemInput{
+				RequestItems: dbResults.UnprocessedKeys,
+			})
 			if err != nil {
 				log.Error(fmt.Sprintf("Unable to get dbItems: %v", err))
 				return nil, nil, err
 			}
 
-			dbItems = append(dbItems, moreResults.Responses[ManifestFileTableName]...)
+			dbItems = append(dbItems, dbResults.Responses[ManifestFileTableName]...)
 		}
 
 		for _, dbItem := range dbItems {
