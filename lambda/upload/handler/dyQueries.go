@@ -89,8 +89,9 @@ func (q *UploadDyQueries) GetUploadFiles(entries []UploadEntry) ([]uploadFile.Up
 		dbItems := dbResults.Responses[ManifestFileTableName]
 
 		// Re-request missing items if for some reason dynamodb does not return all events
-		retryCount := 1
-		for len(dbResults.UnprocessedKeys) > 0 {
+		retryCount := 0
+		for len(dbResults.UnprocessedKeys) > 0 && retryCount < maxRetries {
+			retryCount++
 			exponentialWaitWithJitter(retryCount)
 			dbResults, err = q.db.BatchGetItem(context.Background(), &dynamodb.BatchGetItemInput{
 				RequestItems: dbResults.UnprocessedKeys,
@@ -100,7 +101,10 @@ func (q *UploadDyQueries) GetUploadFiles(entries []UploadEntry) ([]uploadFile.Up
 				return nil, nil, err
 			}
 			dbItems = append(dbItems, dbResults.Responses[ManifestFileTableName]...)
-			retryCount++
+		}
+
+		if len(dbResults.UnprocessedKeys) > 0 {
+			log.Warnf("giving up on BatchGetItem: %d unprocessed keys remaining after %d retries", len(dbResults.UnprocessedKeys), maxRetries)
 		}
 
 		for _, dbItem := range dbItems {
@@ -303,6 +307,8 @@ func contains(s []string, str string) bool {
 
 	return false
 }
+
+const maxRetries = 10
 
 var maxRetryWaitMs = time.Minute.Milliseconds()
 
