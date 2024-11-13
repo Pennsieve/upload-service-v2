@@ -3,12 +3,18 @@ package handler
 import (
 	"context"
 	"database/sql"
+	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
+	"github.com/google/uuid"
+	"github.com/pennsieve/pennsieve-go-core/pkg/models/dydb"
 	manifestModels "github.com/pennsieve/pennsieve-go-core/pkg/models/manifest"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/uploadFile"
 	"github.com/pennsieve/pennsieve-go-core/pkg/queries/pgdb"
 	"github.com/pennsieve/pennsieve-upload-service-v2/upload/test"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"testing"
 )
 
@@ -106,5 +112,77 @@ func testCheckUpdateManifest(t *testing.T, store *UploadHandlerStore) {
 		log.Error(err)
 	}
 	assert.Equal(t, manifestModels.Completed, status, "expected to now be in COMPLETED status")
+
+}
+
+func TestGetUploadFilesUnprocessedKeys(t *testing.T) {
+
+	manifestId := "00000000-0000-0000-0000-000000000007"
+	// Create entries and expectations
+	var entries []UploadEntry
+	var expectedResponseValues []map[string]types.AttributeValue
+	var expectedUnprocessedKeys []map[string]types.AttributeValue
+	for i := 0; i < 10; i++ {
+		e := UploadEntry{
+			ManifestId: manifestId,
+			UploadId:   uuid.NewString(),
+		}
+		entries = append(entries, e)
+
+		// The expected response value corresponding to e for the mock response
+		expectedResponseValue, err := attributevalue.MarshalMap(dydb.ManifestFileTable{ManifestId: e.ManifestId, UploadId: e.UploadId})
+		require.NoError(t, err)
+		expectedResponseValues = append(expectedResponseValues, expectedResponseValue)
+
+		// The expected key corresponding to e for mock unprocessed key
+		expectedUnprocessedKey, err := attributevalue.MarshalMap(dydb.ManifestFilePrimaryKey{
+			ManifestId: e.ManifestId,
+			UploadId:   e.UploadId,
+		})
+		require.NoError(t, err)
+		expectedUnprocessedKeys = append(expectedUnprocessedKeys, expectedUnprocessedKey)
+	}
+
+	// Build expected outputs with unprocessed keys
+	expectedOutputs := []*dynamodb.BatchGetItemOutput{
+		{
+			Responses: map[string][]map[string]types.AttributeValue{ManifestFileTableName: expectedResponseValues[0:5]},
+			UnprocessedKeys: map[string]types.KeysAndAttributes{ManifestFileTableName: {
+				Keys: expectedUnprocessedKeys[5:],
+			}},
+		},
+		{
+			Responses: map[string][]map[string]types.AttributeValue{ManifestFileTableName: expectedResponseValues[5:8]},
+			UnprocessedKeys: map[string]types.KeysAndAttributes{ManifestFileTableName: {
+				Keys: expectedUnprocessedKeys[8:],
+			}},
+		},
+		{
+			Responses:       map[string][]map[string]types.AttributeValue{ManifestFileTableName: expectedResponseValues[8:]},
+			UnprocessedKeys: nil,
+		},
+	}
+
+	// set up mock to return batches with unprocessed keys
+	mockDy := test.MockDynamoDB{
+		TestingT:            t,
+		BatchGetItemOutputs: expectedOutputs,
+	}
+	queries := NewUploadDyQueries(&mockDy)
+
+	results, orphanEntries, err := queries.GetUploadFiles(entries)
+	assert.NoError(t, err)
+	assert.Len(t, results, len(entries), "Expect the number of Upload Files to match the submitted files")
+	for _, entry := range entries {
+		var foundMatch bool
+		for _, result := range results {
+			if foundMatch = entry.ManifestId == result.ManifestId && entry.UploadId == result.UploadId; foundMatch {
+				break
+			}
+		}
+		assert.True(t, foundMatch, "no result found for entry with uploadId %s", entry.UploadId)
+	}
+	assert.Nil(t, orphanEntries, "We should not see any missing entries in the dynamodb")
+	mockDy.AssertBatchGetItemCallCount(len(expectedOutputs))
 
 }

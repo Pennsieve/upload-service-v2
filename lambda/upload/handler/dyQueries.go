@@ -14,7 +14,9 @@ import (
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/uploadFile"
 	dyQueries "github.com/pennsieve/pennsieve-go-core/pkg/queries/dydb"
 	log "github.com/sirupsen/logrus"
+	"math/rand"
 	"regexp"
+	"time"
 )
 
 // UploadDyQueries is the UploadHandler Queries Struct embedding the shared Queries struct
@@ -87,14 +89,22 @@ func (q *UploadDyQueries) GetUploadFiles(entries []UploadEntry) ([]uploadFile.Up
 		dbItems := dbResults.Responses[ManifestFileTableName]
 
 		// Re-request missing items if for some reason dynamodb does not return all events
-		for len(dbResults.UnprocessedKeys) > 0 {
-			moreResults, err := q.db.BatchGetItem(context.Background(), &batchItemInput)
+		retryCount := 0
+		for len(dbResults.UnprocessedKeys) > 0 && retryCount < maxRetries {
+			retryCount++
+			exponentialWaitWithJitter(retryCount)
+			dbResults, err = q.db.BatchGetItem(context.Background(), &dynamodb.BatchGetItemInput{
+				RequestItems: dbResults.UnprocessedKeys,
+			})
 			if err != nil {
 				log.Error(fmt.Sprintf("Unable to get dbItems: %v", err))
 				return nil, nil, err
 			}
+			dbItems = append(dbItems, dbResults.Responses[ManifestFileTableName]...)
+		}
 
-			dbItems = append(dbItems, moreResults.Responses[ManifestFileTableName]...)
+		if len(dbResults.UnprocessedKeys) > 0 {
+			log.Warnf("giving up on BatchGetItem: %d unprocessed keys remaining after %d retries", len(dbResults.UnprocessedKeys), maxRetries)
 		}
 
 		for _, dbItem := range dbItems {
@@ -296,4 +306,17 @@ func contains(s []string, str string) bool {
 	}
 
 	return false
+}
+
+const maxRetries = 10
+
+var maxRetryWaitMs = time.Minute.Milliseconds()
+
+func exponentialWaitWithJitter(retryCount int) {
+	waitMs := int64(100 * (1 << retryCount))
+	if waitMs > maxRetryWaitMs {
+		waitMs = maxRetryWaitMs
+	}
+	waitDuration := time.Duration(rand.Int63n(waitMs)) * time.Millisecond
+	time.Sleep(waitDuration)
 }
