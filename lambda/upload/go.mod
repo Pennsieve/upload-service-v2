@@ -18,7 +18,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.49.2
 	github.com/aws/smithy-go v1.20.1
 	github.com/google/uuid v1.6.0
-	github.com/pennsieve/pennsieve-go-core v1.9.1
+	github.com/pennsieve/pennsieve-go-core v1.13.0
 	github.com/pusher/pusher-http-go/v5 v5.1.1
 	github.com/sirupsen/logrus v1.9.3
 	github.com/stretchr/testify v1.8.1
@@ -43,9 +43,11 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sts v1.28.4 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
+	github.com/kr/text v0.2.0 // indirect
 	github.com/lib/pq v1.10.9 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
+	github.com/rogpeppe/go-internal v1.13.1 // indirect
 	golang.org/x/crypto v0.17.0 // indirect
-	golang.org/x/sys v0.18.0 // indirect
+	golang.org/x/sys v0.21.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
