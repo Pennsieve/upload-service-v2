@@ -1,6 +1,6 @@
 module github.com/pennsieve/pennsieve-upload-service-v2/upload
 
-go 1.18
+go 1.22
 
 //
 //replace github.com/pennsieve/pennsieve-go-core => ../../../pennsieve-go-core
