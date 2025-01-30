@@ -42,14 +42,14 @@ func TestStorageOrgItemCache_ConcurrentAccess(t *testing.T) {
 	for manifestId, expectedItem := range testItemMap {
 		for i := 0; i < routines; i++ {
 			wg.Add(1)
-			go func() {
+			go func(manifestId string, expectedItem *storageOrgItem) {
 				defer func() {
 					wg.Done()
 				}()
 				item, err := cacheUnderTest.GetOrLoad(manifestId)
 				require.NoError(t, err)
 				assert.Equal(t, expectedItem, item)
-			}()
+			}(manifestId, expectedItem)
 		}
 	}
 	wg.Wait()
