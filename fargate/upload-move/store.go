@@ -20,21 +20,26 @@ import (
 
 // UploadMoveStore provides the Queries interface and a db instance.
 type UploadMoveStore struct {
-	pg   *pgQeuries.Queries
-	dy   *dyQueries.Queries
-	db   *sql.DB
-	dydb *dynamodb.Client
-	s3   *s3.Client
+	pg                  *pgQeuries.Queries
+	dy                  *dyQueries.Queries
+	db                  *sql.DB
+	dydb                *dynamodb.Client
+	s3                  *s3.Client
+	storageOrgItemCache *StorageOrgItemCache
 }
 
 // NewUploadMoveStore returns a NewUploadMoveStore object which implements the Queries
 func NewUploadMoveStore(db *sql.DB, dydb *dynamodb.Client, s3 *s3.Client) *UploadMoveStore {
+	pg := pgQeuries.New(db)
+	dy := dyQueries.New(dydb)
+	storageOrgItemQuery := makeDefaultStorageOrgItemQuery(dy, pg)
 	return &UploadMoveStore{
-		db:   db,
-		dydb: dydb,
-		pg:   pgQeuries.New(db),
-		dy:   dyQueries.New(dydb),
-		s3:   s3,
+		db:                  db,
+		dydb:                dydb,
+		pg:                  pg,
+		dy:                  dy,
+		s3:                  s3,
+		storageOrgItemCache: NewStorageItemCache(storageOrgItemQuery),
 	}
 }
 
@@ -100,46 +105,7 @@ func (s *UploadMoveStore) KeepAlive(ctx context.Context, ticker *time.Ticker) {
 
 // GetManifestStorageBucket returns the storage bucket associated with organization for manifest.
 func (s *UploadMoveStore) GetManifestStorageBucket(manifestId string) (*storageOrgItem, error) {
-
-	//var m *dbTable.ManifestTable
-
-	// If cached value exists, return cached value
-	if val, ok := storageBucketMap[manifestId]; ok {
-		return &val, nil
-	}
-
-	// Get manifest from dynamodb based on id
-	manifest, err := s.dy.GetManifestById(context.Background(), TableName, manifestId)
-	if err != nil {
-		err := fmt.Errorf("error getting manifest %s: %w", manifestId, err)
-		return nil, err
-	}
-
-	//var o dbTable.Organization
-	org, err := s.pg.GetOrganization(context.Background(), manifest.OrganizationId)
-	if err != nil {
-		err := fmt.Errorf("error getting organization %d referenced in manifest %s: %w",
-			manifest.OrganizationId,
-			manifestId,
-			err)
-		return nil, err
-	}
-
-	// Return storagebucket if defined, or default bucket.
-	sbName := defaultStorageBucket
-	if org.StorageBucket.Valid {
-		sbName = org.StorageBucket.String
-	}
-
-	si := storageOrgItem{
-		organizationId: manifest.OrganizationId,
-		storageBucket:  sbName,
-		datasetId:      manifest.DatasetId,
-	}
-
-	storageBucketMap[manifestId] = si
-
-	return &si, nil
+	return s.storageOrgItemCache.GetOrLoad(manifestId)
 }
 
 // manifestFileWalk paginates results from dynamodb manifest files table and put items on channel.
