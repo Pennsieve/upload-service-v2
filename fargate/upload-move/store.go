@@ -199,7 +199,7 @@ func (s *UploadMoveStore) moveFile(workerId int, timeout time.Duration, items <-
 				log.Fields{
 					"upload_bucket": uploadBucket,
 					"s3_key":        sourceKey,
-				}).Error("moveFile: Cannot get size of S3 object: %v", err)
+				}).Error("moveFile: Cannot get size of S3 object: ", err)
 			err = s.dy.UpdateFileTableStatus(context.Background(), FileTableName, item.ManifestId, item.UploadId, manifestFile.Failed, err.Error())
 			if err != nil {
 				log.Println("Error updating Dynamodb status: ", err)
