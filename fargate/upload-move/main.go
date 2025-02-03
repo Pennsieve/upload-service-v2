@@ -36,9 +36,6 @@ var processWg sync.WaitGroup
 // Number of simultaneous copy threads.
 const nrWorkers = 20
 
-// storageBucketMap maps manifestIds to storageBucket names
-var storageBucketMap = map[string]storageOrgItem{}
-
 // main entry method for the task.
 func main() {
 
