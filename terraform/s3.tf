@@ -27,9 +27,6 @@ resource "aws_s3_bucket_lifecycle_configuration" "upload_s3_bucket_lifecycle" {
       days_after_initiation = 7
     }
 
-    expiration {
-      days = 7
-    }
     status = "Enabled"
   }
 }
