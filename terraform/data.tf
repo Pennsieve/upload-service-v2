@@ -99,3 +99,14 @@ data "terraform_remote_state" "fargate" {
     region = "us-east-1"
   }
 }
+
+# AFS1 Region
+data "terraform_remote_state" "africa_south_region" {
+  backend = "s3"
+
+  config = {
+    bucket = "${var.aws_account}-terraform-state"
+    key    = "aws/af-south-1/terraform.tfstate"
+    region = "us-east-1"
+  }
+}
