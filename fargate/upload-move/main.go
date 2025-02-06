@@ -5,11 +5,10 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	pgQueries "github.com/pennsieve/pennsieve-go-core/pkg/queries/pgdb"
+	"github.com/pennsieve/pennsieve-upload-service-v2/upload-move-files/pkg/pgmanager"
 	log "github.com/sirupsen/logrus"
 	"os"
 	"sync"
-	"time"
 )
 
 var uploadBucket string
@@ -53,20 +52,12 @@ func main() {
 	FileTableName = os.Getenv("FILES_TABLE")
 	TableName = os.Getenv("MANIFEST_TABLE")
 
-	// Get Postgres connection
-	db, err := pgQueries.ConnectRDS()
-	//Session.pgClient = db
+	pgManager, err := pgmanager.New(pgmanager.NewDBApi)
 	if err != nil {
-		log.Fatalf("Cannot connect to the Pennsieve Postgres Proxy.")
+		log.Fatalf("error creating pgManager: %v", err)
 	}
-
-	store := NewUploadMoveStore(db, dynamodb.NewFromConfig(cfg), s3.NewFromConfig(cfg))
-	//goland:noinspection GoUnhandledErrorResult
-	defer store.db.Close()
-
-	// start database keepalive
-	ticker := time.NewTicker(1 * time.Minute)
-	go store.KeepAlive(context.Background(), ticker)
+	store := NewUploadMoveStore(pgManager, dynamodb.NewFromConfig(cfg), s3.NewFromConfig(cfg))
+	defer store.Close()
 
 	uploadBucket = os.Getenv("UPLOAD_BUCKET")
 	defaultStorageBucket = os.Getenv("STORAGE_BUCKET")
@@ -96,9 +87,6 @@ func main() {
 
 	// Wait until all processors are completed.
 	processWg.Wait()
-
-	// stop database keepalive
-	ticker.Stop()
 
 	log.Println("Finished with task.")
 }

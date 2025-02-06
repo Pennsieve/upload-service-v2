@@ -8,7 +8,7 @@ import (
 	"sync"
 )
 
-type StorageOrgItemQuery func(manifestId string) (*storageOrgItem, error)
+type StorageOrgItemQuery func(manifestId string, dy *dydb.Queries, pg *pgdb.Queries) (*storageOrgItem, error)
 
 type StorageOrgItemCache struct {
 	m     sync.Map
@@ -22,7 +22,7 @@ func NewStorageItemCache(loader StorageOrgItemQuery) *StorageOrgItemCache {
 	}
 }
 
-func (c *StorageOrgItemCache) GetOrLoad(manifestId string) (*storageOrgItem, error) {
+func (c *StorageOrgItemCache) GetOrLoad(manifestId string, dy *dydb.Queries, pg *pgdb.Queries) (*storageOrgItem, error) {
 	c.mutex.Lock()
 	defer func() {
 		c.mutex.Unlock()
@@ -31,7 +31,7 @@ func (c *StorageOrgItemCache) GetOrLoad(manifestId string) (*storageOrgItem, err
 		return item.(*storageOrgItem), nil
 	}
 
-	item, err := c.query(manifestId)
+	item, err := c.query(manifestId, dy, pg)
 	if err != nil {
 		return nil, fmt.Errorf("error loading item for manifestId %s: %w", manifestId, err)
 	}
@@ -39,37 +39,36 @@ func (c *StorageOrgItemCache) GetOrLoad(manifestId string) (*storageOrgItem, err
 	return item, nil
 }
 
-func makeDefaultStorageOrgItemQuery(dy *dydb.Queries, pg *pgdb.Queries) StorageOrgItemQuery {
-	return func(manifestId string) (*storageOrgItem, error) {
-		// Get manifest from dynamodb based on id
-		manifest, err := dy.GetManifestById(context.Background(), TableName, manifestId)
-		if err != nil {
-			err := fmt.Errorf("error getting manifest %s: %w", manifestId, err)
-			return nil, err
-		}
-
-		//var o dbTable.Organization
-		org, err := pg.GetOrganization(context.Background(), manifest.OrganizationId)
-		if err != nil {
-			err := fmt.Errorf("error getting organization %d referenced in manifest %s: %w",
-				manifest.OrganizationId,
-				manifestId,
-				err)
-			return nil, err
-		}
-
-		// Return storagebucket if defined, or default bucket.
-		sbName := defaultStorageBucket
-		if org.StorageBucket.Valid {
-			sbName = org.StorageBucket.String
-		}
-
-		si := storageOrgItem{
-			organizationId: manifest.OrganizationId,
-			storageBucket:  sbName,
-			datasetId:      manifest.DatasetId,
-		}
-
-		return &si, nil
+func DefaultStorageOrgItemQuery(manifestId string, dy *dydb.Queries, pg *pgdb.Queries) (*storageOrgItem, error) {
+	// Get manifest from dynamodb based on id
+	manifest, err := dy.GetManifestById(context.Background(), TableName, manifestId)
+	if err != nil {
+		err := fmt.Errorf("error getting manifest %s: %w", manifestId, err)
+		return nil, err
 	}
+
+	//var o dbTable.Organization
+	org, err := pg.GetOrganization(context.Background(), manifest.OrganizationId)
+	if err != nil {
+		err := fmt.Errorf("error getting organization %d referenced in manifest %s: %w",
+			manifest.OrganizationId,
+			manifestId,
+			err)
+		return nil, err
+	}
+
+	// Return storagebucket if defined, or default bucket.
+	sbName := defaultStorageBucket
+	if org.StorageBucket.Valid {
+		sbName = org.StorageBucket.String
+	}
+
+	si := storageOrgItem{
+		organizationId: manifest.OrganizationId,
+		storageBucket:  sbName,
+		datasetId:      manifest.DatasetId,
+	}
+
+	return &si, nil
+
 }
