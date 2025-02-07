@@ -9,8 +9,13 @@ import (
 	"time"
 )
 
+// DBSupplier is called by New and then whenever the manager detects that it needs a new
+// DBApi instance because the previous one has expired. The second return argument
+// is the time.Duration that the returned DBApi is good for.
 type DBSupplier func() (DBApi, time.Duration, error)
 
+// PgManager is responsible for maintaining the PG related objects that the UploadMoveStore uses.
+// Both a straight DBAPi and *pgdb.Queries
 type PgManager struct {
 	pg             *pgQueries.Queries
 	db             DBApi
@@ -32,6 +37,8 @@ func New(supplier DBSupplier) (*PgManager, error) {
 		authExpiration: time.Now().Add(authDuration),
 	}, nil
 }
+
+// Queries returns a *pgdb.Queries object backed by an un-expired connection pool
 func (m *PgManager) Queries() (*pgQueries.Queries, error) {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
@@ -41,6 +48,7 @@ func (m *PgManager) Queries() (*pgQueries.Queries, error) {
 	return m.pg, nil
 }
 
+// DB returns a DBApi object backed by an un-expired connection pool
 func (m *PgManager) DB() (DBApi, error) {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
@@ -50,17 +58,18 @@ func (m *PgManager) DB() (DBApi, error) {
 	return m.db, nil
 }
 
+// Close closes the current DBApi
 func (m *PgManager) Close() error {
 	m.mutex.RLock()
 	defer m.mutex.RUnlock()
 	return m.db.Close()
 }
 
+// checkConnection calls should be protected by mutex.Lock() calls
 func (m *PgManager) checkConnection() error {
 	ctx := context.Background()
-	// If auth is unexpired and we can still ping re-use current pool
-	now := time.Now()
-	expired := now.Equal(m.authExpiration) || now.After(m.authExpiration)
+	// If auth is unexpired and if we can still ping, then re-use current pool
+	expired := !time.Now().Before(m.authExpiration)
 	pingErr := m.db.PingContext(ctx)
 	if !expired && pingErr == nil {
 		return nil
