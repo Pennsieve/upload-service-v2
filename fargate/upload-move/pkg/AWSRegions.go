@@ -1,4 +1,4 @@
-package main
+package pkg
 
 type AWSRegion struct {
 	FullName   string

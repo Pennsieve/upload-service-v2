@@ -357,10 +357,10 @@ func (s *UploadMoveStore) getRegionalS3Client(storageBucket *storageOrgItem) (*s
 	return s.s3, region.RegionCode
 }
 
-func getRegion(stOrgItem *storageOrgItem) AWSRegion {
+func getRegion(stOrgItem *storageOrgItem) pkg.AWSRegion {
 	bucketNameTokens := strings.Split(stOrgItem.storageBucket, "-")
 	shortname := bucketNameTokens[len(bucketNameTokens)-1]
-	region := Regions[shortname]
+	region := pkg.Regions[shortname]
 
 	return region
 }

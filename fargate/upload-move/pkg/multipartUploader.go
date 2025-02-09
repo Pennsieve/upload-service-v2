@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"log"
@@ -25,6 +26,7 @@ const nrCopyWorkers = 10
 // MultiPartCopy function that starts, perform each part upload, and completes the copy
 func MultiPartCopy(svc *s3.Client, timeout time.Duration, fileSize int64, sourceBucket string, sourceKey string, destBucket string, destKey string) error {
 
+	svc, _ = getRegionalS3Client(svc, sourceBucket)
 	partWalker := make(chan s3.UploadPartCopyInput, nrCopyWorkers)
 	results := make(chan s3types.CompletedPart, nrCopyWorkers)
 
@@ -221,4 +223,31 @@ func worker(ctx context.Context, svc *s3.Client, wg *sync.WaitGroup, workerId in
 
 	return nil
 
+}
+
+func getRegionalS3Client(client *s3.Client, storageBucket string) (*s3.Client, string) {
+
+	// Get region
+	region := getRegion(storageBucket)
+
+	// Check for non us-east-1 regions
+	if region.RegionCode != "us-east-1" {
+		cfg, err := config.LoadDefaultConfig(context.Background(), config.WithRegion(region.RegionCode))
+		if err != nil {
+			log.Fatalf("Unable to load AWS config: %v", err)
+		}
+		customRegionS3Client := s3.NewFromConfig(cfg)
+		return customRegionS3Client, region.RegionCode
+	}
+
+	// Return default
+	return client, region.RegionCode
+}
+
+func getRegion(storageBucket string) AWSRegion {
+	bucketNameTokens := strings.Split(storageBucket, "-")
+	shortname := bucketNameTokens[len(bucketNameTokens)-1]
+	region := Regions[shortname]
+
+	return region
 }
