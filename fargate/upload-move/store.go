@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
@@ -15,6 +16,7 @@ import (
 	pgQeuries "github.com/pennsieve/pennsieve-go-core/pkg/queries/pgdb"
 	"github.com/pennsieve/pennsieve-upload-service-v2/upload-move-files/pkg"
 	log "github.com/sirupsen/logrus"
+	"strings"
 	"time"
 )
 
@@ -327,10 +329,38 @@ func (s *UploadMoveStore) simpleCopyFile(stOrgItem *storageOrgItem, sourcePath s
 		Key:        aws.String(targetPath),
 	}
 
-	_, err := s.s3.CopyObject(context.Background(), &params)
+	s3Client := s.getRegionS3Object(stOrgItem)
+
+	_, err := s3Client.CopyObject(context.Background(), &params)
 	if err != nil {
 		return err
 	}
 
 	return nil
+}
+
+func (s *UploadMoveStore) getRegionS3Object(storageBucket *storageOrgItem) *s3.Client {
+	// Get region
+	region := getRegion(storageBucket)
+
+	// Check for non us-east-1 regions
+	if region.RegionCode != "us-east-1" {
+		cfg, err := config.LoadDefaultConfig(context.Background(), config.WithRegion(region.RegionCode))
+		if err != nil {
+			log.Fatalf("Unable to load AWS config: %v", err)
+		}
+		customRegionS3Client := s3.NewFromConfig(cfg)
+		return customRegionS3Client
+	}
+
+	// Return default
+	return s.s3
+}
+
+func getRegion(stOrgItem *storageOrgItem) AWSRegion {
+	bucketNameTokens := strings.Split(stOrgItem.storageBucket, "-")
+	shortname := bucketNameTokens[len(bucketNameTokens)-1]
+	region := Regions[shortname]
+
+	return region
 }
