@@ -329,7 +329,7 @@ func (s *UploadMoveStore) simpleCopyFile(stOrgItem *storageOrgItem, sourcePath s
 		Key:        aws.String(targetPath),
 	}
 
-	s3Client := s.getRegionS3Object(stOrgItem)
+	s3Client, _ := s.getRegionalS3Client(stOrgItem)
 
 	_, err := s3Client.CopyObject(context.Background(), &params)
 	if err != nil {
@@ -339,7 +339,7 @@ func (s *UploadMoveStore) simpleCopyFile(stOrgItem *storageOrgItem, sourcePath s
 	return nil
 }
 
-func (s *UploadMoveStore) getRegionS3Object(storageBucket *storageOrgItem) *s3.Client {
+func (s *UploadMoveStore) getRegionalS3Client(storageBucket *storageOrgItem) (*s3.Client, string) {
 	// Get region
 	region := getRegion(storageBucket)
 
@@ -350,11 +350,11 @@ func (s *UploadMoveStore) getRegionS3Object(storageBucket *storageOrgItem) *s3.C
 			log.Fatalf("Unable to load AWS config: %v", err)
 		}
 		customRegionS3Client := s3.NewFromConfig(cfg)
-		return customRegionS3Client
+		return customRegionS3Client, region.RegionCode
 	}
 
 	// Return default
-	return s.s3
+	return s.s3, region.RegionCode
 }
 
 func getRegion(stOrgItem *storageOrgItem) AWSRegion {
