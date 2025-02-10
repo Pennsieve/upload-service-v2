@@ -63,7 +63,7 @@ func main() {
 	uploadBucket = os.Getenv("UPLOAD_BUCKET")
 	defaultStorageBucket = os.Getenv("STORAGE_BUCKET")
 
-	s3Client, regionCode, err := pkg.CreateDefaultClient(defaultStorageBucket)
+	s3Client, regionCode, err := pkg.CreateClient(defaultStorageBucket)
 	if err != nil {
 		log.Fatalf("Could not deterime region.\nStorage bucket: %s\nRegion Code:%s, err: %v", defaultStorageBucket, regionCode, err)
 	}
