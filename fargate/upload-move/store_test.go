@@ -1,0 +1,105 @@
+package main
+
+import (
+	"context"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/pennsieve/pennsieve-upload-service-v2/upload-move-files/pkg"
+	log "github.com/sirupsen/logrus"
+	"github.com/stretchr/testify/assert"
+	"os"
+	"testing"
+)
+
+func getEnv(key, fallback string) string {
+	if value, ok := os.LookupEnv(key); ok {
+		return value
+	}
+	return fallback
+}
+
+func TestGetRegionalS3Client(t *testing.T) {
+
+	storageOrgItemUSE1 := &storageOrgItem{
+		organizationId: 0,
+		storageBucket:  "pennsieve-storage-use1",
+		datasetId:      0,
+	}
+	storageOrgItemAFS1 := &storageOrgItem{
+		organizationId: 0,
+		storageBucket:  "pennsieve-storage-afs1",
+		datasetId:      0,
+	}
+
+	storageOrgItemMES1 := &storageOrgItem{
+		organizationId: 0,
+		storageBucket:  "pennsieve-storage-mes1",
+		datasetId:      0,
+	}
+
+	storageOrgItemNoShortName := &storageOrgItem{
+		organizationId: 0,
+		storageBucket:  "pennsieve-storage",
+		datasetId:      0,
+	}
+
+	storageOrgItemNoRegion := &storageOrgItem{
+		organizationId: 0,
+		storageBucket:  "pennsieve-storage-ufc1",
+		datasetId:      0,
+	}
+
+	testDBUri := getEnv("MINIO_URL", "http://localhost:9002")
+
+	cfg, err := config.LoadDefaultConfig(context.TODO(),
+		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider("minioadmin", "minioadmin", "")),
+		config.WithEndpointResolverWithOptions(aws.EndpointResolverWithOptionsFunc(
+			func(service, region string, options ...interface{}) (aws.Endpoint, error) {
+				return aws.Endpoint{URL: testDBUri, HostnameImmutable: true}, nil
+			})),
+	)
+	if err != nil {
+		log.Error("Cannot create Minio resource")
+		panic(err)
+	}
+
+	s3Client := s3.NewFromConfig(cfg)
+
+	_, expectedUSE1Region, err := pkg.DefaultOrRegionalClient(s3Client, storageOrgItemUSE1.storageBucket)
+	assert.Nil(t, err)
+
+	_, expectedAFS1Region, err := pkg.DefaultOrRegionalClient(s3Client, storageOrgItemAFS1.storageBucket)
+	assert.Nil(t, err)
+
+	_, expectedMES1Region, err := pkg.DefaultOrRegionalClient(s3Client, storageOrgItemMES1.storageBucket)
+	assert.Nil(t, err)
+
+	_, _, expectedError := pkg.DefaultOrRegionalClient(s3Client, storageOrgItemNoShortName.storageBucket)
+	assert.Error(t, expectedError)
+
+	_, _, expectedError = pkg.DefaultOrRegionalClient(s3Client, storageOrgItemNoRegion.storageBucket)
+	assert.Error(t, expectedError)
+
+	assert.Equal(t, "us-east-1", expectedUSE1Region)
+	assert.Equal(t, "af-south-1", expectedAFS1Region)
+	assert.Equal(t, "me-south-1", expectedMES1Region)
+
+}
+
+func TestGetRegion(t *testing.T) {
+
+	USE1Region := pkg.GetRegion("pennsieve-storage-use1")
+	AFS1Region := pkg.GetRegion("pennsieve-storage-afs1")
+	EUW1Region := pkg.GetRegion("pennsieve-storage-euw1")
+	APS2Region := pkg.GetRegion("pennsieve-storage-aps2")
+	USE1Region2 := pkg.GetRegion("PENNSIEVE-STORAGE-USE1")
+
+	assert.Equal(t, pkg.Regions["use1"], USE1Region)
+	assert.Equal(t, pkg.Regions["afs1"], AFS1Region)
+	assert.Equal(t, pkg.Regions["euw1"], EUW1Region)
+	assert.Equal(t, pkg.Regions["aps2"], APS2Region)
+	assert.Equal(t, pkg.Regions["use1"], USE1Region2)
+
+}

@@ -1,12 +1,12 @@
 package pkg
 
-type AWSRegion struct {
+type AWSRegions struct {
 	FullName   string
 	RegionCode string
 }
 
 // Regions as of Feb 2025
-var Regions = map[string]AWSRegion{
+var Regions = map[string]AWSRegions{
 	"use1":  {"US East (N. Virginia)", "us-east-1"},
 	"use2":  {"US East (Ohio)", "us-east-2"},
 	"usw1":  {"US West (N. California)", "us-west-1"},
@@ -43,12 +43,10 @@ var Regions = map[string]AWSRegion{
 	"usgw1": {"AWS GovCloud (US-West)", "us-gov-west-1"},
 }
 
-func getKeys(myMap map[string]AWSRegion) []string {
+func getKeys(myMap map[string]AWSRegions) []string {
 	keys := make([]string, 0, len(myMap))
 	for key := range myMap {
 		keys = append(keys, key)
 	}
 	return keys
 }
-
-var RegionShortNames = getKeys(Regions)
