@@ -2,7 +2,7 @@ package pkg
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	log "github.com/sirupsen/logrus"
@@ -12,17 +12,18 @@ import (
 // CreateClient creates a client for the appropriate region data is being copied to
 func CreateClient(storageBucket string) (*s3.Client, AWSRegion, error) {
 
-	region, exists := GetRegion(storageBucket); if !exists {
-		return nil, "", fmt.Errorf("could not determine region code from bucket name: %s", storageBucket)
+	region, exists := GetRegion(storageBucket)
+	if !exists {
+		return nil, AWSRegion{}, fmt.Errorf("could not determine region code from bucket name: %s", storageBucket)
 	}
 	log.Printf("Using s3 client for region: %s\n", region.RegionCode)
 	cfg, err := config.LoadDefaultConfig(context.Background(), config.WithRegion(region.RegionCode))
 	if err != nil {
-		return nil, "", err
+		return nil, AWSRegion{}, err
 	}
 	regionalS3Client := s3.NewFromConfig(cfg)
 
-	return regionalS3Client, region.RegionCode, nil
+	return regionalS3Client, region, nil
 }
 
 // GetRegion from bucket naming scheme format gets the region name from the shortname
