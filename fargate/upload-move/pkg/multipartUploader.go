@@ -233,14 +233,15 @@ func DefaultOrRegionalClient(defaultClient *s3.Client, storageBucket string) (*s
 
 	// Get region
 	region := GetRegion(storageBucket)
+	defaultRegion := Regions["default"]
 
 	// Check for non us-east-1 regions
-	if region.RegionCode != "us-east-1" {
+	if region.RegionCode != defaultRegion.RegionCode {
 
 		if region.RegionCode == "" {
 			return nil, "", errors.New("could not determine region code")
 		}
-
+		log.Printf("Using s3 client for region: %s\n", region.RegionCode)
 		cfg, err := config.LoadDefaultConfig(context.Background(), config.WithRegion(region.RegionCode))
 		if err != nil {
 			log.Fatalf("Unable to load AWS config: %v", err)
@@ -251,6 +252,7 @@ func DefaultOrRegionalClient(defaultClient *s3.Client, storageBucket string) (*s
 	}
 
 	// Return default
+	log.Printf("Using default region: %s\n", region.RegionCode)
 	return defaultClient, region.RegionCode, nil
 }
 
