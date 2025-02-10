@@ -65,7 +65,7 @@ func main() {
 
 	s3Client, regionCode, err := pkg.CreateClient(defaultStorageBucket)
 	if err != nil {
-		log.Fatalf("Could not deterime region.\nStorage bucket: %s\nRegion Code:%s, err: %v", defaultStorageBucket, regionCode, err)
+		log.Fatalf("Could not deterime region.\nStorage bucket: %s\nRegion Code:%s\n, err: %v", defaultStorageBucket, regionCode, err)
 	}
 
 	store := NewUploadMoveStore(db, dynamodb.NewFromConfig(cfg), s3Client)
