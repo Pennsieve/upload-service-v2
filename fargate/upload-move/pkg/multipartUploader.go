@@ -26,10 +26,6 @@ const nrCopyWorkers = 10
 // MultiPartCopy function that starts, perform each part upload, and completes the copy
 func MultiPartCopy(svc *s3.Client, timeout time.Duration, fileSize int64, sourceBucket string, sourceKey string, destBucket string, destKey string) error {
 
-	svc, _, err := DefaultOrRegionalClient(svc, sourceBucket)
-	if err != nil {
-		log.Fatalf("Could not determine region: %v", err)
-	}
 	partWalker := make(chan s3.UploadPartCopyInput, nrCopyWorkers)
 	results := make(chan s3types.CompletedPart, nrCopyWorkers)
 
@@ -228,32 +224,22 @@ func worker(ctx context.Context, svc *s3.Client, wg *sync.WaitGroup, workerId in
 
 }
 
-// DefaultOrRegionalClient returns the default client if us-east-1, custom region client otherwise
-func DefaultOrRegionalClient(defaultClient *s3.Client, storageBucket string) (*s3.Client, string, error) {
+// CreateDefaultClient creates a client for the appropriate region data is being copied to
+func CreateDefaultClient(storageBucket string) (*s3.Client, string, error) {
 
 	// Get region
 	region := GetRegion(storageBucket)
-	defaultRegion := Regions["default"]
-
-	// Check for non us-east-1 regions
-	if region.RegionCode != defaultRegion.RegionCode {
-
-		if region.RegionCode == "" {
-			return nil, "", errors.New("could not determine region code")
-		}
-		log.Printf("Using s3 client for region: %s\n", region.RegionCode)
-		cfg, err := config.LoadDefaultConfig(context.Background(), config.WithRegion(region.RegionCode))
-		if err != nil {
-			log.Fatalf("Unable to load AWS config: %v", err)
-		}
-		customRegionS3Client := s3.NewFromConfig(cfg)
-
-		return customRegionS3Client, region.RegionCode, nil
+	if region.RegionCode == "" {
+		return nil, "", errors.New("could not determine region code")
 	}
+	log.Printf("Using s3 client for region: %s\n", region.RegionCode)
+	cfg, err := config.LoadDefaultConfig(context.Background(), config.WithRegion(region.RegionCode))
+	if err != nil {
+		log.Fatalf("Unable to load AWS config: %v", err)
+	}
+	regionalS3Client := s3.NewFromConfig(cfg)
 
-	// Return default
-	log.Printf("Using default region: %s\n", region.RegionCode)
-	return defaultClient, region.RegionCode, nil
+	return regionalS3Client, region.RegionCode, nil
 }
 
 // GetRegion from bucket naming scheme format gets the region name from the shortname

@@ -326,20 +326,7 @@ func (s *UploadMoveStore) simpleCopyFile(stOrgItem *storageOrgItem, sourcePath s
 		CopySource: aws.String(sourcePath),
 		Key:        aws.String(targetPath),
 	}
-
-	s3Client := s.s3
-
-	newRegionalS3Client, regionName, err := pkg.DefaultOrRegionalClient(s3Client, stOrgItem.storageBucket)
-	if err != nil {
-		log.Fatalf("Could not determine region: %v", err)
-	}
-
-	// Check for non us-east-1 regions
-	if regionName != "us-east-1" {
-		s3Client = newRegionalS3Client
-	}
-
-	_, err = s3Client.CopyObject(context.Background(), &params)
+	_, err := s.s3.CopyObject(context.Background(), &params)
 	if err != nil {
 		return err
 	}

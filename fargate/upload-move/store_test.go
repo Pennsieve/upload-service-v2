@@ -67,19 +67,20 @@ func TestGetRegionalS3Client(t *testing.T) {
 
 	s3Client := s3.NewFromConfig(cfg)
 
-	_, expectedUSE1Region, err := pkg.DefaultOrRegionalClient(s3Client, storageOrgItemUSE1.storageBucket)
+	s3Client, expectedUSE1Region, err := pkg.CreateDefaultClient(storageOrgItemUSE1.storageBucket)
+	assert.Nil(t, err)
+	assert.IsType(t, &s3.Client{}, s3Client)
+
+	_, expectedAFS1Region, err := pkg.CreateDefaultClient(storageOrgItemAFS1.storageBucket)
 	assert.Nil(t, err)
 
-	_, expectedAFS1Region, err := pkg.DefaultOrRegionalClient(s3Client, storageOrgItemAFS1.storageBucket)
+	_, expectedMES1Region, err := pkg.CreateDefaultClient(storageOrgItemMES1.storageBucket)
 	assert.Nil(t, err)
 
-	_, expectedMES1Region, err := pkg.DefaultOrRegionalClient(s3Client, storageOrgItemMES1.storageBucket)
-	assert.Nil(t, err)
-
-	_, _, expectedError := pkg.DefaultOrRegionalClient(s3Client, storageOrgItemNoShortName.storageBucket)
+	_, _, expectedError := pkg.CreateDefaultClient(storageOrgItemNoShortName.storageBucket)
 	assert.Error(t, expectedError)
 
-	_, _, expectedError = pkg.DefaultOrRegionalClient(s3Client, storageOrgItemNoRegion.storageBucket)
+	_, _, expectedError = pkg.CreateDefaultClient(storageOrgItemNoRegion.storageBucket)
 	assert.Error(t, expectedError)
 
 	assert.Equal(t, "us-east-1", expectedUSE1Region)

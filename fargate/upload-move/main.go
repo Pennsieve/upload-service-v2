@@ -4,8 +4,8 @@ import (
 	"context"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
 	pgQueries "github.com/pennsieve/pennsieve-go-core/pkg/queries/pgdb"
+	"github.com/pennsieve/pennsieve-upload-service-v2/upload-move-files/pkg"
 	log "github.com/sirupsen/logrus"
 	"os"
 	"sync"
@@ -60,16 +60,21 @@ func main() {
 		log.Fatalf("Cannot connect to the Pennsieve Postgres Proxy.")
 	}
 
-	store := NewUploadMoveStore(db, dynamodb.NewFromConfig(cfg), s3.NewFromConfig(cfg))
+	uploadBucket = os.Getenv("UPLOAD_BUCKET")
+	defaultStorageBucket = os.Getenv("STORAGE_BUCKET")
+
+	s3Client, regionCode, err := pkg.CreateDefaultClient(defaultStorageBucket)
+	if err != nil {
+		log.Fatalf("Could not deterime region.\nStorage bucket: %s\nRegion Code:%s, err: %v", defaultStorageBucket, regionCode, err)
+	}
+
+	store := NewUploadMoveStore(db, dynamodb.NewFromConfig(cfg), s3Client)
 	//goland:noinspection GoUnhandledErrorResult
 	defer store.db.Close()
 
 	// start database keepalive
 	ticker := time.NewTicker(1 * time.Minute)
 	go store.KeepAlive(context.Background(), ticker)
-
-	uploadBucket = os.Getenv("UPLOAD_BUCKET")
-	defaultStorageBucket = os.Getenv("STORAGE_BUCKET")
 
 	walker := make(fileWalk)
 
