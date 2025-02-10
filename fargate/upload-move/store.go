@@ -326,6 +326,7 @@ func (s *UploadMoveStore) simpleCopyFile(stOrgItem *storageOrgItem, sourcePath s
 		CopySource: aws.String(sourcePath),
 		Key:        aws.String(targetPath),
 	}
+
 	_, err := s.s3.CopyObject(context.Background(), &params)
 	if err != nil {
 		return err
