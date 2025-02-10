@@ -173,13 +173,6 @@ func (s *UploadMoveStore) moveFile(workerId int, timeout time.Duration, items <-
 		moveSuccess := false
 
 		stOrgItem, err := s.GetManifestStorageBucket(item.ManifestId)
-
-		var region string
-		s.s3, region, err = pkg.CreateClient(stOrgItem.storageBucket)
-		if err != nil {
-			log.Fatalf("Failed to update client.\nBucket: %s\nRegion: %s\nerr: %v", stOrgItem.storageBucket, region, err)
-		}
-
 		if err != nil {
 			log.WithFields(
 				log.Fields{
@@ -189,6 +182,16 @@ func (s *UploadMoveStore) moveFile(workerId int, timeout time.Duration, items <-
 			continue
 		}
 
+		var region string
+		s.s3, region, err = pkg.CreateClient(stOrgItem.storageBucket)
+		if err != nil {
+			log.WithFields(
+				log.Fields{
+					"storage_bucket": stOrgItem.storageBucket,
+					"region":         region,
+				}).Errorf("Failed to update client region: %v", err)
+			continue
+		}
 		log.Debug(fmt.Sprintf("%d - %s - %s", workerId, item.UploadId, stOrgItem.storageBucket))
 
 		sourceKey := fmt.Sprintf("%s/%s", item.ManifestId, item.UploadId)
