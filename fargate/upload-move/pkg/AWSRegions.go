@@ -42,11 +42,3 @@ var Regions = map[string]AWSRegions{
 	"usge1": {"AWS GovCloud (US-East)", "us-gov-east-1"},
 	"usgw1": {"AWS GovCloud (US-West)", "us-gov-west-1"},
 }
-
-func getKeys(myMap map[string]AWSRegions) []string {
-	keys := make([]string, 0, len(myMap))
-	for key := range myMap {
-		keys = append(keys, key)
-	}
-	return keys
-}
