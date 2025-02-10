@@ -91,16 +91,23 @@ func TestGetRegionalS3Client(t *testing.T) {
 
 func TestGetRegion(t *testing.T) {
 
-	USE1Region := pkg.GetRegion("pennsieve-storage-use1")
-	AFS1Region := pkg.GetRegion("pennsieve-storage-afs1")
-	EUW1Region := pkg.GetRegion("pennsieve-storage-euw1")
-	APS2Region := pkg.GetRegion("pennsieve-storage-aps2")
-	USE1Region2 := pkg.GetRegion("PENNSIEVE-STORAGE-USE1")
+	USE1Region, exists := pkg.GetRegion("pennsieve-storage-use1")
+	assert.True(t, exists)
+	AFS1Region, exists := pkg.GetRegion("pennsieve-storage-afs1")
+	assert.True(t, exists)
+	EUW1Region, exists := pkg.GetRegion("pennsieve-storage-euw1")
+	assert.True(t, exists)
+	APS2Region, exists := pkg.GetRegion("pennsieve-storage-aps2")
+	assert.True(t, exists)
+	USE1Region2, exists := pkg.GetRegion("PENNSIEVE-STORAGE-USE1")
+	assert.True(t, exists)
+	_, exists = pkg.GetRegion("PENNSIEVE-STORAGE-DEV")
+	assert.False(t, exists)
 
-	assert.Equal(t, pkg.Regions["use1"], USE1Region)
-	assert.Equal(t, pkg.Regions["afs1"], AFS1Region)
-	assert.Equal(t, pkg.Regions["euw1"], EUW1Region)
-	assert.Equal(t, pkg.Regions["aps2"], APS2Region)
-	assert.Equal(t, pkg.Regions["use1"], USE1Region2)
+	assert.Equal(t, pkg.AWSRegions["use1"], USE1Region)
+	assert.Equal(t, pkg.AWSRegions["afs1"], AFS1Region)
+	assert.Equal(t, pkg.AWSRegions["euw1"], EUW1Region)
+	assert.Equal(t, pkg.AWSRegions["aps2"], APS2Region)
+	assert.Equal(t, pkg.AWSRegions["use1"], USE1Region2)
 
 }

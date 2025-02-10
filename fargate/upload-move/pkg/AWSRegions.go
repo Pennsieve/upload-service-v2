@@ -1,12 +1,12 @@
 package pkg
 
-type AWSRegions struct {
+type AWSRegion struct {
 	FullName   string
 	RegionCode string
 }
 
-// Regions as of Feb 2025
-var Regions = map[string]AWSRegions{
+// AWSRegions as of Feb 2025
+var AWSRegions = map[string]AWSRegion{
 	"use1":  {"US East (N. Virginia)", "us-east-1"},
 	"use2":  {"US East (Ohio)", "us-east-2"},
 	"usw1":  {"US West (N. California)", "us-west-1"},
