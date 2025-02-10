@@ -10,20 +10,20 @@ import (
 )
 
 // CreateClient creates a client for the appropriate region data is being copied to
-func CreateClient(storageBucket string) (*s3.Client, AWSRegion, error) {
+func CreateClient(storageBucket string) (*s3.Client, *AWSRegion, error) {
 
 	region, exists := GetRegion(storageBucket)
 	if !exists {
-		return nil, AWSRegion{}, fmt.Errorf("could not determine region code from bucket name: %s", storageBucket)
+		return nil, nil, fmt.Errorf("could not determine region code from bucket name: %s", storageBucket)
 	}
-	log.Printf("Using s3 client for region: %s\n", region.RegionCode)
-	cfg, err := config.LoadDefaultConfig(context.Background(), config.WithRegion(region.RegionCode))
+	log.Printf("Using s3 client for region: %s", region.RegionCode)
+	cfg, err := config.LoadDefaultConfig(context.Background())
 	if err != nil {
-		return nil, AWSRegion{}, err
+		return nil, nil, err
 	}
 	regionalS3Client := s3.NewFromConfig(cfg)
 
-	return regionalS3Client, region, nil
+	return regionalS3Client, &region, nil
 }
 
 // GetRegion from bucket naming scheme format gets the region name from the shortname
