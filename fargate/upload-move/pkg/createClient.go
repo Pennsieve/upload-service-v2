@@ -10,7 +10,7 @@ import (
 )
 
 // CreateClient creates a client for the appropriate region data is being copied to
-func CreateClient(storageBucket string) (*s3.Client, string, error) {
+func CreateClient(storageBucket string) (*s3.Client, AWSRegion, error) {
 
 	region, exists := GetRegion(storageBucket); if !exists {
 		return nil, "", fmt.Errorf("could not determine region code from bucket name: %s", storageBucket)
