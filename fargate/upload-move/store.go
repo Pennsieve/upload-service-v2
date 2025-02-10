@@ -182,6 +182,7 @@ func (s *UploadMoveStore) moveFile(workerId int, timeout time.Duration, items <-
 			continue
 		}
 
+		// Now that we know the storage bucket, make a new client with the correct region
 		var region string
 		s.s3, region, err = pkg.CreateClient(stOrgItem.storageBucket)
 		if err != nil {
