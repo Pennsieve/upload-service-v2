@@ -83,9 +83,9 @@ func TestGetRegionalS3Client(t *testing.T) {
 	_, _, expectedError = pkg.CreateClient(storageOrgItemNoRegion.storageBucket)
 	assert.Error(t, expectedError)
 
-	assert.Equal(t, pkg.AWSRegions["use1"], expectedUSE1Region)
-	assert.Equal(t, pkg.AWSRegions["afs1"], expectedAFS1Region)
-	assert.Equal(t, pkg.AWSRegions["mes1"], expectedMES1Region)
+	assert.Equal(t, pkg.AWSRegions["use1"], *expectedUSE1Region)
+	assert.Equal(t, pkg.AWSRegions["afs1"], *expectedAFS1Region)
+	assert.Equal(t, pkg.AWSRegions["mes1"], *expectedMES1Region)
 
 }
 
