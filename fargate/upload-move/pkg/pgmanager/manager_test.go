@@ -3,7 +3,7 @@ package pgmanager
 import (
 	"context"
 	"database/sql"
-	"fmt"
+	"errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"math/rand"
@@ -13,19 +13,22 @@ import (
 	"time"
 )
 
-var supplierCallCount atomic.Int32
-var initialAuthDuration = 500 * time.Millisecond
+const initialAuthDuration = 500 * time.Millisecond
 
-// testDBSupplier returns initialAuthDuration on first call
+type testSupplierWrapper struct {
+	callCount atomic.Int32
+}
+
+// supply returns initialAuthDuration on first call
 // and then returns longer durations after that.
 // Idea is that the first one is short since we
 // sleep for that length to let the db expire before testing access.
 // And then subsequent durations are more realistic where a db will not
-// expire between calling PgManager.DB() or PgManager2.Queries() and use
-func testDBSupplier() (DBApi, time.Duration, error) {
+// expire between calling PgManager.DB() or PgManager.Queries() and use
+func (t *testSupplierWrapper) supply() (DBApi, time.Duration, error) {
 	time.Sleep(time.Duration(rand.Int63n(500)+1) * time.Millisecond)
 	authDuration := initialAuthDuration
-	callCount := supplierCallCount.Add(1)
+	callCount := t.callCount.Add(1)
 	if callCount > 1 {
 		authDuration = 10 * time.Second
 	}
@@ -33,39 +36,48 @@ func testDBSupplier() (DBApi, time.Duration, error) {
 }
 
 func TestPgManager_Locking(t *testing.T) {
-	manager, err := New(testDBSupplier)
-	require.NoError(t, err)
+	for scenario, alwaysPing := range map[string]bool{
+		"ping as part of check":       true,
+		"don't ping as part of check": false,
+	} {
+		t.Run(scenario, func(t *testing.T) {
+			supplierWrapper := &testSupplierWrapper{}
+			manager, err := New(supplierWrapper.supply, alwaysPing)
+			require.NoError(t, err)
 
-	// Wait for the initial DB to expire
-	time.Sleep(initialAuthDuration)
+			// Wait for the initial DB to expire
+			time.Sleep(initialAuthDuration)
 
-	routines := 1_000
+			routines := 1_000
 
-	ctx := context.Background()
-	var wg sync.WaitGroup
+			ctx := context.Background()
+			var wg sync.WaitGroup
 
-	for i := 0; i < routines; i++ {
-		wg.Add(1)
-		go func(r int) {
-			defer wg.Done()
-			db, err := manager.DB()
-			if assert.NoError(t, err) {
-				assert.False(t, db.(*MockDBApi).IsExpired())
+			for i := 0; i < routines; i++ {
+				wg.Add(1)
+				go func(r int) {
+					defer wg.Done()
+					db, err := manager.DB()
+					if assert.NoError(t, err) {
+						assert.False(t, db.(*MockDBApi).IsExpired())
+					}
+					queries, err := manager.Queries()
+					if assert.NoError(t, err) {
+						// indirectly test if db underlying queries is expired
+						require.NoError(t, queries.UpdateBucketForFile(ctx, "", "", "", 0))
+					}
+				}(i)
 			}
-			queries, err := manager.Queries()
-			if assert.NoError(t, err) {
-				// indirectly test if db underlying queries is expired
-				require.NoError(t, queries.UpdateBucketForFile(ctx, "", "", "", 0))
-			}
-		}(i)
+			wg.Wait()
+			// Expect the call on installation of the manager and then one once the initialAuthDuration runs out.,
+			assert.Equal(t, int32(2), supplierWrapper.callCount.Load())
+		})
 	}
-	wg.Wait()
-	// Expect the call on installation of the manager and then one once the initialAuthDuration runs out.,
-	assert.Equal(t, int32(2), supplierCallCount.Load())
 }
 
 type MockDBApi struct {
 	isExpired bool
+	pingCount int
 	mutex     sync.RWMutex
 }
 
@@ -85,7 +97,7 @@ func (m *MockDBApi) ExecContext(ctx context.Context, s string, i ...interface{})
 	m.mutex.RLock()
 	defer m.mutex.RUnlock()
 	if m.isExpired {
-		return nil, fmt.Errorf("expired")
+		return nil, errors.New("expired")
 	}
 	return &MockSqlResult{}, nil
 }
@@ -94,7 +106,7 @@ func (m *MockDBApi) PrepareContext(ctx context.Context, s string) (*sql.Stmt, er
 	m.mutex.RLock()
 	defer m.mutex.RUnlock()
 	if m.isExpired {
-		return nil, fmt.Errorf("expired")
+		return nil, errors.New("expired")
 	}
 	return nil, nil
 }
@@ -103,7 +115,7 @@ func (m *MockDBApi) QueryContext(ctx context.Context, s string, i ...interface{}
 	m.mutex.RLock()
 	defer m.mutex.RUnlock()
 	if m.isExpired {
-		return nil, fmt.Errorf("expired")
+		return nil, errors.New("expired")
 	}
 	return nil, nil
 }
@@ -118,10 +130,11 @@ func (m *MockDBApi) QueryRowContext(ctx context.Context, s string, i ...interfac
 }
 
 func (m *MockDBApi) PingContext(ctx context.Context) error {
-	m.mutex.RLock()
-	defer m.mutex.RUnlock()
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	m.pingCount += 1
 	if m.isExpired {
-		return fmt.Errorf("expired")
+		return errors.New("expired")
 	}
 	return nil
 }

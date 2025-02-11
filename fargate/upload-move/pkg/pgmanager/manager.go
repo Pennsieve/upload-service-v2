@@ -15,17 +15,25 @@ import (
 type DBSupplier func() (DBApi, time.Duration, error)
 
 // PgManager is responsible for maintaining the PG related objects that the UploadMoveStore uses.
-// Both a straight DBAPi and *pgdb.Queries
+// Both a straight DBAPi and *pgdb.Queries.
+// It maintains an expiration time for the current DBApi and checks this time before every call to DB()
+// and Queries().
 type PgManager struct {
 	pg             *pgQueries.Queries
 	db             DBApi
 	mutex          sync.RWMutex
 	dbSupplier     DBSupplier
 	authExpiration time.Time
+	alwaysPing     bool
 }
 
 // New should only be called from the main goroutine.
-func New(supplier DBSupplier) (*PgManager, error) {
+// supplier will be called when New is called and whenever the manager determines
+// that the current DBApi needs to be replaced.
+// If alwaysPing is false, then replacement is determined by the authDuration returned by
+// supplier.
+// If alwaysPing is true, then replacement is determined by the authDuration as well as a ping
+func New(supplier DBSupplier, alwaysPing bool) (*PgManager, error) {
 	db, authDuration, err := supplier()
 	if err != nil {
 		return nil, fmt.Errorf("error creating initial connection pool: %w", err)
@@ -35,6 +43,7 @@ func New(supplier DBSupplier) (*PgManager, error) {
 		db:             db,
 		dbSupplier:     supplier,
 		authExpiration: time.Now().Add(authDuration),
+		alwaysPing:     alwaysPing,
 	}, nil
 }
 
@@ -68,16 +77,20 @@ func (m *PgManager) Close() error {
 // checkConnection calls should be protected by mutex.Lock() calls
 func (m *PgManager) checkConnection() error {
 	ctx := context.Background()
-	// If auth is unexpired and if we can still ping, then re-use current pool
 	expired := !time.Now().Before(m.authExpiration)
-	pingErr := m.db.PingContext(ctx)
+	var pingErr error
+	if !expired && m.alwaysPing {
+		pingErr = m.db.PingContext(ctx)
+	}
+	// if auth is unexpired and pingErr is nil for one reason or another, reuse current pool
 	if !expired && pingErr == nil {
 		return nil
 	}
 
 	log.WithFields(log.Fields{
-		"expired": expired,
-		"pingErr": pingErr,
+		"alwaysPing": m.alwaysPing,
+		"expired":    expired,
+		"pingErr":    pingErr,
 	}).Info("closing current connection pool and creating new one")
 
 	// Close old pool and get a new one

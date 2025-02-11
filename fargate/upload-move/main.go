@@ -52,7 +52,7 @@ func main() {
 	FileTableName = os.Getenv("FILES_TABLE")
 	TableName = os.Getenv("MANIFEST_TABLE")
 
-	pgManager, err := pgmanager.New(pgmanager.NewDBApi)
+	pgManager, err := pgmanager.New(pgmanager.NewDBApi, false)
 	if err != nil {
 		log.Fatalf("error creating pgManager: %v", err)
 	}
