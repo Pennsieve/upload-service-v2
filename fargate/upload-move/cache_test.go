@@ -2,6 +2,8 @@ package main
 
 import (
 	"github.com/google/uuid"
+	"github.com/pennsieve/pennsieve-go-core/pkg/queries/dydb"
+	"github.com/pennsieve/pennsieve-go-core/pkg/queries/pgdb"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"math/rand"
@@ -26,7 +28,7 @@ var testItemMap = map[string]*storageOrgItem{
 
 var actualQueryHits atomic.Int32
 
-func mockStorageOrgItemQuery(manifestId string) (*storageOrgItem, error) {
+func mockStorageOrgItemQuery(manifestId string, _ *dydb.Queries, _ *pgdb.Queries) (*storageOrgItem, error) {
 	actualQueryHits.Add(1)
 	delay := time.Duration(rand.Int63n(500)+1) * time.Millisecond
 	time.Sleep(delay)
@@ -46,7 +48,7 @@ func TestStorageOrgItemCache_ConcurrentAccess(t *testing.T) {
 				defer func() {
 					wg.Done()
 				}()
-				item, err := cacheUnderTest.GetOrLoad(manifestId)
+				item, err := cacheUnderTest.GetOrLoad(manifestId, nil, nil)
 				require.NoError(t, err)
 				assert.Equal(t, expectedItem, item)
 			}(manifestId, expectedItem)
