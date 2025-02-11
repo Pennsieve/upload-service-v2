@@ -77,7 +77,6 @@ func TestPgManager_Locking(t *testing.T) {
 
 type MockDBApi struct {
 	isExpired bool
-	pingCount int
 	mutex     sync.RWMutex
 }
 
@@ -130,9 +129,8 @@ func (m *MockDBApi) QueryRowContext(ctx context.Context, s string, i ...interfac
 }
 
 func (m *MockDBApi) PingContext(ctx context.Context) error {
-	m.mutex.Lock()
-	defer m.mutex.Unlock()
-	m.pingCount += 1
+	m.mutex.RLock()
+	defer m.mutex.RUnlock()
 	if m.isExpired {
 		return errors.New("expired")
 	}
