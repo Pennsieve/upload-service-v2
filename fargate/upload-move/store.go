@@ -182,18 +182,6 @@ func (s *UploadMoveStore) moveFile(workerId int, timeout time.Duration, items <-
 			continue
 		}
 
-		// Now that we know the storage bucket, make a new client with the correct region
-
-		client, region, err := pkg.CreateClient(stOrgItem.storageBucket)
-		s.s3 = client
-		if err != nil {
-			log.WithFields(
-				log.Fields{
-					"storage_bucket": stOrgItem.storageBucket,
-					"region":         region,
-				}).Errorf("Failed to update client region: %v", err)
-			continue
-		}
 		log.Debug(fmt.Sprintf("%d - %s - %s", workerId, item.UploadId, stOrgItem.storageBucket))
 
 		sourceKey := fmt.Sprintf("%s/%s", item.ManifestId, item.UploadId)
@@ -331,6 +319,16 @@ func (s *UploadMoveStore) moveFile(workerId int, timeout time.Duration, items <-
 func (s *UploadMoveStore) simpleCopyFile(stOrgItem *storageOrgItem, sourcePath string, targetPath string) error {
 	// Copy the item
 
+	client, region, err := pkg.CreateClient(stOrgItem.storageBucket)
+	s.s3 = client
+	if err != nil {
+		log.WithFields(
+			log.Fields{
+				"storage_bucket": stOrgItem.storageBucket,
+				"region":         region,
+			}).Errorf("Failed to update client region: %v", err)
+	}
+
 	log.Debug("Simple copy: ", sourcePath, " to: ", stOrgItem.storageBucket, ":", targetPath)
 
 	params := s3.CopyObjectInput{
@@ -339,7 +337,7 @@ func (s *UploadMoveStore) simpleCopyFile(stOrgItem *storageOrgItem, sourcePath s
 		Key:        aws.String(targetPath),
 	}
 
-	_, err := s.s3.CopyObject(context.Background(), &params)
+	_, err = client.CopyObject(context.Background(), &params)
 	if err != nil {
 		return err
 	}
