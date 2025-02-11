@@ -17,7 +17,7 @@ func CreateClient(storageBucket string) (*s3.Client, *AWSRegion, error) {
 		return nil, nil, fmt.Errorf("could not determine region code from bucket name: %s", storageBucket)
 	}
 	log.Printf("Using s3 client for region: %s", region.RegionCode)
-	cfg, err := config.LoadDefaultConfig(context.Background())
+	cfg, err := config.LoadDefaultConfig(context.Background(), config.WithRegion(region.RegionCode))
 	if err != nil {
 		return nil, nil, err
 	}
