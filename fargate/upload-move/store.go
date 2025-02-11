@@ -181,19 +181,7 @@ func (s *UploadMoveStore) moveFile(workerId int, timeout time.Duration, items <-
 				}).Errorf("Error getting storage bucket for manifest: %v", err)
 			continue
 		}
-
-		// Now that we know the storage bucket, make a new client with the correct region
-
-		client, region, err := pkg.CreateClient(stOrgItem.storageBucket)
-		s.s3 = client
-		if err != nil {
-			log.WithFields(
-				log.Fields{
-					"storage_bucket": stOrgItem.storageBucket,
-					"region":         region,
-				}).Errorf("Failed to update client region: %v", err)
-			continue
-		}
+		
 		log.Debug(fmt.Sprintf("%d - %s - %s", workerId, item.UploadId, stOrgItem.storageBucket))
 
 		sourceKey := fmt.Sprintf("%s/%s", item.ManifestId, item.UploadId)
