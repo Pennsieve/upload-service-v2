@@ -18,14 +18,15 @@ type DBApi interface {
 }
 
 // NewDBApi creates a client connection pool to the RDS proxy and returns this along
-// with an authDuration of 10 minutes. This is to keep the expiration time well below
+// with an authExpiration 10 minutes in the future. This is to keep the expiration time well below
 // the expiration time of the RDS auth token which is 15 minutes.
 // It will be used by PgManager when the manager is first created and also to reset
 // if the manager detects that its current pool has expired.
-func NewDBApi() (DBApi, time.Duration, error) {
+func NewDBApi() (DBApi, time.Time, error) {
+	now := time.Now()
 	db, err := pgQueries.ConnectRDS()
 	if err != nil {
-		return nil, 0, err
+		return nil, now, err
 	}
-	return db, 10 * time.Minute, nil
+	return db, now.Add(10 * time.Minute), nil
 }

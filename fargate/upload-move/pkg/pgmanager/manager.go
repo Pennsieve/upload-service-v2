@@ -11,8 +11,8 @@ import (
 
 // DBSupplier is called by New and then whenever the manager detects that it needs a new
 // DBApi instance because the previous one has expired. The second return argument
-// is the time.Duration that the returned DBApi is good for.
-type DBSupplier func() (DBApi, time.Duration, error)
+// is the time.Time that the returned DBApi expires.
+type DBSupplier func() (DBApi, time.Time, error)
 
 // PgManager is responsible for maintaining the PG related objects that the UploadMoveStore uses.
 // Both a straight DBAPi and *pgdb.Queries.
@@ -30,11 +30,11 @@ type PgManager struct {
 // New should only be called from the main goroutine.
 // supplier will be called when New is called and whenever the manager determines
 // that the current DBApi needs to be replaced.
-// If alwaysPing is false, then replacement is determined by the authDuration returned by
+// If alwaysPing is false, then replacement is determined by the auth expiration time returned by
 // supplier.
-// If alwaysPing is true, then replacement is determined by the authDuration as well as a ping
+// If alwaysPing is true, then replacement is determined by the auth expiration time as well as a ping
 func New(supplier DBSupplier, alwaysPing bool) (*PgManager, error) {
-	db, authDuration, err := supplier()
+	db, authExpiration, err := supplier()
 	if err != nil {
 		return nil, fmt.Errorf("error creating initial connection pool: %w", err)
 	}
@@ -42,7 +42,7 @@ func New(supplier DBSupplier, alwaysPing bool) (*PgManager, error) {
 		pg:             pgQueries.New(db),
 		db:             db,
 		dbSupplier:     supplier,
-		authExpiration: time.Now().Add(authDuration),
+		authExpiration: authExpiration,
 		alwaysPing:     alwaysPing,
 	}, nil
 }
@@ -97,14 +97,14 @@ func (m *PgManager) checkConnection() error {
 	if err := m.db.Close(); err != nil {
 		log.Warn("error closing expiring connection pool: ", err)
 	}
-	db, authDuration, err := m.dbSupplier()
+	db, authExpiration, err := m.dbSupplier()
 	if err != nil {
 		return fmt.Errorf("error creating new connection pool: %w", err)
 	}
 	if err := db.PingContext(ctx); err != nil {
 		return fmt.Errorf("error connecting with new connection pool: %w", err)
 	}
-	m.authExpiration = time.Now().Add(authDuration)
+	m.authExpiration = authExpiration
 	m.db = db
 	m.pg = pgQueries.New(db)
 	return nil

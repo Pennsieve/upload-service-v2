@@ -19,20 +19,20 @@ type testSupplierWrapper struct {
 	callCount atomic.Int32
 }
 
-// supply returns initialAuthDuration on first call
-// and then returns longer durations after that.
+// supply returns an expiration time of initialAuthDuration in the future on first call
+// and then returns longer expiration times after that.
 // Idea is that the first one is short since we
 // sleep for that length to let the db expire before testing access.
 // And then subsequent durations are more realistic where a db will not
 // expire between calling PgManager.DB() or PgManager.Queries() and use
-func (t *testSupplierWrapper) supply() (DBApi, time.Duration, error) {
+func (t *testSupplierWrapper) supply() (DBApi, time.Time, error) {
 	time.Sleep(time.Duration(rand.Int63n(500)+1) * time.Millisecond)
 	authDuration := initialAuthDuration
 	callCount := t.callCount.Add(1)
 	if callCount > 1 {
 		authDuration = 10 * time.Second
 	}
-	return &MockDBApi{}, authDuration, nil
+	return &MockDBApi{}, time.Now().Add(authDuration), nil
 }
 
 func TestPgManager_Locking(t *testing.T) {
