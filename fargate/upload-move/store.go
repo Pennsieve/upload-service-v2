@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
@@ -143,7 +144,6 @@ func (s *UploadMoveStore) moveFile(workerId int, timeout time.Duration, items <-
 				}).Errorf("Error getting storage bucket for manifest: %v", err)
 			continue
 		}
-		
 		log.Debug(fmt.Sprintf("%d - %s - %s", workerId, item.UploadId, stOrgItem.storageBucket))
 
 		sourceKey := fmt.Sprintf("%s/%s", item.ManifestId, item.UploadId)
@@ -298,7 +298,15 @@ func (s *UploadMoveStore) simpleCopyFile(stOrgItem *storageOrgItem, sourcePath s
 		Key:        aws.String(targetPath),
 	}
 
-	_, err := s.s3.CopyObject(context.Background(), &params)
+	region, exists := pkg.GetRegion(stOrgItem.storageBucket)
+	if !exists {
+		return errors.New(fmt.Sprintf("Could not determine region from bucket name %s", stOrgItem.storageBucket))
+	}
+	options := func(o *s3.Options) {
+		o.Region = region.RegionCode
+	}
+
+	_, err := s.s3.CopyObject(context.Background(), &params, options)
 	if err != nil {
 		return err
 	}
