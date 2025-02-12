@@ -87,7 +87,14 @@ func MultiPartCopy(svc *s3.Client, timeout time.Duration, fileSize int64, source
 		UploadId:        &uploadId,
 		MultipartUpload: &mpu,
 	}
-	compOutput, err := svc.CompleteMultipartUpload(context.TODO(), &complete)
+	region, exists := GetRegion(destBucket)
+	if !exists {
+		return errors.New(fmt.Sprintf("Could not determine region from bucket name %s", destBucket))
+	}
+	options := func(o *s3.Options) {
+		o.Region = region.RegionCode
+	}
+	compOutput, err := svc.CompleteMultipartUpload(context.TODO(), &complete, options)
 	if err != nil {
 		return fmt.Errorf("error completing upload: %w", err)
 	}
