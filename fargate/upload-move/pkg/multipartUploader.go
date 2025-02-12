@@ -173,7 +173,7 @@ func createWorkerPool(ctx context.Context, svc *s3.Client, nrWorkers int, upload
 			UploadId: aws.String(uploadId),
 		}
 		//ignoring any errors with aborting the copy
-		_, err := svc.AbortMultipartUpload(context.TODO(), &abortIn)
+		_, err := svc.AbortMultipartUpload(context.TODO(), &abortIn, options)
 		if err != nil {
 			log.Println("Error aborting failed upload session.")
 		}
