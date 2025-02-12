@@ -73,7 +73,7 @@ func MultiPartCopy(svc *s3.Client, timeout time.Duration, fileSize int64, source
 	go aggregateResult(done, &parts, results)
 
 	// Wait until all processors are completed.
-	createWorkerPool(ctx, svc, nrCopyWorkers, uploadId, partWalker, results)
+	createWorkerPool(ctx, svc, nrCopyWorkers, uploadId, partWalker, results, options)
 
 	// Wait until done channel has a value
 	<-done
@@ -142,7 +142,7 @@ func allocate(uploadId string, fileSize int64, sourceBucket string, sourceKey st
 
 // createWorkerPool creates a worker pool for uploading parts
 func createWorkerPool(ctx context.Context, svc *s3.Client, nrWorkers int, uploadId string,
-	partWalker chan s3.UploadPartCopyInput, results chan s3types.CompletedPart) {
+	partWalker chan s3.UploadPartCopyInput, results chan s3types.CompletedPart, options func(*s3.Options)) {
 
 	defer func() {
 		close(results)
@@ -155,7 +155,7 @@ func createWorkerPool(ctx context.Context, svc *s3.Client, nrWorkers int, upload
 		log.Println("starting upload-part worker:", w)
 		w := int32(w)
 		go func() {
-			err := worker(ctx, svc, &copyWg, w, partWalker, results)
+			err := worker(ctx, svc, &copyWg, w, partWalker, results, options)
 			if err != nil {
 				workerFailed = true
 			}
@@ -173,7 +173,7 @@ func createWorkerPool(ctx context.Context, svc *s3.Client, nrWorkers int, upload
 			UploadId: aws.String(uploadId),
 		}
 		//ignoring any errors with aborting the copy
-		_, err := svc.AbortMultipartUpload(context.TODO(), &abortIn)
+		_, err := svc.AbortMultipartUpload(context.TODO(), &abortIn, options)
 		if err != nil {
 			log.Println("Error aborting failed upload session.")
 		}
@@ -194,7 +194,7 @@ func aggregateResult(done chan bool, parts *[]s3types.CompletedPart, results cha
 
 // worker uploads parts of a file as part of copy function.
 func worker(ctx context.Context, svc *s3.Client, wg *sync.WaitGroup, workerId int32,
-	partWalker chan s3.UploadPartCopyInput, results chan s3types.CompletedPart) error {
+	partWalker chan s3.UploadPartCopyInput, results chan s3types.CompletedPart, options func(options2 *s3.Options)) error {
 
 	// Close worker after it completes.
 	// This happens when the items channel closes.
@@ -206,7 +206,7 @@ func worker(ctx context.Context, svc *s3.Client, wg *sync.WaitGroup, workerId in
 	for partInput := range partWalker {
 
 		//log.Printf("Attempting to upload part %d range: %s\n", partInput.PartNumber, *partInput.CopySourceRange)
-		partResp, err := svc.UploadPartCopy(ctx, &partInput)
+		partResp, err := svc.UploadPartCopy(ctx, &partInput, options)
 
 		if err != nil {
 			return err
