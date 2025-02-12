@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -145,7 +144,6 @@ func (s *UploadMoveStore) moveFile(workerId int, timeout time.Duration, items <-
 				}).Errorf("Error getting storage bucket for manifest: %v", err)
 			continue
 		}
-
 		log.Debug(fmt.Sprintf("%d - %s - %s", workerId, item.UploadId, stOrgItem.storageBucket))
 
 		sourceKey := fmt.Sprintf("%s/%s", item.ManifestId, item.UploadId)
