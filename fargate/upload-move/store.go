@@ -15,38 +15,38 @@ import (
 	dyQueries "github.com/pennsieve/pennsieve-go-core/pkg/queries/dydb"
 	pgQeuries "github.com/pennsieve/pennsieve-go-core/pkg/queries/pgdb"
 	"github.com/pennsieve/pennsieve-upload-service-v2/upload-move-files/pkg"
+	"github.com/pennsieve/pennsieve-upload-service-v2/upload-move-files/pkg/pgmanager"
 	log "github.com/sirupsen/logrus"
 	"time"
 )
 
 // UploadMoveStore provides the Queries interface and a db instance.
 type UploadMoveStore struct {
-	pg                  *pgQeuries.Queries
+	pgManager           *pgmanager.PgManager
 	dy                  *dyQueries.Queries
-	db                  *sql.DB
 	dydb                *dynamodb.Client
 	s3                  *s3.Client
 	storageOrgItemCache *StorageOrgItemCache
 }
 
 // NewUploadMoveStore returns a NewUploadMoveStore object which implements the Queries
-func NewUploadMoveStore(db *sql.DB, dydb *dynamodb.Client, s3 *s3.Client) *UploadMoveStore {
-	pg := pgQeuries.New(db)
-	dy := dyQueries.New(dydb)
-	storageOrgItemQuery := makeDefaultStorageOrgItemQuery(dy, pg)
+func NewUploadMoveStore(pgManager *pgmanager.PgManager, dydb *dynamodb.Client, s3 *s3.Client) *UploadMoveStore {
 	return &UploadMoveStore{
-		db:                  db,
+		pgManager:           pgManager,
 		dydb:                dydb,
-		pg:                  pg,
-		dy:                  dy,
+		dy:                  dyQueries.New(dydb),
 		s3:                  s3,
-		storageOrgItemCache: NewStorageItemCache(storageOrgItemQuery),
+		storageOrgItemCache: NewStorageItemCache(DefaultStorageOrgItemQuery),
 	}
 }
 
 // execPgTx wrap function in transaction.
 func (s *UploadMoveStore) execPgTx(ctx context.Context, fn func(*pgQeuries.Queries) error) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+	db, err := s.pgManager.DB()
+	if err != nil {
+		return fmt.Errorf("error accessing DB for TX execution: %w", err)
+	}
+	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -63,50 +63,13 @@ func (s *UploadMoveStore) execPgTx(ctx context.Context, fn func(*pgQeuries.Queri
 	return tx.Commit()
 }
 
-func (s *UploadMoveStore) KeepAlive(ctx context.Context, ticker *time.Ticker) {
-	counter := 0
-	numbers := make([]int, 0)
-	for range ticker.C {
-		counter += 1
-		query := fmt.Sprintf("SELECT %d as value FROM (VALUES(1)) i;", counter)
-		log.Info(fmt.Sprintf("KeepAlive (%d) starting (query: %s)", counter, query))
-		rows, err := s.db.QueryContext(ctx, query)
-		if err != nil {
-			log.Error(fmt.Sprintf("KeepAlive (%d) query error: %v", counter, err))
-			db, err := pgQeuries.ConnectRDS()
-			if err != nil {
-				log.Error(fmt.Sprintf("KeepAlive ConnectRDS error: %v", err))
-			} else {
-				// replace the database connection
-				log.Info(fmt.Sprintf("KeepAlive reconnected to RDS"))
-				s.db = db
-			}
-		} else {
-			for rows.Next() {
-				var number int
-				if err := rows.Scan(&number); err != nil {
-					log.Error(fmt.Sprintf("KeepAlive (%d) rows.Scan error: %v", counter, err))
-				} else {
-					log.Info(fmt.Sprintf("KeepAlive (%d) result: %d", counter, number))
-					numbers = append(numbers, number)
-				}
-			}
-
-			err := rows.Close()
-			if err != nil {
-				log.Error(fmt.Sprintf("KeepAlive (%d) rows.Close error: %v", counter, err))
-			}
-
-			if err := rows.Err(); err != nil {
-				log.Error(fmt.Sprintf("KeepAlive (%d) rows.Err error: %v", counter, err))
-			}
-		}
-	}
-}
-
 // GetManifestStorageBucket returns the storage bucket associated with organization for manifest.
 func (s *UploadMoveStore) GetManifestStorageBucket(manifestId string) (*storageOrgItem, error) {
-	return s.storageOrgItemCache.GetOrLoad(manifestId)
+	pg, err := s.pgManager.Queries()
+	if err != nil {
+		return nil, fmt.Errorf("error getting pg queries for storageOrgItem lookup: %w", err)
+	}
+	return s.storageOrgItemCache.GetOrLoad(manifestId, s.dy, pg)
 }
 
 // manifestFileWalk paginates results from dynamodb manifest files table and put items on channel.
@@ -251,7 +214,16 @@ func (s *UploadMoveStore) moveFile(workerId int, timeout time.Duration, items <-
 		updatedMessage := ""
 		//var f dbTable.File
 
-		switch err := s.pg.UpdateBucketForFile(context.Background(), item.UploadId, stOrgItem.storageBucket, targetPath, stOrgItem.organizationId); err.(type) {
+		pg, err := s.pgManager.Queries()
+		if err != nil {
+			log.WithFields(
+				log.Fields{
+					"manifest_id": item.ManifestId,
+					"upload_id":   item.UploadId,
+				}).Error("error getting pg queries for bucket update: ", err)
+			continue
+		}
+		switch err := pg.UpdateBucketForFile(context.Background(), item.UploadId, stOrgItem.storageBucket, targetPath, stOrgItem.organizationId); err.(type) {
 		case nil:
 			break
 		case *pgdb.ErrFileNotFound:
@@ -342,4 +314,10 @@ func (s *UploadMoveStore) simpleCopyFile(stOrgItem *storageOrgItem, sourcePath s
 	}
 
 	return nil
+}
+
+func (s *UploadMoveStore) Close() {
+	if err := s.pgManager.Close(); err != nil {
+		log.Warn("error closing pgManager: ", err)
+	}
 }
