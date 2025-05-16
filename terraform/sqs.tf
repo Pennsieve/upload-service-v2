@@ -22,7 +22,7 @@ resource "aws_sqs_queue" "upload_trigger_deadletter_queue" {
 resource "aws_lambda_event_source_mapping" "upload_source_mapping" {
   event_source_arn = aws_sqs_queue.upload_trigger_queue.arn
   function_name    = aws_lambda_function.upload_lambda.arn
-  batch_size = 25
+  batch_size = 500
   maximum_batching_window_in_seconds = 5
   function_response_types = ["ReportBatchItemFailures"]
 }
@@ -91,8 +91,8 @@ resource "aws_sqs_queue" "imported_file_deadletter_queue" {
 resource "aws_lambda_event_source_mapping" "imported_file_mapping" {
   event_source_arn = aws_sqs_queue.imported_file_queue.arn
   function_name    = aws_lambda_function.fargate_trigger_lambda.function_name
-  batch_size = 25
-  maximum_batching_window_in_seconds = 300
+  batch_size = 1000
+  maximum_batching_window_in_seconds = 30
 }
 
 # Grant SNS to post to SQS queue

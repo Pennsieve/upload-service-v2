@@ -9,6 +9,7 @@ resource "aws_lambda_function" "upload_lambda" {
   memory_size      = 128
   s3_bucket         = var.lambda_bucket
   s3_key            = "${var.service_name}/upload/upload-v2-handler-${var.image_tag}.zip"
+  reserved_concurrent_executions = 100 // Set a maximum concurrency to prevent overloading RDS interaction
 
   vpc_config {
     subnet_ids         = tolist(data.terraform_remote_state.vpc.outputs.private_subnet_ids)
@@ -98,7 +99,6 @@ resource "aws_lambda_function" "archive_lambda" {
 
 
 ### MOVE TRIGGER
-
 resource "aws_lambda_function" "fargate_trigger_lambda" {
   description      = "Lambda Function which triggers FARGATE to move files to final destination."
   function_name    = "${var.environment_name}-${var.service_name}-fargate-trigger-lambda-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
