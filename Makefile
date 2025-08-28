@@ -29,8 +29,8 @@ test-ci:
 	chmod -R 777 test-dynamodb-data
 	mkdir -p testdata
 	chmod -R 777 testdata
-	docker-compose -f docker-compose.test.yml down --remove-orphans
-	docker-compose -f docker-compose.test.yml up --exit-code-from ci_tests ci_tests
+	docker compose -f docker-compose.test.yml down --remove-orphans
+	docker compose -f docker-compose.test.yml up --exit-code-from ci_tests ci_tests
 
 go-get:
 	cd $(WORKING_DIR)/lambda/service; \
@@ -52,6 +52,8 @@ docker-clean:
 clean: docker-clean
 	rm -rf test-dynamodb-data
 	rm -rf testdata
+	rm -rf lambda/bin
+	rm -rf miniodata
 
 package:
 	@echo ""
@@ -60,7 +62,7 @@ package:
 	@echo "***********************"
 	@echo ""
 	cd $(WORKING_DIR)/lambda/service; \
-  		env GOOS=linux GOARCH=amd64 go build -o $(WORKING_DIR)/lambda/bin/service/pennsieve_upload_service; \
+  		env GOOS=linux GOARCH=arm64 go build -tags lambda.norpc -o $(WORKING_DIR)/lambda/bin/service/bootstrap; \
 		cd $(WORKING_DIR)/lambda/bin/service/ ; \
 			zip -r $(WORKING_DIR)/lambda/bin/service/$(SERVICE_PACKAGE_NAME) .
 	@echo ""
@@ -69,7 +71,7 @@ package:
 	@echo "***********************"
 	@echo ""
 	cd $(WORKING_DIR)/lambda/upload; \
-		env GOOS=linux GOARCH=amd64 go build -o $(WORKING_DIR)/lambda/bin/upload/pennsieve_upload_handler; \
+		env GOOS=linux GOARCH=arm64 go build -tags lambda.norpc -o $(WORKING_DIR)/lambda/bin/upload/bootstrap; \
 		cd $(WORKING_DIR)/lambda/bin/upload/ ; \
 			zip -r $(WORKING_DIR)/lambda/bin/upload/$(UPLOADHANDLER_PACKAGE_NAME) .
 	@echo ""
@@ -78,7 +80,7 @@ package:
 	@echo "***********************"
 	@echo ""
 	cd $(WORKING_DIR)/lambda/moveTrigger; \
-  		env GOOS=linux GOARCH=amd64 go build -o $(WORKING_DIR)/lambda/bin/moveTrigger/pennsieve_move_trigger; \
+  		env GOOS=linux GOARCH=arm64 go build -tags lambda.norpc -o $(WORKING_DIR)/lambda/bin/moveTrigger/bootstrap; \
 		cd $(WORKING_DIR)/lambda/bin/moveTrigger/ ; \
 			zip -r $(WORKING_DIR)/lambda/bin/moveTrigger/$(MOVETRIGGER_PACKAGE_NAME) .
 	@echo ""
@@ -87,7 +89,7 @@ package:
 	@echo "***********************"
 	@echo ""
 	cd $(WORKING_DIR)/lambda/archiver; \
-  		env GOOS=linux GOARCH=amd64 go build -o $(WORKING_DIR)/lambda/bin/archiver/manifest_archiver; \
+  		env GOOS=linux GOARCH=arm64 go build -tags lambda.norpc -o $(WORKING_DIR)/lambda/bin/archiver/bootstrap; \
 		cd $(WORKING_DIR)/lambda/bin/archiver/ ; \
 			zip -r $(WORKING_DIR)/lambda/bin/archiver/$(ARCHIVER_PACKAGE_NAME) .
 	@echo ""

@@ -2,8 +2,9 @@
 resource "aws_lambda_function" "upload_lambda" {
   description      = "Lambda Function which consumes messages from the SQS queue related to newly uploaded files."
   function_name    = "${var.environment_name}-${var.service_name}-upload-lambda-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
-  handler          = "pennsieve_upload_handler"
-  runtime          = "go1.x"
+  handler          = "bootstrap"
+  runtime          = "provided.al2023"
+  architectures    = ["arm64"]
   role             = aws_iam_role.upload_service_v2_lambda_role.arn
   timeout          = 300
   memory_size      = 128
@@ -37,8 +38,9 @@ resource "aws_lambda_function" "upload_lambda" {
 resource "aws_lambda_function" "service_lambda" {
   description      = "Lambda Function which consumes messages from the SQS queue related to newly uploaded files."
   function_name    = "${var.environment_name}-${var.service_name}-service-lambda-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
-  handler          = "pennsieve_upload_service"
-  runtime          = "go1.x"
+  handler          = "bootstrap"
+  runtime          = "provided.al2023"
+  architectures    = ["arm64"]
   role             = aws_iam_role.upload_service_v2_lambda_role.arn
   timeout          = 300
   memory_size      = 128
@@ -70,8 +72,9 @@ resource "aws_lambda_function" "service_lambda" {
 resource "aws_lambda_function" "archive_lambda" {
   description      = "Lambda Function which archives a manifest when triggered by the service."
   function_name    = "${var.environment_name}-${var.service_name}-archive-lambda-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
-  handler          = "manifest_archiver"
-  runtime          = "go1.x"
+  handler          = "bootstrap"
+  runtime          = "provided.al2023"
+  architectures    = ["arm64"]
   role             = aws_iam_role.upload_service_v2_lambda_role.arn
   timeout          = 600
   memory_size      = 128
@@ -103,8 +106,9 @@ resource "aws_lambda_function" "fargate_trigger_lambda" {
   description      = "Lambda Function which triggers FARGATE to move files to final destination."
   function_name    = "${var.environment_name}-${var.service_name}-fargate-trigger-lambda-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
   reserved_concurrent_executions = 1 // don't allow concurrent lambda's
-  handler          = "pennsieve_move_trigger"
-  runtime          = "go1.x"
+  handler          = "bootstrap"
+  runtime          = "provided.al2023"
+  architectures    = ["arm64"]
   role             = aws_iam_role.move_trigger_lambda_role.arn
   timeout          = 300
   memory_size      = 128
