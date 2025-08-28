@@ -98,7 +98,7 @@ package:
 	@echo "***********************"
 	@echo ""
 	cd $(WORKING_DIR)/fargate/upload-move; \
-		env GOOS=linux GOARCH=amd64 go build -o app/upload-move-files; \
+#		env GOOS=linux GOARCH=amd64 go build -o app/upload-move-files; \
 		docker build -t pennsieve/upload_move_files:${VERSION} . ;\
 		docker push pennsieve/upload_move_files:${VERSION} ;\
 
