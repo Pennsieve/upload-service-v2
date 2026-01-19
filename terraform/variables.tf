@@ -64,6 +64,9 @@ variable "file_move_timeout" {
   default = "60"
 }
 
+variable "api_domain_name" {
+}
+
 locals {
   domain_name = data.terraform_remote_state.account.outputs.domain_name
   hosted_zone = data.terraform_remote_state.account.outputs.public_hosted_zone_id
@@ -73,4 +76,7 @@ locals {
     aws_region       = data.aws_region.current_region.name
     environment_name = var.environment_name
   }
+
+  cors_allowed_origins  = var.environment_name == "prod" ? ["https://discover.pennsieve.io", "https://app.pennsieve.io"] : ["http://localhost:3000", "https://discover.pennsieve.net", "https://app.pennsieve.net"]
+
 }
