@@ -13,7 +13,7 @@ resource "aws_apigatewayv2_api" "upload_service_api" {
   body = templatefile("${path.module}/upload-service.yml", {
     authorize_lambda_invoke_uri    = data.terraform_remote_state.api_gateway.outputs.authorizer_lambda_invoke_uri
     gateway_authorizer_role        = data.terraform_remote_state.api_gateway.outputs.authorizer_invocation_role
-    account_service_lambda_arn     = aws_lambda_function.service_lambda.arn
+    upload_service_lambda_arn     = aws_lambda_function.service_lambda.arn
   })
 }
 
