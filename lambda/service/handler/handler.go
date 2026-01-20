@@ -59,7 +59,7 @@ func ManifestHandler(request events.APIGatewayV2HTTPRequest) (*events.APIGateway
     authorized := false
 
     switch routeKey {
-    case "/":
+    case "":
         switch request.RequestContext.HTTP.Method {
         case "GET":
             if authorized = authorizer.HasRole(*claims, permissions.ViewFiles); authorized {
