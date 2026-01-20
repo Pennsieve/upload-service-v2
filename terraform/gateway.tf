@@ -58,8 +58,8 @@ resource "aws_apigatewayv2_integration" "upload_service_integration" {
   integration_uri    = aws_lambda_function.service_lambda.invoke_arn
 }
 
-resource "aws_lambda_permission" "accounts_service_lambda_permission" {
-  statement_id  = "AllowExecutionFromAPIGateway"
+resource "aws_lambda_permission" "upload_service_lambda_permission" {
+  statement_id  = "AllowUploadServiceExecutionFromAPI"
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.service_lambda.function_name
   principal     = "apigateway.amazonaws.com"
