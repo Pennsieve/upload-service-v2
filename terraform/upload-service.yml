@@ -27,7 +27,7 @@ tags:
       url: https://docs.pennsieve.io/reference
 
 paths:
-  /:
+  /manifest:
     get:
       x-amazon-apigateway-integration:
         $ref: '#/components/x-amazon-apigateway-integrations/manifest-service'
@@ -45,7 +45,7 @@ paths:
       security:
         - token_dataset_auth: [ ]
       tags:
-        - Upload Manifest
+        - Manifest
       responses:
         '200':
           description: A list of manifests.
@@ -88,7 +88,7 @@ paths:
       security:
         - token_dataset_auth: [ ]
       tags:
-        - Upload Manifest
+        - Manifest
       parameters:
         - in: query
           name: dataset_id
@@ -114,7 +114,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '5XX':
           $ref: '#/components/responses/Error'
-  /files:
+  /manifest/files:
     get:
       x-amazon-apigateway-integration:
         $ref: '#/components/x-amazon-apigateway-integrations/manifest-service'
@@ -123,7 +123,7 @@ paths:
       security:
         - token_manifest_auth: [ ]
       tags:
-        - Upload Manifest
+        - Manifest
       description: |
         Returns a paginated list of files that are associated with an upload manifest. \
       parameters:
@@ -196,7 +196,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '5XX':
           $ref: '#/components/responses/Error'
-  /status:
+  /manifest/status:
     get:
       x-amazon-apigateway-integration:
         $ref: '#/components/x-amazon-apigateway-integrations/manifest-service'
@@ -205,7 +205,7 @@ paths:
       security:
         - token_manifest_auth: [ ]
       tags:
-        - Upload Manifest
+        - Status
       description: |
         Returns a list of files that have the requested status on the server for the given manifest.\
         \
@@ -269,7 +269,7 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '5XX':
           $ref: '#/components/responses/Error'
-  /archive:
+  /manifest/archive:
     post:
       x-amazon-apigateway-integration:
         $ref: '#/components/x-amazon-apigateway-integrations/manifest-service'
@@ -278,7 +278,7 @@ paths:
       security:
         - token_manifest_auth: [ ]
       tags:
-        - Upload Manifest
+        - Archive
       description: |
         Archives a manifest by storing the manifest as a CSV file on disk.\
         \
@@ -325,7 +325,7 @@ paths:
       security:
         - token_manifest_auth: [ ]
       tags:
-        - Upload Manifest
+        - Archive
       description: |
         Returns a pre-signed URL to fetch the Manifest Archive CVS file.
       parameters:
@@ -367,7 +367,7 @@ paths:
       security:
         - token_manifest_auth: [ ]
       tags:
-        - Upload Manifest
+        - Archive
       parameters:
         - in: query
           name: manifest_id

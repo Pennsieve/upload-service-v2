@@ -59,7 +59,7 @@ func ManifestHandler(request events.APIGatewayV2HTTPRequest) (*events.APIGateway
     authorized := false
 
     switch routeKey {
-    case "":
+    case "/manifest":
         switch request.RequestContext.HTTP.Method {
         case "GET":
             if authorized = authorizer.HasRole(*claims, permissions.ViewFiles); authorized {
@@ -70,21 +70,21 @@ func ManifestHandler(request events.APIGatewayV2HTTPRequest) (*events.APIGateway
                 apiResponse, err = postManifestRoute(request, claims)
             }
         }
-    case "/files":
+    case "/manifest/files":
         switch request.RequestContext.HTTP.Method {
         case "GET":
             if authorized = authorizer.HasRole(*claims, permissions.ViewFiles); authorized {
                 apiResponse, err = getManifestFilesRoute(request, claims)
             }
         }
-    case "/status":
+    case "/manifest/status":
         switch request.RequestContext.HTTP.Method {
         case "GET":
             if authorized = authorizer.HasRole(*claims, permissions.ViewFiles); authorized {
                 apiResponse, err = getManifestFilesStatusRoute(request, claims)
             }
         }
-    case "/archive":
+    case "/manifest/archive":
         switch request.RequestContext.HTTP.Method {
         case "GET":
             // Return pre-signed url to download the manifest CSV file
@@ -93,7 +93,6 @@ func ManifestHandler(request events.APIGatewayV2HTTPRequest) (*events.APIGateway
             }
         case "DELETE":
             // Completely removes a previously archived manifest (archive must be archived before deleting)
-
             if authorized = authorizer.HasRole(*claims, permissions.CreateDeleteFiles); authorized {
                 apiResponse, err = deleteManifestRoute(request, claims)
             }

@@ -21,7 +21,7 @@ resource "aws_apigatewayv2_api_mapping" "upload_service_api_map" {
   api_id          = aws_apigatewayv2_api.upload_service_api.id
   domain_name     = var.api_domain_name
   stage           = aws_apigatewayv2_stage.upload_service_gateway_stage.id
-  api_mapping_key = "manifest"
+  api_mapping_key = "upload"
 
 }
 
