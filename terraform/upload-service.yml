@@ -492,6 +492,45 @@ components:
           description: UUID of the manifest.
         files:
           $ref: '#/components/schemas/manifestFiles'
+        options:
+          $ref: '#/components/schemas/viewerAssetOptions'
+    viewerAssetOptions:
+      type: object
+      description: |
+        Options required when import_type is "viewer-assets". These options control how
+        viewer assets are processed and stored.
+      required:
+        - asset_type
+        - properties
+        - provenance_id
+      properties:
+        asset_type:
+          type: string
+          description: |
+            Identifies the type of viewer asset being imported (e.g., "ome-zarr").
+          example: "ome-zarr"
+        properties:
+          type: object
+          additionalProperties: true
+          description: |
+            Custom metadata for the viewer asset stored as JSONB. Can contain any
+            key-value pairs relevant to the asset.
+          example:
+            key: value
+        provenance_id:
+          type: string
+          format: uuid
+          description: |
+            UUID referencing the external system or integration that created this asset.
+          example: "123e4567-e89b-12d3-a456-426614174000"
+        asset_name:
+          type: string
+          description: |
+            Optional name for the viewer asset. When present (even if empty string),
+            triggers single-record mode where all uploaded files are grouped under
+            one viewer asset record pointing to a shared prefix. When absent,
+            creates a separate file record for each uploaded file.
+          example: "my-dataset.zarr"
     manifestFiles:
       type: array
       items:
