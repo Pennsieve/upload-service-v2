@@ -498,7 +498,7 @@ components:
           description: |
             Optional configuration options for the manifest. The structure depends
             on the import type. For viewer asset imports, required properties are:
-            asset_type (string), properties (object), and provenance_id (UUID string).
+            asset_type (string) and properties (object)
             An optional asset_name (string) can trigger single-record mode.
     manifestFiles:
       type: array
