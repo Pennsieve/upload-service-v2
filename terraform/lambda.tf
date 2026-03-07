@@ -62,6 +62,8 @@ resource "aws_lambda_function" "service_lambda" {
       REGION = var.aws_region
       RDS_PROXY_ENDPOINT = data.terraform_remote_state.pennsieve_postgres.outputs.rds_proxy_endpoint,
       ARCHIVER_INVOKE_ARN = aws_lambda_function.archive_lambda.arn,
+      UPLOAD_CREDENTIALS_ROLE_ARN = aws_iam_role.upload_credentials_role.arn,
+      UPLOAD_BUCKET = aws_s3_bucket.uploads_s3_bucket.bucket,
       LOG_LEVEL = "info",
     }
   }
