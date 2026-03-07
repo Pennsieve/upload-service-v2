@@ -269,6 +269,52 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '5XX':
           $ref: '#/components/responses/Error'
+  /manifest/upload-credentials:
+    post:
+      summary: Get temporary S3 upload credentials
+      description: |
+        Returns temporary AWS credentials scoped to upload files to a specific manifest prefix
+        in the uploads S3 bucket. Used by data targets to upload files without requiring
+        Cognito refresh tokens.
+      x-amazon-apigateway-integration:
+        $ref: '#/components/x-amazon-apigateway-integrations/manifest-service'
+      operationId: getUploadCredentials
+      security:
+        - token_dataset_auth: [ ]
+      tags:
+        - Upload
+      parameters:
+        - in: query
+          name: dataset_id
+          schema:
+            type: string
+          required: true
+          description: dataset node id
+      requestBody:
+        description: Manifest node ID to scope credentials to
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - manifestNodeId
+              properties:
+                manifestNodeId:
+                  type: string
+                  description: The manifest node ID returned from POST /manifest
+      responses:
+        '200':
+          description: Temporary AWS credentials for S3 upload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/uploadCredentialsResponse'
+        '4XX':
+          $ref: '#/components/responses/Unauthorized'
+        '5XX':
+          $ref: '#/components/responses/Error'
+
   /manifest/archive:
     post:
       x-amazon-apigateway-integration:
@@ -517,6 +563,28 @@ components:
           targetName:
             type: string
             description: Name of the uploaded file as it should appear on the platform. This includes the extension of the file.
+    uploadCredentialsResponse:
+      type: object
+      properties:
+        accessKeyId:
+          type: string
+          description: AWS access key ID
+        secretAccessKey:
+          type: string
+          description: AWS secret access key
+        sessionToken:
+          type: string
+          description: AWS session token
+        expiration:
+          type: string
+          format: date-time
+          description: When the credentials expire (ISO 8601)
+        bucket:
+          type: string
+          description: S3 bucket name for uploads
+        region:
+          type: string
+          description: AWS region of the upload bucket
     addFilesResponse:
       type: object
       description: Response for addFiles endpoint.

@@ -327,6 +327,72 @@ data "aws_iam_policy_document" "upload_service_v2_iam_policy_document" {
 
   }
 
+  statement {
+    sid    = "AssumeUploadCredentialsRole"
+    effect = "Allow"
+
+    actions = [
+      "sts:AssumeRole"
+    ]
+
+    resources = [
+      aws_iam_role.upload_credentials_role.arn
+    ]
+  }
+
+}
+
+##############################
+# UPLOAD CREDENTIALS ROLE    #
+##############################
+# This role is assumed by the service Lambda to generate scoped temporary
+# credentials for cross-account S3 uploads (used by data-target-pennsieve).
+
+resource "aws_iam_role" "upload_credentials_role" {
+  name = "${var.environment_name}-${var.service_name}-upload-credentials-role-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Principal = {
+          AWS = aws_iam_role.upload_service_v2_lambda_role.arn
+        }
+        Action = "sts:AssumeRole"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "upload_credentials_policy_attachment" {
+  role       = aws_iam_role.upload_credentials_role.name
+  policy_arn = aws_iam_policy.upload_credentials_policy.arn
+}
+
+resource "aws_iam_policy" "upload_credentials_policy" {
+  name   = "${var.environment_name}-${var.service_name}-upload-credentials-policy-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
+  policy = data.aws_iam_policy_document.upload_credentials_policy_document.json
+}
+
+data "aws_iam_policy_document" "upload_credentials_policy_document" {
+  statement {
+    sid    = "UploadsBucketWriteAccess"
+    effect = "Allow"
+
+    actions = [
+      "s3:PutObject",
+      "s3:ListBucketMultipartUploads",
+      "s3:AbortMultipartUpload",
+      "s3:ListMultipartUploadParts",
+      "s3:PutObjectTagging"
+    ]
+
+    resources = [
+      aws_s3_bucket.uploads_s3_bucket.arn,
+      "${aws_s3_bucket.uploads_s3_bucket.arn}/*"
+    ]
+  }
 }
 
 ##############################
