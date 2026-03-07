@@ -45,6 +45,26 @@ func postUploadCredentialsRoute(request events.APIGatewayV2HTTPRequest, claims *
 		}, nil
 	}
 
+	// Verify that the manifest exists and belongs to the authenticated dataset
+	manifestRecord, err := store.dy.GetManifestById(context.Background(), store.tableName, req.ManifestNodeID)
+	if err != nil {
+		log.WithError(err).WithField("manifestNodeId", req.ManifestNodeID).Warn("manifest not found")
+		return &events.APIGatewayV2HTTPResponse{
+			StatusCode: 404,
+			Body:       gateway.CreateErrorMessage("Manifest not found", 404),
+		}, nil
+	}
+	if manifestRecord.DatasetNodeId != claims.DatasetClaim.NodeId {
+		log.WithFields(log.Fields{
+			"manifestDataset": manifestRecord.DatasetNodeId,
+			"claimsDataset":   claims.DatasetClaim.NodeId,
+		}).Warn("manifest does not belong to the authenticated dataset")
+		return &events.APIGatewayV2HTTPResponse{
+			StatusCode: 403,
+			Body:       gateway.CreateErrorMessage("Manifest does not belong to this dataset", 403),
+		}, nil
+	}
+
 	uploadRoleARN := os.Getenv("UPLOAD_CREDENTIALS_ROLE_ARN")
 	if uploadRoleARN == "" {
 		log.Error("UPLOAD_CREDENTIALS_ROLE_ARN not configured")
