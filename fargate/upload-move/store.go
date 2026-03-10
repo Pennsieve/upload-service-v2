@@ -146,7 +146,7 @@ func (s *UploadMoveStore) moveFile(workerId int, timeout time.Duration, items <-
 		}
 		log.Debug(fmt.Sprintf("%d - %s - %s", workerId, item.UploadId, stOrgItem.storageBucket))
 
-		// Pre-check: if the file has been published, skip the move entirely.
+		// Pre-check: if the file has been published (published_s3_version_id is set), skip the move entirely.
 		pg, err := s.pgManager.Queries()
 		if err != nil {
 			log.WithFields(
@@ -168,7 +168,7 @@ func (s *UploadMoveStore) moveFile(workerId int, timeout time.Duration, items <-
 				log.Fields{
 					"manifest_id": item.ManifestId,
 					"upload_id":   item.UploadId,
-				}).Info("File is already published, skipping move.")
+				}).Info("File is already published (published_s3_version_id set), skipping move.")
 
 			// Mark as Finalized — the file is already where it needs to be
 			err = s.dy.UpdateFileTableStatus(context.Background(), FileTableName, item.ManifestId, item.UploadId, manifestFile.Finalized, "")
@@ -248,9 +248,18 @@ func (s *UploadMoveStore) moveFile(workerId int, timeout time.Duration, items <-
 		updatedMessage := ""
 		//var f dbTable.File
 
-		switch err := pg.UpdateBucketForFile(context.Background(), item.UploadId, stOrgItem.storageBucket, targetPath, stOrgItem.organizationId); err.(type) {
+		switch err := pg.UpdateBucketForUnpublishedFile(context.Background(), item.UploadId, stOrgItem.storageBucket, targetPath, stOrgItem.organizationId); err.(type) {
 		case nil:
 			break
+		case *pgdb.ErrFileAlreadyPublished:
+			// File was published between pre-check and update (TOCTOU race).
+			// This is not a failure — the file is where it needs to be.
+			log.WithFields(
+				log.Fields{
+					"manifest_id": item.ManifestId,
+					"upload_id":   item.UploadId,
+				}).Info("File was published between pre-check and update, treating as finalized.")
+
 		case *pgdb.ErrFileNotFound:
 			log.WithFields(
 				log.Fields{
