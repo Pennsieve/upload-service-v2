@@ -861,3 +861,8 @@ data "aws_iam_policy_document" "cognito_upload_unauth_identity_policy_document" 
   }
 }
 
+
+resource "aws_iam_role_policy_attachment" "fargate_storage_bucket_write" {
+  role       = aws_iam_role.fargate_task_iam_role.name
+  policy_arn = data.terraform_remote_state.account_service.outputs.storage_write_policy_arn
+}
