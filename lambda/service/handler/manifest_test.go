@@ -270,7 +270,7 @@ func TestManifest(t *testing.T) {
 			s3Client := getS3Client()
 			mockLambda := test.MockLambda{}
 
-			store := NewUploadServiceStore(client, s3Client, &mockLambda, manifestFileTableName, manifestTableName)
+			store := NewUploadServiceStore(client, s3Client, &mockLambda, nil, manifestFileTableName, manifestTableName)
 
 			fn(t, store)
 		})

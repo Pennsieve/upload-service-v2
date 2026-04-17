@@ -5,18 +5,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"strings"
 	"sync"
-	"time"
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	dyTypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
-	"github.com/aws/aws-sdk-go-v2/service/lambda"
-	lambdaTypes "github.com/aws/aws-sdk-go-v2/service/lambda/types"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3Types "github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/aws-sdk-go-v2/service/sqs"
+	sqsTypes "github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	"github.com/pennsieve/pennsieve-go-core/pkg/authorizer"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/gateway"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/manifest/manifestFile"
@@ -110,9 +108,9 @@ func postFinalizeFilesRoute(request events.APIGatewayV2HTTPRequest, claims *auth
 		log.Error("DEFAULT_STORAGE_BUCKET not configured")
 		return errResp(500, "Storage not configured")
 	}
-	uploadLambdaArn := os.Getenv("UPLOAD_LAMBDA_ARN")
-	if uploadLambdaArn == "" {
-		log.Error("UPLOAD_LAMBDA_ARN not configured")
+	uploadTriggerQueueURL := os.Getenv("UPLOAD_TRIGGER_QUEUE_URL")
+	if uploadTriggerQueueURL == "" {
+		log.Error("UPLOAD_TRIGGER_QUEUE_URL not configured")
 		return errResp(500, "Finalize dispatch not configured")
 	}
 
@@ -216,21 +214,26 @@ func postFinalizeFilesRoute(request events.APIGatewayV2HTTPRequest, claims *auth
 	}
 	wg.Wait()
 
-	// Synthesize S3 events for the verified files and invoke the upload
-	// lambda synchronously. The upload lambda recognizes the O-prefixed key
-	// as direct-to-storage, creates Postgres rows, and marks Finalized.
+	// Enqueue synthesized S3 events to the upload_trigger_queue. The upload
+	// lambda's existing SQS event-source mapping consumes them and runs the
+	// same import flow as real S3 events. This path is async — we return
+	// "finalized" on successful enqueue (SQS delivery guarantees + idempotent
+	// upload-lambda import + DLQ-backed retries make "enqueued" equivalent to
+	// "will be finalized"). Import failures that exhaust retries end up in
+	// the dead-letter queue for operator review; the agent's
+	// VerifyFinalizedStatus ticker is the belt-and-suspenders consistency
+	// check.
 	if len(toImport) > 0 {
-		failed, err := dispatchToUploadLambda(ctx, store.lambdaClient, uploadLambdaArn, resolution.StorageBucket, keyPrefix, toImport)
+		failed, err := enqueueToUploadQueue(ctx, store.sqsClient, uploadTriggerQueueURL, resolution.StorageBucket, keyPrefix, toImport)
 		if err != nil {
-			// Whole-batch failure — mark all toImport as failed.
-			log.WithError(err).Error("failed to dispatch to upload lambda")
+			log.WithError(err).Error("failed to enqueue to upload queue")
 			for _, f := range toImport {
-				resultsByUploadID[f.UploadID] = finalizeResult{UploadID: f.UploadID, Status: "failed", Error: "import dispatch failed"}
+				resultsByUploadID[f.UploadID] = finalizeResult{UploadID: f.UploadID, Status: "failed", Error: "enqueue failed"}
 			}
 		} else {
 			for _, f := range toImport {
 				if _, bad := failed[f.UploadID]; bad {
-					resultsByUploadID[f.UploadID] = finalizeResult{UploadID: f.UploadID, Status: "failed", Error: "import failed"}
+					resultsByUploadID[f.UploadID] = finalizeResult{UploadID: f.UploadID, Status: "failed", Error: "enqueue failed"}
 				} else {
 					resultsByUploadID[f.UploadID] = finalizeResult{UploadID: f.UploadID, Status: "finalized"}
 				}
@@ -315,72 +318,102 @@ func fetchManifestFileStatuses(
 	return statuses, nil
 }
 
-// dispatchToUploadLambda synthesizes an SQS event carrying one synthetic S3
-// create event per file and invokes the upload lambda synchronously. Returns
-// the set of uploadIds that the upload lambda failed to import.
-func dispatchToUploadLambda(
+// enqueueToUploadQueue sends one synthesized S3 "Object Created" event per
+// file to the upload_trigger_queue. The upload lambda's existing SQS event
+// source drains the queue in small batches and runs the same ImportFiles
+// flow as for real S3 notifications. Failed sends (per-message) are returned
+// in the map so the caller can mark those files failed in the response; the
+// vast majority either succeed or hit the dead-letter queue on the
+// consumer side, giving SQS's at-least-once delivery guarantees.
+//
+// SQS SendMessageBatch limits: 10 messages, 256 KB per message, 256 KB total.
+// Each synthesized S3 event is ~500 B so 10 per batch is well under the
+// 256 KB cap. 250 files -> 25 batches, which with minimal round-trip latency
+// totals well under 500 ms even sequentially; we fan out to keep it under
+// ~100 ms.
+func enqueueToUploadQueue(
 	ctx context.Context,
-	lambdaClient LambdaAPI,
-	uploadLambdaArn string,
+	sqsClient *sqs.Client,
+	queueURL string,
 	bucket string,
 	keyPrefix string,
 	files []finalizeFileRequest,
 ) (map[string]struct{}, error) {
-	sqsEvent := events.SQSEvent{Records: make([]events.SQSMessage, 0, len(files))}
-	keyToUploadId := make(map[string]string, len(files))
+	const sqsBatchLimit = 10
+	const sendConcurrency = 5
 
-	for _, f := range files {
-		key := fmt.Sprintf("%s/%s", keyPrefix, f.UploadID)
-		keyToUploadId[key] = f.UploadID
+	failed := make(map[string]struct{})
+	var mu sync.Mutex
+	sem := make(chan struct{}, sendConcurrency)
+	var wg sync.WaitGroup
 
-		s3Ev := events.S3Event{Records: []events.S3EventRecord{{
-			EventSource: "aws:s3",
-			EventName:   "ObjectCreated:Put",
-			S3: events.S3Entity{
-				Bucket: events.S3Bucket{Name: bucket},
-				Object: events.S3Object{Key: key, Size: f.Size},
-			},
-		}}}
-		body, _ := json.Marshal(s3Ev)
+	for start := 0; start < len(files); start += sqsBatchLimit {
+		end := start + sqsBatchLimit
+		if end > len(files) {
+			end = len(files)
+		}
+		batch := files[start:end]
 
-		sqsEvent.Records = append(sqsEvent.Records, events.SQSMessage{
-			MessageId:   f.UploadID,
-			Body:        string(body),
-			EventSource: "aws:sqs",
-			AWSRegion:   os.Getenv("REGION"),
-		})
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(batch []finalizeFileRequest) {
+			defer wg.Done()
+			defer func() { <-sem }()
+
+			entries := make([]sqsTypes.SendMessageBatchRequestEntry, 0, len(batch))
+			idToUpload := make(map[string]string, len(batch))
+			for i, f := range batch {
+				key := fmt.Sprintf("%s/%s", keyPrefix, f.UploadID)
+				s3Ev := events.S3Event{Records: []events.S3EventRecord{{
+					EventSource: "aws:s3",
+					EventName:   "ObjectCreated:Put",
+					S3: events.S3Entity{
+						Bucket: events.S3Bucket{Name: bucket},
+						Object: events.S3Object{Key: key, Size: f.Size},
+					},
+				}}}
+				body, _ := json.Marshal(s3Ev)
+				// SQS batch entry Id must match ^[a-zA-Z0-9_-]{1,80}$; use
+				// position so we can map failures back to uploadIds below.
+				id := fmt.Sprintf("b%d", i)
+				idToUpload[id] = f.UploadID
+				entries = append(entries, sqsTypes.SendMessageBatchRequestEntry{
+					Id:          aws.String(id),
+					MessageBody: aws.String(string(body)),
+				})
+			}
+
+			out, err := sqsClient.SendMessageBatch(ctx, &sqs.SendMessageBatchInput{
+				QueueUrl: aws.String(queueURL),
+				Entries:  entries,
+			})
+			if err != nil {
+				log.WithError(err).Errorf("SendMessageBatch failed for %d entries", len(entries))
+				mu.Lock()
+				for _, uid := range idToUpload {
+					failed[uid] = struct{}{}
+				}
+				mu.Unlock()
+				return
+			}
+			if len(out.Failed) > 0 {
+				mu.Lock()
+				for _, f := range out.Failed {
+					if f.Id != nil {
+						if uid, ok := idToUpload[*f.Id]; ok {
+							failed[uid] = struct{}{}
+						}
+					}
+					log.WithFields(log.Fields{
+						"code":    aws.ToString(f.Code),
+						"message": aws.ToString(f.Message),
+					}).Warn("SQS message enqueue failed")
+				}
+				mu.Unlock()
+			}
+		}(batch)
 	}
 
-	payload, err := json.Marshal(sqsEvent)
-	if err != nil {
-		return nil, fmt.Errorf("marshal sqs event: %w", err)
-	}
-
-	invokeCtx, cancel := context.WithTimeout(ctx, 4*time.Minute)
-	defer cancel()
-
-	out, err := lambdaClient.Invoke(invokeCtx, &lambda.InvokeInput{
-		FunctionName:   aws.String(uploadLambdaArn),
-		InvocationType: lambdaTypes.InvocationTypeRequestResponse,
-		Payload:        payload,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("invoke upload lambda: %w", err)
-	}
-	if out.FunctionError != nil {
-		return nil, fmt.Errorf("upload lambda returned error: %s", strings.TrimSpace(string(out.Payload)))
-	}
-
-	// Upload lambda returns events.SQSEventResponse with BatchItemFailures for
-	// entries the upload lambda couldn't import.
-	var resp events.SQSEventResponse
-	if err := json.Unmarshal(out.Payload, &resp); err != nil {
-		return nil, fmt.Errorf("parse upload lambda response: %w", err)
-	}
-	failed := make(map[string]struct{}, len(resp.BatchItemFailures))
-	for _, f := range resp.BatchItemFailures {
-		// MessageId is set to UploadId above.
-		failed[f.ItemIdentifier] = struct{}{}
-	}
+	wg.Wait()
 	return failed, nil
 }

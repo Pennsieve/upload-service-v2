@@ -3,6 +3,7 @@ package handler
 import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/sqs"
 )
 
 // UploadServiceStore provides the Queries interface and a db instance.
@@ -11,16 +12,18 @@ type UploadServiceStore struct {
 	dynamodb      *dynamodb.Client
 	s3Client      *s3.Client
 	lambdaClient  LambdaAPI
+	sqsClient     *sqs.Client
 	fileTableName string
 	tableName     string
 }
 
 // NewUploadServiceStore returns a UploadHandlerStore object which implements the Queires
-func NewUploadServiceStore(dy *dynamodb.Client, s3Client *s3.Client, lambdaClient LambdaAPI, fileTableName string, tableName string) *UploadServiceStore {
+func NewUploadServiceStore(dy *dynamodb.Client, s3Client *s3.Client, lambdaClient LambdaAPI, sqsClient *sqs.Client, fileTableName string, tableName string) *UploadServiceStore {
 	return &UploadServiceStore{
 		dynamodb:      dy,
 		s3Client:      s3Client,
 		lambdaClient:  lambdaClient,
+		sqsClient:     sqsClient,
 		dy:            NewServiceDyQueries(dy),
 		fileTableName: fileTableName,
 		tableName:     tableName,
