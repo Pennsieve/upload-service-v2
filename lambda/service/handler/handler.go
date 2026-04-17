@@ -91,6 +91,20 @@ func ManifestHandler(request events.APIGatewayV2HTTPRequest) (*events.APIGateway
 				apiResponse, err = postUploadCredentialsRoute(request, claims)
 			}
 		}
+	case "/manifest/storage-credentials":
+		switch request.RequestContext.HTTP.Method {
+		case "POST":
+			if authorized = authorizer.HasRole(*claims, permissions.CreateDeleteFiles); authorized {
+				apiResponse, err = postStorageCredentialsRoute(request, claims)
+			}
+		}
+	case "/manifest/files/finalize":
+		switch request.RequestContext.HTTP.Method {
+		case "POST":
+			if authorized = authorizer.HasRole(*claims, permissions.CreateDeleteFiles); authorized {
+				apiResponse, err = postFinalizeFilesRoute(request, claims)
+			}
+		}
 	case "/manifest/archive":
 		switch request.RequestContext.HTTP.Method {
 		case "GET":

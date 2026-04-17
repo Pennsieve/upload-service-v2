@@ -7,13 +7,13 @@ resource "aws_s3_bucket" "uploads_s3_bucket" {
   }
 
   tags = merge(
-  local.common_tags,
-  {
-    "Name"         = "${var.environment_name}-uploads-v2-s3-bucket-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
-    "name"         = "${var.environment_name}-uploads-v2-s3-bucket-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
-    "service_name" = "upload-service-v2"
-    "tier"         = "s3"
-  },
+    local.common_tags,
+    {
+      "Name"         = "${var.environment_name}-uploads-v2-s3-bucket-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
+      "name"         = "${var.environment_name}-uploads-v2-s3-bucket-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
+      "service_name" = "upload-service-v2"
+      "tier"         = "s3"
+    },
   )
 }
 
@@ -53,8 +53,8 @@ resource "aws_s3_bucket_notification" "uploads_s3_notification" {
   bucket = aws_s3_bucket.uploads_s3_bucket.bucket
 
   queue {
-    queue_arn     = aws_sqs_queue.upload_trigger_queue.arn
-    events        = ["s3:ObjectCreated:*"]
+    queue_arn = aws_sqs_queue.upload_trigger_queue.arn
+    events    = ["s3:ObjectCreated:*"]
   }
 }
 
@@ -68,13 +68,13 @@ resource "aws_s3_bucket" "manifest_archive_bucket" {
   }
 
   tags = merge(
-  local.common_tags,
-  {
-    "Name"         = "${var.environment_name}-uploads-v2-manifest-archive-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
-    "name"         = "${var.environment_name}-uploads-v2-manifest-archive-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
-    "service_name" = "upload-service-v2"
-    "tier"         = "s3"
-  },
+    local.common_tags,
+    {
+      "Name"         = "${var.environment_name}-uploads-v2-manifest-archive-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
+      "name"         = "${var.environment_name}-uploads-v2-manifest-archive-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
+      "service_name" = "upload-service-v2"
+      "tier"         = "s3"
+    },
   )
 }
 

@@ -10,6 +10,7 @@ import (
 	s3Types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	log "github.com/sirupsen/logrus"
 	"regexp"
+	"strings"
 )
 
 // GetUploadEntries parses the events from SQS into meaningful objects
@@ -72,7 +73,19 @@ func (s *UploadHandlerStore) GetUploadEntries(fileEvents []events.SQSMessage) ([
 }
 
 // uploadEntryFromS3Event returns an object representing an uploaded file from an S3 Event.
+//
+// Accepts two key shapes:
+//   - Legacy (upload bucket): {manifestId}/{uploadId}
+//   - Direct-to-storage: O{orgId}/D{datasetId}/{manifestId}/{uploadId}
+//
+// Only the trailing manifest/upload pair is extracted — the leading O/D segments
+// carry the same org+dataset already stored on the manifest record, so they're
+// informational here.
 func (s *UploadHandlerStore) uploadEntryFromS3Event(event *events.S3Event) (*UploadEntry, error) {
+	// No end anchor: legacy cross-account clients (data-target-pennsieve) may
+	// use nested keys like {manifestId}/{uploadId}/subpath/file, which the
+	// upload-credentials session policy permits. FindStringSubmatch returns
+	// the first match, so we still extract manifest/upload reliably.
 	r := regexp.MustCompile(`(?P<Manifest>[a-z0-9]{8}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{12})\/(?P<UploadId>[a-z0-9]{8}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{12})`)
 	res := r.FindStringSubmatch(event.Records[0].S3.Object.Key)
 
@@ -107,14 +120,19 @@ func (s *UploadHandlerStore) uploadEntryFromS3Event(event *events.S3Event) (*Upl
 		}
 	}
 
+	// Keys starting with "O" (e.g. O42/D17/{manifest}/{upload}) signal the file
+	// already landed at final storage via direct upload; no Fargate move needed.
+	directToStorage := strings.HasPrefix(s3Key, "O")
+
 	response := UploadEntry{
-		S3Bucket:   s3Bucket,
-		S3Key:      s3Key,
-		ManifestId: manifestId,
-		UploadId:   uploadId,
-		ETag:       event.Records[0].S3.Object.ETag,
-		Size:       event.Records[0].S3.Object.Size,
-		Sha256:     checkSumOrEmpty(result.ChecksumSHA256),
+		S3Bucket:        s3Bucket,
+		S3Key:           s3Key,
+		ManifestId:      manifestId,
+		UploadId:        uploadId,
+		ETag:            event.Records[0].S3.Object.ETag,
+		Size:            event.Records[0].S3.Object.Size,
+		Sha256:          checkSumOrEmpty(result.ChecksumSHA256),
+		DirectToStorage: directToStorage,
 	}
 
 	log.WithFields(

@@ -249,6 +249,12 @@ func (q *UploadDyQueries) GetUploadFiles(entries []UploadEntry) ([]uploadFile.Up
 
 // updateManifest updates the manifestFiles to IMPORTED status and updates other fields.
 func (q *UploadDyQueries) updateManifestFileStatus(uploadFilesForManifest []uploadFile.UploadFile, manifestId string) error {
+	return q.updateManifestFileStatusTo(uploadFilesForManifest, manifestId, manifestFile.Imported)
+}
+
+// updateManifestFileStatusTo is like updateManifestFileStatus but lets the caller pick the target status.
+// Direct-to-storage uploads skip the Fargate move and go straight to Finalized.
+func (q *UploadDyQueries) updateManifestFileStatusTo(uploadFilesForManifest []uploadFile.UploadFile, manifestId string, targetStatus manifestFile.Status) error {
 
 	// Update status of files in dynamoDB
 	var fileDTOs []manifestFile.FileDTO
@@ -258,7 +264,7 @@ func (q *UploadDyQueries) updateManifestFileStatus(uploadFilesForManifest []uplo
 			S3Key:          u.S3Key,
 			TargetPath:     u.Path,
 			TargetName:     u.Name,
-			Status:         manifestFile.Imported,
+			Status:         targetStatus,
 			MergePackageId: u.MergePackageId,
 			FileType:       u.FileType.String(),
 		}
@@ -268,14 +274,14 @@ func (q *UploadDyQueries) updateManifestFileStatus(uploadFilesForManifest []uplo
 	// We are replacing the entries instead of updating the status field as
 	// this is the only way we can batch update, and we also update the name in
 	// case that we need to append index (on name conflict).
-	setStatus := manifestFile.Imported
+	setStatus := targetStatus
 	stats, err := q.SyncFiles(manifestId, fileDTOs, &setStatus, ManifestTableName, ManifestFileTableName)
 	if err != nil {
 		return err
 	}
 
 	if stats.NrFilesUpdated != len(uploadFilesForManifest) {
-		return errors.New("could not update status for manifest files to IMPORTED")
+		return fmt.Errorf("could not update status for manifest files to %s", targetStatus.String())
 	}
 
 	return nil

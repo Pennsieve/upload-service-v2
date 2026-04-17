@@ -38,10 +38,10 @@ func postUploadCredentialsRoute(request events.APIGatewayV2HTTPRequest, claims *
 		}, nil
 	}
 
-	if req.ManifestNodeID == "" {
+	if !isValidUUID(req.ManifestNodeID) {
 		return &events.APIGatewayV2HTTPResponse{
 			StatusCode: 400,
-			Body:       gateway.CreateErrorMessage("manifestNodeId is required", 400),
+			Body:       gateway.CreateErrorMessage("manifestNodeId must be a UUID", 400),
 		}, nil
 	}
 

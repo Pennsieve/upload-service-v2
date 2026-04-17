@@ -307,7 +307,7 @@ func testImportFilesSingleFile(t *testing.T, orgID int, store *UploadHandlerStor
 		},
 	}
 
-	if assert.NoError(t, store.ImportFiles(context.Background(), datasetID, orgID, user, files, manifest)) {
+	if assert.NoError(t, store.ImportFiles(context.Background(), datasetID, orgID, user, files, manifest, false)) {
 		if test.AssertRowCount(t, store.pgdb, orgID, "packages", 1) {
 			test.AssertExistsOneWhere(t, store.pgdb, orgID, "packages", map[string]any{"name": "file1.txt", "parent_id": nil})
 		}
@@ -360,7 +360,7 @@ func testImportFilesSingleFileInFolder(t *testing.T, orgID int, store *UploadHan
 		},
 	}
 
-	if assert.NoError(t, store.ImportFiles(context.Background(), datasetID, orgID, user, files, manifest)) {
+	if assert.NoError(t, store.ImportFiles(context.Background(), datasetID, orgID, user, files, manifest, false)) {
 		// One package for the folder and one for the file
 		if test.AssertRowCount(t, store.pgdb, orgID, "packages", 2) {
 			test.AssertExistsOneWhere(t, store.pgdb, orgID, "packages", map[string]any{"name": "dir1", "parent_id": nil})
@@ -416,7 +416,7 @@ func testImportFilesSingleWithLeadingSlash(t *testing.T, orgID int, store *Uploa
 		},
 	}
 
-	if assert.NoError(t, store.ImportFiles(context.Background(), datasetID, orgID, user, files, manifest)) {
+	if assert.NoError(t, store.ImportFiles(context.Background(), datasetID, orgID, user, files, manifest, false)) {
 		// There should only be one package since the path is "/", the import should not create a containing folder.
 		if test.AssertRowCount(t, store.pgdb, orgID, "packages", 1) {
 			test.AssertExistsOneWhere(t, store.pgdb, orgID, "packages", map[string]any{"name": "file1.txt", "parent_id": nil})
@@ -470,7 +470,7 @@ func testImportFilesSingleInFolderWithLeadingSlash(t *testing.T, orgID int, stor
 		},
 	}
 
-	if assert.NoError(t, store.ImportFiles(context.Background(), datasetID, orgID, user, files, manifest)) {
+	if assert.NoError(t, store.ImportFiles(context.Background(), datasetID, orgID, user, files, manifest, false)) {
 		// Two packages: dir1 and file1.txt
 		if test.AssertRowCount(t, store.pgdb, orgID, "packages", 2) {
 			test.AssertExistsOneWhere(t, store.pgdb, orgID, "packages", map[string]any{"name": "dir1", "parent_id": nil})
@@ -576,7 +576,7 @@ func testImportFiles(t *testing.T, orgID int, store *UploadHandlerStore) {
 		},
 	}
 
-	if assert.NoError(t, store.ImportFiles(context.Background(), datasetID, orgID, user, files, manifest)) {
+	if assert.NoError(t, store.ImportFiles(context.Background(), datasetID, orgID, user, files, manifest, false)) {
 		if test.AssertRowCount(t, store.pgdb, orgID, "packages", 7) {
 			test.AssertExistsOneWhere(t, store.pgdb, orgID, "packages",
 				map[string]any{"name": "root1.txt", "parent_id": nil})
@@ -699,7 +699,7 @@ func testImportFilesWithLeadingSlash(t *testing.T, orgID int, store *UploadHandl
 		},
 	}
 
-	if assert.NoError(t, store.ImportFiles(context.Background(), datasetID, orgID, user, files, manifest)) {
+	if assert.NoError(t, store.ImportFiles(context.Background(), datasetID, orgID, user, files, manifest, false)) {
 		if test.AssertRowCount(t, store.pgdb, orgID, "packages", 7) {
 			test.AssertExistsOneWhere(t, store.pgdb, orgID, "packages",
 				map[string]any{"name": "root1.txt", "parent_id": nil})

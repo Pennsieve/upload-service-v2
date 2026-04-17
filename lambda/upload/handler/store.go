@@ -16,6 +16,7 @@ import (
 	"github.com/pennsieve/pennsieve-go-core/pkg/domain"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/dydb"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/fileInfo/objectType"
+	"github.com/pennsieve/pennsieve-go-core/pkg/models/manifest/manifestFile"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/packageInfo"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/packageInfo/packageState"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/packageInfo/packageType"
@@ -125,8 +126,12 @@ func (s *UploadHandlerStore) execTx(ctx context.Context, fn func(queries *Upload
 
 // ImportFiles creates rows for uploaded files in Packages and Files tables as a transaction
 // All files belong to a single manifest, and therefor single dataset in a single organization.
+//
+// When directToStorage is true, the files already landed at final storage (the
+// agent uploaded straight to the storage bucket), so SNS publish is skipped —
+// there's nothing for the Fargate move task to do.
 func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, orgId int, user pgdb.User,
-	files []uploadFile.UploadFile, manifest *dydb.ManifestTable) error {
+	files []uploadFile.UploadFile, manifest *dydb.ManifestTable, directToStorage bool) error {
 
 	contextLogger := log.WithFields(log.Fields{
 		"service":     "Upload-service",
@@ -289,10 +294,13 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 		log.Debug(fmt.Sprintf("Package %d storage incremented by %d", p, v))
 	}
 
-	// 5. Notify SNS that files were imported.
-	err = s.PublishToSNS(result.files)
-	if err != nil {
-		contextLogger.Error("Error with notifying SNS that records are imported.", err)
+	// 5. Notify SNS that files were imported — triggers the Fargate move task.
+	// Skip for direct-to-storage: files are already at final location.
+	if !directToStorage {
+		err = s.PublishToSNS(result.files)
+		if err != nil {
+			contextLogger.Error("Error with notifying SNS that records are imported.", err)
+		}
 	}
 
 	// 6. Update activity Log
@@ -453,7 +461,19 @@ func (s *UploadHandlerStore) Handler(ctx context.Context, sqsEvent events.SQSEve
 			continue
 		}
 
-		err = s.ImportFiles(ctx, int(manifest.DatasetId), int(manifest.OrganizationId), *user, uploadFilesForManifest, manifest)
+		// Detect whether this manifest-batch came in via direct-to-storage
+		// upload (key starts with "O...") or the legacy upload-bucket path.
+		// All files in a single manifest-batch share the same origin.
+		direct := len(uploadFilesForManifest) > 0 && strings.HasPrefix(uploadFilesForManifest[0].S3Key, "O")
+
+		// Direct-to-storage goes straight to Finalized (no Fargate move).
+		// Legacy goes to Imported so Fargate picks them up for the move.
+		targetStatus := manifestFile.Imported
+		if direct {
+			targetStatus = manifestFile.Finalized
+		}
+
+		err = s.ImportFiles(ctx, int(manifest.DatasetId), int(manifest.OrganizationId), *user, uploadFilesForManifest, manifest, direct)
 		if err != nil {
 			contextLogger.Error("Error in batch create packages: ", err)
 
@@ -461,7 +481,7 @@ func (s *UploadHandlerStore) Handler(ctx context.Context, sqsEvent events.SQSEve
 			// This will ensure that only the files that cause the failure will be returned to the sqs queue
 			for _, f := range uploadFilesForManifest {
 				singleFileArr := []uploadFile.UploadFile{f}
-				err = s.ImportFiles(ctx, int(manifest.DatasetId), int(manifest.OrganizationId), *user, singleFileArr, manifest)
+				err = s.ImportFiles(ctx, int(manifest.DatasetId), int(manifest.OrganizationId), *user, singleFileArr, manifest, direct)
 				if err != nil {
 					batchItemFailures = addToFailedFiles(singleFileArr, s3KeySQSMessageMap, batchItemFailures)
 					contextLogger.WithFields(
@@ -472,8 +492,8 @@ func (s *UploadHandlerStore) Handler(ctx context.Context, sqsEvent events.SQSEve
 					continue
 				}
 
-				// Update entries in manifest to IMPORTED for single file
-				err = s.dy.updateManifestFileStatus(singleFileArr, manifestId)
+				// Update entries in manifest to target status for single file
+				err = s.dy.updateManifestFileStatusTo(singleFileArr, manifestId, targetStatus)
 				if err != nil {
 					// Status is not correctly updated in Manifest but files are completely imported.
 					// This should not return the failed files.
@@ -484,8 +504,8 @@ func (s *UploadHandlerStore) Handler(ctx context.Context, sqsEvent events.SQSEve
 			continue
 		}
 
-		// Update entries in manifest to IMPORTED for all files
-		err = s.dy.updateManifestFileStatus(uploadFilesForManifest, manifestId)
+		// Update entries in manifest to target status for all files
+		err = s.dy.updateManifestFileStatusTo(uploadFilesForManifest, manifestId, targetStatus)
 		if err != nil {
 			// Status is not correctly updated in Manifest but files are completely imported.
 			// This should not return the failed files.

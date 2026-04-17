@@ -315,6 +315,93 @@ paths:
         '5XX':
           $ref: '#/components/responses/Error'
 
+  /manifest/storage-credentials:
+    post:
+      summary: Get temporary S3 credentials for direct-to-storage upload
+      description: |
+        Returns temporary AWS credentials scoped to upload files directly to
+        the manifest's destination storage bucket under the
+        O{orgId}/D{datasetId}/{manifestId}/* prefix. Agents use these
+        credentials to skip the legacy upload-bucket staging hop.
+      x-amazon-apigateway-integration:
+        $ref: '#/components/x-amazon-apigateway-integrations/manifest-service'
+      operationId: getStorageCredentials
+      security:
+        - token_dataset_auth: [ ]
+      tags:
+        - Upload
+      parameters:
+        - in: query
+          name: dataset_id
+          schema:
+            type: string
+          required: true
+          description: dataset node id
+      requestBody:
+        description: Manifest node ID to scope credentials to
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - manifestNodeId
+              properties:
+                manifestNodeId:
+                  type: string
+                  description: The manifest node ID returned from POST /manifest
+      responses:
+        '200':
+          description: Temporary AWS credentials for direct-to-storage upload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/storageCredentialsResponse'
+        '4XX':
+          $ref: '#/components/responses/Unauthorized'
+        '5XX':
+          $ref: '#/components/responses/Error'
+
+  /manifest/files/finalize:
+    post:
+      summary: Finalize a batch of files uploaded direct-to-storage
+      description: |
+        Completes the two-phase upload for files the agent has already PUT
+        directly to the storage bucket. The server verifies each object,
+        creates Postgres package/file rows, and marks the manifest file
+        Finalized. Idempotent per uploadId. Max 500 files per call.
+      x-amazon-apigateway-integration:
+        $ref: '#/components/x-amazon-apigateway-integrations/manifest-service'
+      operationId: finalizeManifestFiles
+      security:
+        - token_dataset_auth: [ ]
+      tags:
+        - Upload
+      parameters:
+        - in: query
+          name: dataset_id
+          schema:
+            type: string
+          required: true
+          description: dataset node id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/finalizeFilesRequest'
+      responses:
+        '200':
+          description: Per-file finalize results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/finalizeFilesResponse'
+        '4XX':
+          $ref: '#/components/responses/Unauthorized'
+        '5XX':
+          $ref: '#/components/responses/Error'
+
   /manifest/archive:
     post:
       x-amazon-apigateway-integration:
@@ -585,6 +672,74 @@ components:
         region:
           type: string
           description: AWS region of the upload bucket
+    storageCredentialsResponse:
+      type: object
+      properties:
+        accessKeyId:
+          type: string
+        secretAccessKey:
+          type: string
+        sessionToken:
+          type: string
+        expiration:
+          type: string
+          format: date-time
+        bucket:
+          type: string
+          description: Destination storage bucket for this manifest.
+        keyPrefix:
+          type: string
+          description: Object-key prefix the credentials are scoped to (O{orgId}/D{datasetId}/{manifestId}).
+        region:
+          type: string
+    finalizeFilesRequest:
+      type: object
+      required:
+        - manifestNodeId
+        - files
+      properties:
+        manifestNodeId:
+          type: string
+          format: uuid
+        files:
+          type: array
+          minItems: 1
+          maxItems: 500
+          items:
+            type: object
+            required:
+              - uploadId
+              - size
+              - sha256
+            properties:
+              uploadId:
+                type: string
+                format: uuid
+              size:
+                type: integer
+                format: int64
+                minimum: 1
+              sha256:
+                type: string
+                description: Base64-encoded SHA256 checksum returned by S3 multipart upload (the ChecksumSHA256 field of manager.UploadOutput). Server verifies this matches the value HEAD returns.
+    finalizeFilesResponse:
+      type: object
+      properties:
+        results:
+          type: array
+          items:
+            type: object
+            properties:
+              uploadId:
+                type: string
+              status:
+                type: string
+                enum:
+                  - finalized
+                  - failed
+              error:
+                type: string
+                description: Present when status = failed.
     addFilesResponse:
       type: object
       description: Response for addFiles endpoint.

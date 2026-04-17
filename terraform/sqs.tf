@@ -1,11 +1,11 @@
 # Upload Bucket Trigger Queue
 
 resource "aws_sqs_queue" "upload_trigger_queue" {
-  name                       = "${var.environment_name}-upload_trigger-queue-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
-  delay_seconds              = 1
-  max_message_size           = 262144
-  message_retention_seconds  = 86400
-#  receive_wait_time_seconds  = 10
+  name                      = "${var.environment_name}-upload_trigger-queue-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
+  delay_seconds             = 1
+  max_message_size          = 262144
+  message_retention_seconds = 86400
+  #  receive_wait_time_seconds  = 10
   visibility_timeout_seconds = 300
   redrive_policy             = "{\"deadLetterTargetArn\":\"${aws_sqs_queue.upload_trigger_deadletter_queue.arn}\",\"maxReceiveCount\":3}"
 }
@@ -20,11 +20,11 @@ resource "aws_sqs_queue" "upload_trigger_deadletter_queue" {
 
 # Mapping SQS Source to Lambda Function
 resource "aws_lambda_event_source_mapping" "upload_source_mapping" {
-  event_source_arn = aws_sqs_queue.upload_trigger_queue.arn
-  function_name    = aws_lambda_function.upload_lambda.arn
-  batch_size = 25
+  event_source_arn                   = aws_sqs_queue.upload_trigger_queue.arn
+  function_name                      = aws_lambda_function.upload_lambda.arn
+  batch_size                         = 25
   maximum_batching_window_in_seconds = 5
-  function_response_types = ["ReportBatchItemFailures"]
+  function_response_types            = ["ReportBatchItemFailures"]
 }
 
 # Grant SNS to post to SQS queue
@@ -69,10 +69,10 @@ POLICY
 ## IMPORTED QUEUE ##
 ####################
 resource "aws_sqs_queue" "imported_file_queue" {
-  name                       = "${var.environment_name}-imported-file-queue-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
-  delay_seconds              = 1
-  max_message_size           = 262144
-  message_retention_seconds  = 86400
+  name                      = "${var.environment_name}-imported-file-queue-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
+  delay_seconds             = 1
+  max_message_size          = 262144
+  message_retention_seconds = 86400
   #  receive_wait_time_seconds  = 10
   visibility_timeout_seconds = 300
   redrive_policy             = "{\"deadLetterTargetArn\":\"${aws_sqs_queue.imported_file_deadletter_queue.arn}\",\"maxReceiveCount\":3}"
@@ -89,9 +89,9 @@ resource "aws_sqs_queue" "imported_file_deadletter_queue" {
 
 # Mapping SQS Source to Lambda Function
 resource "aws_lambda_event_source_mapping" "imported_file_mapping" {
-  event_source_arn = aws_sqs_queue.imported_file_queue.arn
-  function_name    = aws_lambda_function.fargate_trigger_lambda.function_name
-  batch_size = 25
+  event_source_arn                   = aws_sqs_queue.imported_file_queue.arn
+  function_name                      = aws_lambda_function.fargate_trigger_lambda.function_name
+  batch_size                         = 25
   maximum_batching_window_in_seconds = 300
 }
 

@@ -27,9 +27,9 @@ output "identity_pool_id" {
 }
 
 output "manifest_table_arn" {
-  value =aws_dynamodb_table.manifest_dynamo_table.arn
+  value = aws_dynamodb_table.manifest_dynamo_table.arn
 }
 
 output "manifest_table_name" {
-  value =aws_dynamodb_table.manifest_dynamo_table.name
+  value = aws_dynamodb_table.manifest_dynamo_table.name
 }
