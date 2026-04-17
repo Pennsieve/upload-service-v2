@@ -16,6 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	lambdaTypes "github.com/aws/aws-sdk-go-v2/service/lambda/types"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	s3Types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/pennsieve/pennsieve-go-core/pkg/authorizer"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/gateway"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/manifest/manifestFile"
@@ -171,9 +172,13 @@ func postFinalizeFilesRoute(request events.APIGatewayV2HTTPRequest, claims *auth
 			defer func() { <-sem }()
 
 			key := fmt.Sprintf("%s/%s", keyPrefix, f.UploadID)
+			// ChecksumMode: ENABLED is required for HeadObject to populate
+			// ChecksumSHA256; without it the field is nil even when S3 has
+			// stored the checksum, and the sha256 check below always fails.
 			head, err := store.s3Client.HeadObject(ctx, &s3.HeadObjectInput{
-				Bucket: aws.String(resolution.StorageBucket),
-				Key:    aws.String(key),
+				Bucket:       aws.String(resolution.StorageBucket),
+				Key:          aws.String(key),
+				ChecksumMode: s3Types.ChecksumModeEnabled,
 			})
 			if err != nil {
 				log.WithError(err).WithFields(log.Fields{
