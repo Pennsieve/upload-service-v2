@@ -526,6 +526,12 @@ func (s *UploadHandlerStore) Handler(ctx context.Context, sqsEvent events.SQSEve
 }
 
 // deleteOrphanFiles deletes files from upload bucket if no representation exists in manifest.
+//
+// Safety guard: a key starting with "/" is almost certainly a buggy caller
+// (legitimate keys are {manifestId}/{uploadId}), so we refuse to delete it.
+// Dropping bytes on the floor because of a client-side bug that emits a bad
+// key is exactly the kind of data loss that's hardest to recover from — we'd
+// rather leave the object alone, log loudly, and let reconciliation decide.
 func (s *UploadHandlerStore) deleteOrphanFiles(files []OrphanS3File) error {
 
 	ctx := context.Background()
@@ -535,6 +541,14 @@ func (s *UploadHandlerStore) deleteOrphanFiles(files []OrphanS3File) error {
 
 	var keys []s3Types.ObjectIdentifier
 	for _, f := range files {
+		if strings.HasPrefix(f.S3Key, "/") {
+			log.WithFields(log.Fields{
+				"service":   "Upload-service",
+				"s3_bucket": f.S3Bucket,
+				"s3_key":    f.S3Key,
+			}).Error("Refusing to delete suspicious orphan with leading-slash key; likely a client bug — leaving object in place for manual review")
+			continue
+		}
 		log.WithFields(log.Fields{
 			"service": "Upload-service",
 		}).Warn(fmt.Sprintf("Deleting file %s/%s", f.S3Bucket, f.S3Key))
@@ -546,6 +560,10 @@ func (s *UploadHandlerStore) deleteOrphanFiles(files []OrphanS3File) error {
 			Key:       aws.String(f.S3Key),
 			VersionId: nil,
 		})
+	}
+
+	if len(keys) == 0 {
+		return nil
 	}
 
 	f := s3Types.Delete{
