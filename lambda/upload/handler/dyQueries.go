@@ -63,48 +63,53 @@ func (q *UploadDyQueries) GetUploadFiles(entries []UploadEntry) ([]uploadFile.Up
 
 	var verifiedFiles []UploadEntry
 	if len(getItems) > 0 {
+		// DynamoDB BatchGetItem caps at 100 items per call. The legacy
+		// SQS-triggered path never approached this limit (SQS batch size = 25),
+		// but the direct-to-storage finalize endpoint dispatches up to 500
+		// files per invocation. Chunk here so the upload lambda handles any
+		// batch size its callers send.
+		const batchGetLimit = 100
+		var dbItems []map[string]dynamoTypes.AttributeValue
+		for start := 0; start < len(getItems); start += batchGetLimit {
+			end := start + batchGetLimit
+			if end > len(getItems) {
+				end = len(getItems)
+			}
 
-		keysAndAttributes := dynamoTypes.KeysAndAttributes{
-			Keys:                     getItems,
-			AttributesToGet:          nil,
-			ConsistentRead:           nil,
-			ExpressionAttributeNames: nil,
-			ProjectionExpression:     nil,
-		}
+			keysAndAttributes := dynamoTypes.KeysAndAttributes{
+				Keys: getItems[start:end],
+			}
+			batchItemInput := dynamodb.BatchGetItemInput{
+				RequestItems: map[string]dynamoTypes.KeysAndAttributes{
+					ManifestFileTableName: keysAndAttributes,
+				},
+			}
 
-		getTableItems := map[string]dynamoTypes.KeysAndAttributes{
-			ManifestFileTableName: keysAndAttributes,
-		}
-
-		batchItemInput := dynamodb.BatchGetItemInput{
-			RequestItems:           getTableItems,
-			ReturnConsumedCapacity: "",
-		}
-
-		dbResults, err := q.db.BatchGetItem(context.Background(), &batchItemInput)
-		if err != nil {
-			log.Error(fmt.Sprintf("Unable to get dbItems: %v", err))
-			return nil, nil, err
-		}
-		dbItems := dbResults.Responses[ManifestFileTableName]
-
-		// Re-request missing items if for some reason dynamodb does not return all events
-		retryCount := 0
-		for len(dbResults.UnprocessedKeys) > 0 && retryCount < maxRetries {
-			retryCount++
-			exponentialWaitWithJitter(retryCount)
-			dbResults, err = q.db.BatchGetItem(context.Background(), &dynamodb.BatchGetItemInput{
-				RequestItems: dbResults.UnprocessedKeys,
-			})
+			dbResults, err := q.db.BatchGetItem(context.Background(), &batchItemInput)
 			if err != nil {
 				log.Error(fmt.Sprintf("Unable to get dbItems: %v", err))
 				return nil, nil, err
 			}
 			dbItems = append(dbItems, dbResults.Responses[ManifestFileTableName]...)
-		}
 
-		if len(dbResults.UnprocessedKeys) > 0 {
-			log.Warnf("giving up on BatchGetItem: %d unprocessed keys remaining after %d retries", len(dbResults.UnprocessedKeys), maxRetries)
+			// Re-request missing items if for some reason dynamodb does not return all events
+			retryCount := 0
+			for len(dbResults.UnprocessedKeys) > 0 && retryCount < maxRetries {
+				retryCount++
+				exponentialWaitWithJitter(retryCount)
+				dbResults, err = q.db.BatchGetItem(context.Background(), &dynamodb.BatchGetItemInput{
+					RequestItems: dbResults.UnprocessedKeys,
+				})
+				if err != nil {
+					log.Error(fmt.Sprintf("Unable to get dbItems: %v", err))
+					return nil, nil, err
+				}
+				dbItems = append(dbItems, dbResults.Responses[ManifestFileTableName]...)
+			}
+
+			if len(dbResults.UnprocessedKeys) > 0 {
+				log.Warnf("giving up on BatchGetItem: %d unprocessed keys remaining after %d retries", len(dbResults.UnprocessedKeys), maxRetries)
+			}
 		}
 
 		for _, dbItem := range dbItems {
