@@ -26,9 +26,14 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// maxFinalizeBatch bounds a single finalize request. Aligns with the agent's
-// dispatch batch size and keeps handler runtime predictable.
-const maxFinalizeBatch = 500
+// maxFinalizeBatch bounds a single finalize request. Sized so p99 handler
+// latency stays well under API Gateway HTTP v2's default 30s integration
+// timeout even under Postgres contention — the upload-lambda p99 per batch
+// is observed around 17 ms/file on the 10k-file test, so 250 = ~4.5s of
+// lambda time plus overhead. Keep in sync with the agent's dispatch batch
+// size in pkg/server/upload.go (finalizeBatcher.maxBatch) and the
+// maxItems constraint in terraform/upload-service.yml.
+const maxFinalizeBatch = 250
 
 // headConcurrency caps how many HeadObject calls run in parallel per invocation.
 const headConcurrency = 50

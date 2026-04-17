@@ -369,9 +369,9 @@ paths:
         Completes the two-phase upload for files the agent has already PUT
         directly to the storage bucket. The server verifies each object,
         creates Postgres package/file rows, and marks the manifest file
-        Finalized. Idempotent per uploadId. Max 500 files per call.
+        Finalized. Idempotent per uploadId. Max 250 files per call.
       x-amazon-apigateway-integration:
-        $ref: '#/components/x-amazon-apigateway-integrations/manifest-service'
+        $ref: '#/components/x-amazon-apigateway-integrations/manifest-service-finalize'
       operationId: finalizeManifestFiles
       security:
         - token_dataset_auth: [ ]
@@ -535,6 +535,20 @@ components:
       passthroughBehavior: when_no_match
       contentHandling: CONVERT_TO_TEXT
       payloadFormatVersion: 2.0
+    # Finalize does up to 250 per-file HEADs + a synchronous upload-lambda
+    # invocation that creates Postgres rows and writes DynamoDB status for
+    # each file. Observed p99 ~20s on a 10k-file test; use 29s so a slow
+    # batch returns a clean 504 rather than hanging near the API Gateway
+    # HTTP v2 default max of 30s. Increase only in lockstep with a lambda
+    # timeout bump and an explicit quota request.
+    manifest-service-finalize:
+      type: aws_proxy
+      uri: ${upload_service_lambda_arn}
+      httpMethod: POST
+      passthroughBehavior: when_no_match
+      contentHandling: CONVERT_TO_TEXT
+      payloadFormatVersion: 2.0
+      timeoutInMillis: 29000
   securitySchemes:
     token_dataset_auth:
       type: "apiKey"
@@ -704,7 +718,7 @@ components:
         files:
           type: array
           minItems: 1
-          maxItems: 500
+          maxItems: 250
           items:
             type: object
             required:
