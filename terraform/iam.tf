@@ -942,3 +942,11 @@ resource "aws_iam_role_policy_attachment" "fargate_storage_bucket_write" {
   role       = aws_iam_role.fargate_task_iam_role.name
   policy_arn = data.terraform_remote_state.account_service.outputs.storage_write_policy_arn
 }
+
+# Service lambda needs read on dynamic workspace storage buckets for the
+# finalize endpoint's HEAD verification. Managed policy is refreshed by
+# account-service whenever storage nodes are added/removed.
+resource "aws_iam_role_policy_attachment" "service_lambda_storage_bucket_read" {
+  role       = aws_iam_role.upload_service_v2_lambda_role.name
+  policy_arn = data.terraform_remote_state.account_service.outputs.storage_read_policy_arn
+}
