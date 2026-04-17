@@ -40,7 +40,7 @@ resource "aws_cloudwatch_log_subscription_filter" "cloudwatch_fargate_group_subs
 resource "aws_cloudwatch_log_group" "upload_lambda_loggroup" {
   name              = "/aws/lambda/${aws_lambda_function.upload_lambda.function_name}"
   retention_in_days = 30
-  tags = local.common_tags
+  tags              = local.common_tags
 }
 
 // Send logs from upload trigger lambda to datadog
@@ -56,7 +56,7 @@ resource "aws_cloudwatch_log_subscription_filter" "cloudwatch_log_group_subscrip
 resource "aws_cloudwatch_log_group" "upload_service_lambda_loggroup" {
   name              = "/aws/lambda/${aws_lambda_function.service_lambda.function_name}"
   retention_in_days = 30
-  tags = local.common_tags
+  tags              = local.common_tags
 }
 
 // Send logs from upload trigger service to datadog
@@ -72,7 +72,7 @@ resource "aws_cloudwatch_log_subscription_filter" "cloudwatch_upload_service_gro
 resource "aws_cloudwatch_log_group" "archiver_lambda_loggroup" {
   name              = "/aws/lambda/${aws_lambda_function.archive_lambda.function_name}"
   retention_in_days = 7
-  tags = local.common_tags
+  tags              = local.common_tags
 }
 
 // Send logs from upload trigger service to datadog

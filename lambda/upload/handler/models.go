@@ -36,4 +36,8 @@ type UploadEntry struct {
 	MergePackageId string
 	FileType       string
 	Sha256         string
+	// DirectToStorage indicates the file already landed at its final storage
+	// location (agent uploaded directly, no Fargate move required). Detected
+	// from the S3 key prefix (starts with "O{orgId}/D{datasetId}/...").
+	DirectToStorage bool
 }

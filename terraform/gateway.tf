@@ -4,16 +4,16 @@ resource "aws_apigatewayv2_api" "upload_service_api" {
   description   = "API for creating and initiating upload manifests. Use this API to inform the platform of the files you are about to upload. This is required in order to upload files to the platform."
   cors_configuration {
     allow_origins     = local.cors_allowed_origins
-    allow_methods = ["OPTIONS", "GET", "POST", "PATCH", "DELETE"]
-    allow_headers = ["*"]
+    allow_methods     = ["OPTIONS", "GET", "POST", "PATCH", "DELETE"]
+    allow_headers     = ["*"]
     allow_credentials = true
-    expose_headers = ["*"]
+    expose_headers    = ["*"]
     max_age           = 300
   }
   body = templatefile("${path.module}/upload-service.yml", {
-    authorize_lambda_invoke_uri    = data.terraform_remote_state.api_gateway.outputs.authorizer_lambda_invoke_uri
-    gateway_authorizer_role        = data.terraform_remote_state.api_gateway.outputs.authorizer_invocation_role
-    upload_service_lambda_arn     = aws_lambda_function.service_lambda.arn
+    authorize_lambda_invoke_uri = data.terraform_remote_state.api_gateway.outputs.authorizer_lambda_invoke_uri
+    gateway_authorizer_role     = data.terraform_remote_state.api_gateway.outputs.authorizer_invocation_role
+    upload_service_lambda_arn   = aws_lambda_function.service_lambda.arn
   })
 }
 
@@ -45,7 +45,7 @@ resource "aws_apigatewayv2_stage" "upload_service_gateway_stage" {
       status                  = "$context.status"
       responseLength          = "$context.responseLength"
       integrationErrorMessage = "$context.integrationErrorMessage"
-    }
+      }
     )
   }
 }

@@ -26,7 +26,7 @@ data "aws_iam_policy_document" "upload_service_v2_kms_key_policy_document" {
     ]
 
     principals {
-      type        = "AWS"
+      type = "AWS"
       identifiers = [
         aws_iam_role.upload_service_v2_lambda_role.arn
       ]
@@ -141,7 +141,7 @@ data "aws_iam_policy_document" "upload_service_v2_iam_policy_document" {
   }
 
   statement {
-    sid = "ArchiverBucketAccess"
+    sid    = "ArchiverBucketAccess"
     effect = "Allow"
 
     actions = [
@@ -221,11 +221,11 @@ data "aws_iam_policy_document" "upload_service_v2_iam_policy_document" {
 
     resources = [
       "arn:aws:ssm:${data.aws_region.current_region.name}:${data.aws_caller_identity.current.account_id}:parameter/${var.environment_name}/${var.service_name}/*",
-      "arn:aws:ssm:${data.aws_region.current_region.name}:${data.aws_caller_identity.current.account_id}:parameter/ops/*"]
+    "arn:aws:ssm:${data.aws_region.current_region.name}:${data.aws_caller_identity.current.account_id}:parameter/ops/*"]
   }
 
   statement {
-    sid = "LambdaAccessToDynamoDB"
+    sid    = "LambdaAccessToDynamoDB"
     effect = "Allow"
 
     actions = [
@@ -313,7 +313,7 @@ data "aws_iam_policy_document" "upload_service_v2_iam_policy_document" {
   }
 
   statement {
-    sid = "InvokeLambdaPermission"
+    sid    = "InvokeLambdaPermission"
     effect = "Allow"
 
     actions = [
@@ -322,7 +322,8 @@ data "aws_iam_policy_document" "upload_service_v2_iam_policy_document" {
     ]
 
     resources = [
-      aws_lambda_function.archive_lambda.arn
+      aws_lambda_function.archive_lambda.arn,
+      aws_lambda_function.upload_lambda.arn,
     ]
 
   }
@@ -336,7 +337,8 @@ data "aws_iam_policy_document" "upload_service_v2_iam_policy_document" {
     ]
 
     resources = [
-      aws_iam_role.upload_credentials_role.arn
+      aws_iam_role.upload_credentials_role.arn,
+      aws_iam_role.storage_credentials_role.arn,
     ]
   }
 
@@ -393,6 +395,80 @@ data "aws_iam_policy_document" "upload_credentials_policy_document" {
       "${aws_s3_bucket.uploads_s3_bucket.arn}/*"
     ]
   }
+}
+
+##############################
+# STORAGE CREDENTIALS ROLE   #
+##############################
+# Assumed by the service lambda to mint temporary credentials scoped to a
+# specific manifest's destination storage bucket + O{org}/D{ds}/{manifest}/*
+# prefix. Lets agents upload direct-to-storage without staging through the
+# upload bucket.
+
+resource "aws_iam_role" "storage_credentials_role" {
+  name = "${var.environment_name}-${var.service_name}-storage-credentials-role-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Principal = {
+          AWS = aws_iam_role.upload_service_v2_lambda_role.arn
+        }
+        Action = "sts:AssumeRole"
+      }
+    ]
+  })
+}
+
+# Static storage buckets (platform-infra owned). Dynamic workspace buckets are
+# attached below via the account-service managed policy, which is updated as
+# storage nodes are provisioned.
+resource "aws_iam_role_policy_attachment" "storage_credentials_static_buckets" {
+  role       = aws_iam_role.storage_credentials_role.name
+  policy_arn = aws_iam_policy.storage_credentials_static_policy.arn
+}
+
+resource "aws_iam_policy" "storage_credentials_static_policy" {
+  name   = "${var.environment_name}-${var.service_name}-storage-credentials-static-policy-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
+  policy = data.aws_iam_policy_document.storage_credentials_static_policy_document.json
+}
+
+data "aws_iam_policy_document" "storage_credentials_static_policy_document" {
+  statement {
+    sid    = "StaticStorageBucketsWriteAccess"
+    effect = "Allow"
+
+    actions = [
+      "s3:PutObject",
+      "s3:ListBucketMultipartUploads",
+      "s3:AbortMultipartUpload",
+      "s3:ListMultipartUploadParts",
+      "s3:PutObjectTagging"
+    ]
+
+    resources = [
+      data.terraform_remote_state.platform_infrastructure.outputs.storage_bucket_arn,
+      "${data.terraform_remote_state.platform_infrastructure.outputs.storage_bucket_arn}/*",
+      data.terraform_remote_state.platform_infrastructure.outputs.sparc_storage_bucket_arn,
+      "${data.terraform_remote_state.platform_infrastructure.outputs.sparc_storage_bucket_arn}/*",
+      data.terraform_remote_state.platform_infrastructure.outputs.rejoin_storage_bucket_arn,
+      "${data.terraform_remote_state.platform_infrastructure.outputs.rejoin_storage_bucket_arn}/*",
+      data.terraform_remote_state.platform_infrastructure.outputs.precision_storage_bucket_arn,
+      "${data.terraform_remote_state.platform_infrastructure.outputs.precision_storage_bucket_arn}/*",
+      data.terraform_remote_state.africa_south_region.outputs.af_south_s3_storage_bucket_arn,
+      "${data.terraform_remote_state.africa_south_region.outputs.af_south_s3_storage_bucket_arn}/*",
+    ]
+  }
+}
+
+# Dynamic storage buckets (workspace-scoped, account-service managed). The
+# same managed policy is also attached to the Fargate move role at the bottom
+# of this file.
+resource "aws_iam_role_policy_attachment" "storage_credentials_dynamic_buckets" {
+  role       = aws_iam_role.storage_credentials_role.name
+  policy_arn = data.terraform_remote_state.account_service.outputs.storage_write_policy_arn
 }
 
 ##############################
@@ -535,7 +611,7 @@ data "aws_iam_policy_document" "move_trigger_iam_policy_document" {
   }
 
   statement {
-    sid = "LambdaAccessToDynamoDB"
+    sid    = "LambdaAccessToDynamoDB"
     effect = "Allow"
 
     actions = [
@@ -667,7 +743,7 @@ data "aws_iam_policy_document" "upload_fargate_iam_policy_document" {
   }
 
   statement {
-    sid = "LambdaAccessToDynamoDB"
+    sid    = "LambdaAccessToDynamoDB"
     effect = "Allow"
 
     actions = [
