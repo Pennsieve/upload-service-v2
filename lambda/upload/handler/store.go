@@ -250,10 +250,7 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 		return response, nil
 	})
 	if err != nil {
-		if err != nil {
-			contextLogger.Error("Unable to create Packages and/or Files. ", err)
-			return err
-		}
+		contextLogger.Error("Unable to create Packages and/or Files. ", err)
 		return err
 	}
 
@@ -264,6 +261,10 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 
 	// 4. Update storage for Packages, Dataset and Organization.
 	storageMap, err := s.createStorageUpdateMap(ctx, result)
+	if err != nil {
+		contextLogger.WithError(err).Error("Unable to compute storage update map.")
+		return err
+	}
 	_, err = s.execTx(ctx, func(qtx *UploadPgQueries) (interface{}, error) {
 
 		err = qtx.IncrementOrganizationStorage(ctx, int64(orgId), storageMap.total)
