@@ -7,6 +7,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/pennsieve/pennsieve-go-core/pkg/authorizer"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/permissions"
 	log "github.com/sirupsen/logrus"
@@ -40,8 +41,9 @@ func init() {
 	client := dynamodb.NewFromConfig(cfg)
 	s3Client := s3.NewFromConfig(cfg)
 	lambdaClient := lambda.NewFromConfig(cfg)
+	sqsClient := sqs.NewFromConfig(cfg)
 
-	store = NewUploadServiceStore(client, s3Client, lambdaClient, manifestFileTableName, manifestTableName)
+	store = NewUploadServiceStore(client, s3Client, lambdaClient, sqsClient, manifestFileTableName, manifestTableName)
 
 }
 

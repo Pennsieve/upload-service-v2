@@ -312,6 +312,25 @@ data "aws_iam_policy_document" "upload_service_v2_iam_policy_document" {
     ]
   }
 
+  // The service lambda enqueues synthesized S3 "Object Created" events to
+  // upload_trigger_queue from the finalize endpoint. The upload lambda's
+  // existing SQS event source drains them and runs the same ImportFiles
+  // flow as for real S3 notifications. Replaces the previous synchronous
+  // lambda:Invoke path.
+  statement {
+    sid    = "ServiceLambdaEnqueueToUploadTrigger"
+    effect = "Allow"
+
+    actions = [
+      "sqs:SendMessage",
+      "sqs:SendMessageBatch",
+    ]
+
+    resources = [
+      aws_sqs_queue.upload_trigger_queue.arn,
+    ]
+  }
+
   statement {
     sid    = "InvokeLambdaPermission"
     effect = "Allow"

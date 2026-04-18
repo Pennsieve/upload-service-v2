@@ -67,6 +67,7 @@ resource "aws_lambda_function" "service_lambda" {
       UPLOAD_BUCKET                = aws_s3_bucket.uploads_s3_bucket.bucket,
       DEFAULT_STORAGE_BUCKET       = data.terraform_remote_state.platform_infrastructure.outputs.storage_bucket_id,
       UPLOAD_LAMBDA_ARN            = aws_lambda_function.upload_lambda.arn,
+      UPLOAD_TRIGGER_QUEUE_URL     = aws_sqs_queue.upload_trigger_queue.url,
       LOG_LEVEL                    = "info",
     }
   }
