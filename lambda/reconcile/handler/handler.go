@@ -26,6 +26,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
@@ -144,6 +145,37 @@ func Handle(ctx context.Context, p Payload) (Result, error) {
 	var result Result
 	result.DryRun = p.DryRun
 	result.PerManifest = make(map[string]ManifestStats)
+
+	// Progress ticker: logs running totals every 10s. Without this, a 600s
+	// timeout produces a final summary that never fires, and CloudWatch
+	// shows only sporadic warnings. The per-file DynamoDB commits already
+	// preserve partial progress across timeouts — this is just visibility.
+	progressDone := make(chan struct{})
+	go func() {
+		start := time.Now()
+		tick := time.NewTicker(10 * time.Second)
+		defer tick.Stop()
+		for {
+			select {
+			case <-progressDone:
+				return
+			case <-tick.C:
+				scanned, recovered, missing, enqFailed, errs := store.snapshot(&result)
+				elapsed := time.Since(start).Seconds()
+				rate := float64(scanned) / elapsed
+				log.WithFields(log.Fields{
+					"scanned":        scanned,
+					"recovered":      recovered,
+					"missing":        missing,
+					"enqueue_failed": enqFailed,
+					"errors":         errs,
+					"elapsed_sec":    int(elapsed),
+					"rate_per_sec":   int(rate),
+				}).Info("reconcile progress")
+			}
+		}
+	}()
+	defer close(progressDone)
 
 	if p.ManifestNodeID != "" {
 		if err := store.reconcileManifest(ctx, p.ManifestNodeID, p.DryRun, concurrency, &result); err != nil {
