@@ -110,6 +110,11 @@ func (s *store) reconcileManifest(ctx context.Context, manifestID string, dryRun
 func (s *store) reconcileByGracePeriod(ctx context.Context, gracePeriodHours int, dryRun bool, concurrency int, result *Result) error {
 	cutoff := time.Now().Add(-time.Duration(gracePeriodHours) * time.Hour).Unix()
 	cache := make(map[string]*resolvedManifest)
+	// Tracks manifest IDs whose parent row in manifest_table is confirmed
+	// gone (not a transient error). Files pointing at these manifests have
+	// no recoverable state — flip them to FailedOrphan so they drop out of
+	// the StatusIndex=Registered scan on future runs.
+	missingManifests := make(map[string]bool)
 
 	sem := make(chan struct{}, concurrency)
 	var wg sync.WaitGroup
@@ -146,19 +151,48 @@ func (s *store) reconcileByGracePeriod(ctx context.Context, gracePeriodHours int
 					s.mu.Lock()
 					result.Errors = append(result.Errors, err.Error())
 					s.mu.Unlock()
-					cache[manifestID] = nil // skip subsequent files for this manifest
-					continue
-				}
-				// Grace period check at the manifest level: skip if the
-				// manifest is newer than cutoff.
-				if r.manifest.DateCreated > cutoff {
 					cache[manifestID] = nil
+					// Only treat the specific "manifest not found" case as a
+					// clean orphan. Any other resolve error (Postgres 5xx,
+					// throttling, missing org row, etc.) might be transient,
+					// so we skip-without-flipping and let a future run retry.
+					if isManifestNotFound(err) {
+						missingManifests[manifestID] = true
+					}
+					if !missingManifests[manifestID] {
+						continue
+					}
+					// fall through to orphan-mark branch below
+				} else {
+					// Grace period check at the manifest level: skip if the
+					// manifest is newer than cutoff.
+					if r.manifest.DateCreated > cutoff {
+						cache[manifestID] = nil
+						continue
+					}
+					cache[manifestID] = r
+					resolved = r
+				}
+			}
+
+			if resolved == nil {
+				if !missingManifests[manifestID] {
 					continue
 				}
-				cache[manifestID] = r
-				resolved = r
-			}
-			if resolved == nil {
+				// Parent manifest row is gone — just flip this row to
+				// FailedOrphan. No HEAD needed (no bucket to check).
+				if dryRun {
+					s.bumpScanned(result, manifestID)
+					s.bumpMissing(result, manifestID)
+					continue
+				}
+				sem <- struct{}{}
+				wg.Add(1)
+				go func(mid, uid string) {
+					defer wg.Done()
+					defer func() { <-sem }()
+					s.markOrphanedRow(ctx, mid, uid, result)
+				}(manifestID, uploadID)
 				continue
 			}
 
@@ -173,8 +207,9 @@ func (s *store) reconcileByGracePeriod(ctx context.Context, gracePeriodHours int
 	}
 	wg.Wait()
 
-	// Manifests that actually produced at least one file counted as scanned.
-	scanned := 0
+	// Count manifests actually visited: cache entries with resolved != nil,
+	// plus confirmed-missing manifests (whose file rows we cleaned up).
+	scanned := len(missingManifests)
 	for _, r := range cache {
 		if r != nil {
 			scanned++
@@ -184,6 +219,30 @@ func (s *store) reconcileByGracePeriod(ctx context.Context, gracePeriodHours int
 	result.ManifestsScanned = scanned
 	s.mu.Unlock()
 	return nil
+}
+
+// isManifestNotFound matches the hardcoded error string from
+// pennsieve-go-core's GetManifestById (no sentinel error or typed error
+// exists in that package). Other resolve errors (Postgres failures,
+// throttles, bad org rows) must not trigger an orphan flip.
+func isManifestNotFound(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "Manifest not found")
+}
+
+// markOrphanedRow flips a single manifest_files row whose parent manifest
+// is known-gone. Separate from reconcileFile because there's no bucket or
+// keyPrefix to resolve — all we have is manifestID + uploadID.
+func (s *store) markOrphanedRow(ctx context.Context, manifestID, uploadID string, result *Result) {
+	s.bumpScanned(result, manifestID)
+	if err := s.markFailedOrphan(ctx, manifestID, uploadID); err != nil {
+		s.appendError(result, fmt.Sprintf("markFailedOrphan %s: %v", uploadID, err))
+		log.WithError(err).WithFields(log.Fields{
+			"manifest_id": manifestID,
+			"upload_id":   uploadID,
+		}).Warn("failed to mark orphaned row FailedOrphan (parent manifest missing)")
+		return
+	}
+	s.bumpMissing(result, manifestID)
 }
 
 // forEachRegisteredFile paginates DynamoDB manifest_files for a single
