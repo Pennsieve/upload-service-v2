@@ -195,9 +195,14 @@ resource "aws_cloudwatch_event_target" "archive_sweeper_target" {
   rule      = aws_cloudwatch_event_rule.archive_sweeper_schedule.name
   target_id = "archive-sweeper-lambda"
   arn       = aws_lambda_function.archive_sweeper_lambda.arn
+  # maxInvokesPerRun kept low so parallel archive-lambdas don't saturate the
+  # manifest_files GSI write-capacity. 500 was observed to trigger
+  # ThrottlingException on StatusIndex until DynamoDB auto-scaled. The daily
+  # run will drain any backlog across consecutive days rather than in a single
+  # burst.
   input = jsonencode({
     maxAgeDays       = 90
-    maxInvokesPerRun = 500
+    maxInvokesPerRun = 50
   })
 }
 

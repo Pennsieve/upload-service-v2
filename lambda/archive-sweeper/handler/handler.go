@@ -34,7 +34,7 @@ var (
 
 const (
 	defaultMaxAgeDays       = 90
-	defaultMaxInvokesPerRun = 500
+	defaultMaxInvokesPerRun = 50
 )
 
 func init() {
