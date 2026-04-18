@@ -34,6 +34,11 @@ type store struct {
 	manifestFileTable     string
 	uploadTriggerQueueURL string
 	defaultStorageBucket  string
+
+	// mu serializes Result/PerManifest updates across the worker pool.
+	// Lives on the store so the Handle goroutine can safely snapshot
+	// counters for periodic progress logging.
+	mu sync.Mutex
 }
 
 // resolvedManifest is what we need to reconstruct an S3 key and decide the
@@ -76,7 +81,6 @@ func (s *store) reconcileManifest(ctx context.Context, manifestID string, dryRun
 	if err != nil {
 		return err
 	}
-	var mu sync.Mutex
 	sem := make(chan struct{}, concurrency)
 	var wg sync.WaitGroup
 
@@ -86,14 +90,14 @@ func (s *store) reconcileManifest(ctx context.Context, manifestID string, dryRun
 		go func(uid string, sz int64) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			s.reconcileFile(ctx, resolved, uid, sz, dryRun, &mu, result)
+			s.reconcileFile(ctx, resolved, uid, sz, dryRun, result)
 		}(uploadID, size)
 	})
 	wg.Wait()
 
-	mu.Lock()
+	s.mu.Lock()
 	result.ManifestsScanned = 1
-	mu.Unlock()
+	s.mu.Unlock()
 	return err
 }
 
@@ -107,7 +111,6 @@ func (s *store) reconcileByGracePeriod(ctx context.Context, gracePeriodHours int
 	cutoff := time.Now().Add(-time.Duration(gracePeriodHours) * time.Hour).Unix()
 	cache := make(map[string]*resolvedManifest)
 
-	var mu sync.Mutex
 	sem := make(chan struct{}, concurrency)
 	var wg sync.WaitGroup
 
@@ -140,9 +143,9 @@ func (s *store) reconcileByGracePeriod(ctx context.Context, gracePeriodHours int
 				r, err := s.resolveManifest(ctx, manifestID)
 				if err != nil {
 					log.WithError(err).WithField("manifest_id", manifestID).Warn("resolve failed, skipping manifest")
-					mu.Lock()
+					s.mu.Lock()
 					result.Errors = append(result.Errors, err.Error())
-					mu.Unlock()
+					s.mu.Unlock()
 					cache[manifestID] = nil // skip subsequent files for this manifest
 					continue
 				}
@@ -164,7 +167,7 @@ func (s *store) reconcileByGracePeriod(ctx context.Context, gracePeriodHours int
 			go func(res *resolvedManifest, uid string) {
 				defer wg.Done()
 				defer func() { <-sem }()
-				s.reconcileFile(ctx, res, uid, 0, dryRun, &mu, result)
+				s.reconcileFile(ctx, res, uid, 0, dryRun, result)
 			}(resolved, uploadID)
 		}
 	}
@@ -177,9 +180,9 @@ func (s *store) reconcileByGracePeriod(ctx context.Context, gracePeriodHours int
 			scanned++
 		}
 	}
-	mu.Lock()
+	s.mu.Lock()
 	result.ManifestsScanned = scanned
-	mu.Unlock()
+	s.mu.Unlock()
 	return nil
 }
 
@@ -215,7 +218,7 @@ func (s *store) forEachRegisteredFile(ctx context.Context, manifestID string, fn
 
 // reconcileFile does the per-file recovery: HEAD the storage key, enqueue if
 // present, otherwise count as missing. Safe to call concurrently — all
-// Result/PerManifest updates are serialized through mu. I/O (HEAD,
+// Result/PerManifest updates are serialized through s.mu. I/O (HEAD,
 // UpdateItem, SendMessage) runs outside the mutex.
 func (s *store) reconcileFile(
 	ctx context.Context,
@@ -223,11 +226,10 @@ func (s *store) reconcileFile(
 	uploadID string,
 	expectedSize int64,
 	dryRun bool,
-	mu *sync.Mutex,
 	result *Result,
 ) {
 	manifestID := resolved.manifest.ManifestId
-	bumpScanned(mu, result, manifestID)
+	s.bumpScanned(result, manifestID)
 
 	key := fmt.Sprintf("%s/%s", resolved.keyPrefix, uploadID)
 	head, err := s.s3.HeadObject(ctx, &s3.HeadObjectInput{
@@ -243,10 +245,10 @@ func (s *store) reconcileFile(
 		// permission) are transient — leave Registered so the next
 		// scheduled run retries.
 		if isS3NotFound(err) {
-			bumpMissing(mu, result, manifestID)
+			s.bumpMissing(result, manifestID)
 			if !dryRun {
 				if updErr := s.markFailedOrphan(ctx, manifestID, uploadID); updErr != nil {
-					appendError(mu, result, fmt.Sprintf("markFailedOrphan %s: %v", uploadID, updErr))
+					s.appendError(result, fmt.Sprintf("markFailedOrphan %s: %v", uploadID, updErr))
 					log.WithError(updErr).WithFields(log.Fields{
 						"manifest_id": manifestID,
 						"upload_id":   uploadID,
@@ -254,7 +256,7 @@ func (s *store) reconcileFile(
 				}
 			}
 		} else {
-			appendError(mu, result, fmt.Sprintf("HEAD %s: %v", uploadID, err))
+			s.appendError(result, fmt.Sprintf("HEAD %s: %v", uploadID, err))
 			log.WithError(err).WithFields(log.Fields{
 				"manifest_id": manifestID,
 				"upload_id":   uploadID,
@@ -265,7 +267,7 @@ func (s *store) reconcileFile(
 	}
 
 	if dryRun {
-		bumpRecovered(mu, result, manifestID)
+		s.bumpRecovered(result, manifestID)
 		log.WithFields(log.Fields{
 			"manifest_id": manifestID,
 			"upload_id":   uploadID,
@@ -276,50 +278,59 @@ func (s *store) reconcileFile(
 	}
 
 	if err := s.enqueueRecovery(ctx, resolved.storageBucket, key, aws.ToInt64(head.ContentLength)); err != nil {
-		mu.Lock()
+		s.mu.Lock()
 		result.EnqueueFailed++
 		result.Errors = append(result.Errors, fmt.Sprintf("enqueue %s: %v", uploadID, err))
-		mu.Unlock()
+		s.mu.Unlock()
 		log.WithError(err).WithFields(log.Fields{
 			"manifest_id": manifestID,
 			"upload_id":   uploadID,
 		}).Warn("enqueue failed")
 		return
 	}
-	bumpRecovered(mu, result, manifestID)
+	s.bumpRecovered(result, manifestID)
 }
 
-func bumpScanned(mu *sync.Mutex, r *Result, manifestID string) {
-	mu.Lock()
-	defer mu.Unlock()
+func (s *store) bumpScanned(r *Result, manifestID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	r.FilesScanned++
 	stats := r.PerManifest[manifestID]
 	stats.FilesScanned++
 	r.PerManifest[manifestID] = stats
 }
 
-func bumpMissing(mu *sync.Mutex, r *Result, manifestID string) {
-	mu.Lock()
-	defer mu.Unlock()
+func (s *store) bumpMissing(r *Result, manifestID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	r.Missing++
 	stats := r.PerManifest[manifestID]
 	stats.Missing++
 	r.PerManifest[manifestID] = stats
 }
 
-func bumpRecovered(mu *sync.Mutex, r *Result, manifestID string) {
-	mu.Lock()
-	defer mu.Unlock()
+func (s *store) bumpRecovered(r *Result, manifestID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	r.Recovered++
 	stats := r.PerManifest[manifestID]
 	stats.Recovered++
 	r.PerManifest[manifestID] = stats
 }
 
-func appendError(mu *sync.Mutex, r *Result, msg string) {
-	mu.Lock()
-	defer mu.Unlock()
+func (s *store) appendError(r *Result, msg string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	r.Errors = append(r.Errors, msg)
+}
+
+// snapshot returns a copy of the counters under mu. Intended for the
+// progress-logging goroutine; PerManifest/Errors are deliberately omitted to
+// keep the snapshot small.
+func (s *store) snapshot(r *Result) (scanned, recovered, missing, enqueueFailed, errs int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return r.FilesScanned, r.Recovered, r.Missing, r.EnqueueFailed, len(r.Errors)
 }
 
 // markFailedOrphan flips a Registered row to FailedOrphan status. The
