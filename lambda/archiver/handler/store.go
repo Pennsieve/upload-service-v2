@@ -37,67 +37,63 @@ func NewArchiverStore(dy *dynamodb.Client, s3Client *s3.Client, fileTableName st
 	}
 }
 
-// writeCSVFile writes manifestFiles to a CSV file in the /tmp/ folder
+// writeCSVFile writes manifestFiles to a CSV file in the /tmp/ folder.
+// Any error from GetFilesPaginated is returned to the caller — a throttle
+// or other query failure must abort the archive, not produce a 0-byte CSV
+// that then gets paired with a row-delete (silent data loss).
 func (s *ArchiverStore) writeCSVFile(ctx context.Context, fileName string, manifestId string) (string, error) {
 	file, err := os.Create(fmt.Sprintf("/tmp/%s", fileName))
-	defer file.Close()
 	if err != nil {
 		log.WithFields(
 			log.Fields{
 				"manifest_id": manifestId,
 			}).Error("unable to create archive CSV file")
-		return file.Name(), err
-
+		return "", err
 	}
+	defer file.Close()
 
 	w := csv.NewWriter(file)
 	defer w.Flush()
 
-	var files []dydbModels.ManifestFileTable
 	pageSize := int32(200)
 
 	files, lastEntry, err := s.dy.GetFilesPaginated(ctx, s.fileTableName, manifestId, sql.NullString{Valid: false}, pageSize, nil)
+	if err != nil {
+		return file.Name(), fmt.Errorf("GetFilesPaginated: %w", err)
+	}
 
-	if len(files) > 0 {
-
-		// Write Headers
-		firstFile := files[0]
-		headers := firstFile.GetHeaders()
-		err = w.Write(headers)
-		if err != nil {
-			return file.Name(), err
-		}
-
-		// Write Files
-		for _, f := range files {
-			rowSlice := f.ToSlice()
-			err := w.Write(rowSlice)
-			if err != nil {
-				return file.Name(), err
-			}
-		}
-
-		// If there are more entries, get next page and write files.
-		for len(lastEntry) != 0 {
-			files, lastEntry, err = s.dy.GetFilesPaginated(ctx, s.fileTableName, manifestId, sql.NullString{Valid: false}, pageSize, lastEntry)
-
-			for _, f := range files {
-				rowSlice := f.ToSlice()
-				err := w.Write(rowSlice)
-				if err != nil {
-					return file.Name(), err
-				}
-			}
-		}
-	} else {
+	if len(files) == 0 {
 		log.WithFields(
 			log.Fields{
 				"manifest_id": manifestId,
 			}).Info("Archived manifest has no files.")
+		return file.Name(), nil
+	}
+
+	// Write headers from the first file's schema.
+	if err := w.Write(files[0].GetHeaders()); err != nil {
+		return file.Name(), err
+	}
+
+	for _, f := range files {
+		if err := w.Write(f.ToSlice()); err != nil {
+			return file.Name(), err
+		}
+	}
+
+	for len(lastEntry) != 0 {
+		files, lastEntry, err = s.dy.GetFilesPaginated(ctx, s.fileTableName, manifestId, sql.NullString{Valid: false}, pageSize, lastEntry)
+		if err != nil {
+			return file.Name(), fmt.Errorf("GetFilesPaginated page: %w", err)
+		}
+		for _, f := range files {
+			if err := w.Write(f.ToSlice()); err != nil {
+				return file.Name(), err
+			}
+		}
 	}
 
 	return file.Name(), nil
-
 }
 
 // writeManifestToS3 takes a CSV file and stores it in the manifest-archive bucket

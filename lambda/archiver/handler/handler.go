@@ -59,9 +59,13 @@ func ManifestHandler(event ArchiveEvent) error {
 
 	ctx := context.Background()
 	csvFileName := fmt.Sprintf("manifest_archive_%s.csv", event.ManifestId)
-	_, err := store.writeCSVFile(ctx, csvFileName, event.ManifestId)
+	if _, err := store.writeCSVFile(ctx, csvFileName, event.ManifestId); err != nil {
+		log.WithError(err).WithField("manifest_id", event.ManifestId).
+			Error("writeCSVFile failed; aborting archive so Lambda async retry can re-run")
+		return err
+	}
 
-	_, err = store.writeManifestToS3(ctx, csvFileName, event.OrganizationId, event.DatasetId)
+	_, err := store.writeManifestToS3(ctx, csvFileName, event.OrganizationId, event.DatasetId)
 	if err != nil {
 		return err
 	}
