@@ -969,3 +969,158 @@ resource "aws_iam_role_policy_attachment" "service_lambda_storage_bucket_read" {
   role       = aws_iam_role.upload_service_v2_lambda_role.name
   policy_arn = data.terraform_remote_state.account_service.outputs.storage_read_policy_arn
 }
+
+##############################
+# RECONCILE LAMBDA ROLE      #
+##############################
+
+resource "aws_iam_role" "reconcile_lambda_role" {
+  name = "${var.environment_name}-${var.service_name}-reconcile-lambda-role-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        Service = "lambda.amazonaws.com"
+      }
+      Action = "sts:AssumeRole"
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "reconcile_lambda_policy_attachment" {
+  role       = aws_iam_role.reconcile_lambda_role.name
+  policy_arn = aws_iam_policy.reconcile_lambda_policy.arn
+}
+
+resource "aws_iam_policy" "reconcile_lambda_policy" {
+  name   = "${var.environment_name}-${var.service_name}-reconcile-lambda-policy-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
+  policy = data.aws_iam_policy_document.reconcile_lambda_policy_document.json
+}
+
+data "aws_iam_policy_document" "reconcile_lambda_policy_document" {
+  statement {
+    sid    = "LambdaBaseExec"
+    effect = "Allow"
+    actions = [
+      "logs:CreateLogStream",
+      "logs:PutLogEvents",
+      "logs:CreateLogGroup",
+      "ec2:CreateNetworkInterface",
+      "ec2:DescribeNetworkInterfaces",
+      "ec2:DeleteNetworkInterface",
+      "ec2:AssignPrivateIpAddresses",
+      "ec2:UnassignPrivateIpAddresses",
+    ]
+    resources = ["*"]
+  }
+
+  # DynamoDB read on both manifest tables (scans StatusIndex GSI + reads
+  # manifest metadata).
+  statement {
+    sid    = "ReconcileDynamoRead"
+    effect = "Allow"
+    actions = [
+      "dynamodb:GetItem",
+      "dynamodb:Query",
+      "dynamodb:BatchGetItem",
+    ]
+    resources = [
+      aws_dynamodb_table.manifest_dynamo_table.arn,
+      "${aws_dynamodb_table.manifest_dynamo_table.arn}/*",
+      aws_dynamodb_table.manifest_files_dynamo_table.arn,
+      "${aws_dynamodb_table.manifest_files_dynamo_table.arn}/*",
+    ]
+  }
+
+  # Postgres connection via RDS Proxy (for storage-bucket resolution).
+  statement {
+    sid    = "ReconcileRDS"
+    effect = "Allow"
+    actions = [
+      "rds-db:connect",
+    ]
+    resources = ["*"]
+  }
+
+  # Enqueue synthesized S3 events to upload_trigger_queue.
+  statement {
+    sid    = "ReconcileEnqueue"
+    effect = "Allow"
+    actions = [
+      "sqs:SendMessage",
+      "sqs:SendMessageBatch",
+    ]
+    resources = [
+      aws_sqs_queue.upload_trigger_queue.arn,
+    ]
+  }
+}
+
+# Static storage bucket read is needed to HEAD objects during verification.
+# Dynamic workspace buckets are covered by the account-service managed
+# policy attached below.
+resource "aws_iam_role_policy_attachment" "reconcile_storage_bucket_read" {
+  role       = aws_iam_role.reconcile_lambda_role.name
+  policy_arn = data.terraform_remote_state.account_service.outputs.storage_read_policy_arn
+}
+
+##############################
+# ARCHIVE-SWEEPER ROLE       #
+##############################
+
+resource "aws_iam_role" "archive_sweeper_role" {
+  name = "${var.environment_name}-${var.service_name}-archive-sweeper-role-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        Service = "lambda.amazonaws.com"
+      }
+      Action = "sts:AssumeRole"
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "archive_sweeper_policy_attachment" {
+  role       = aws_iam_role.archive_sweeper_role.name
+  policy_arn = aws_iam_policy.archive_sweeper_policy.arn
+}
+
+resource "aws_iam_policy" "archive_sweeper_policy" {
+  name   = "${var.environment_name}-${var.service_name}-archive-sweeper-policy-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
+  policy = data.aws_iam_policy_document.archive_sweeper_policy_document.json
+}
+
+data "aws_iam_policy_document" "archive_sweeper_policy_document" {
+  statement {
+    sid    = "LambdaBaseExec"
+    effect = "Allow"
+    actions = [
+      "logs:CreateLogStream",
+      "logs:PutLogEvents",
+      "logs:CreateLogGroup",
+    ]
+    resources = ["*"]
+  }
+
+  # manifest_table has no index on DateCreated/Status so the sweep uses Scan
+  # with a FilterExpression. Table is small (one row per manifest) so
+  # full-scan cost is acceptable for a daily job.
+  statement {
+    sid       = "ArchiveSweeperScan"
+    effect    = "Allow"
+    actions   = ["dynamodb:Scan"]
+    resources = [aws_dynamodb_table.manifest_dynamo_table.arn]
+  }
+
+  statement {
+    sid       = "ArchiveSweeperInvoke"
+    effect    = "Allow"
+    actions   = ["lambda:InvokeFunction"]
+    resources = [aws_lambda_function.archive_lambda.arn]
+  }
+}
