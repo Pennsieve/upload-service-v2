@@ -139,3 +139,91 @@ resource "aws_lambda_function" "fargate_trigger_lambda" {
     }
   }
 }
+
+### RECONCILE-ORPHANS LAMBDA
+#
+# Two invocation modes through the same handler:
+#   1. One-shot — `aws lambda invoke --payload '{"manifestNodeId":"<uuid>"}'`
+#      against a specific manifest (typically to recover stuck Registered
+#      rows from a prior incident).
+#   2. Scheduled daily — EventBridge rule (see cloudwatch.tf) fires with
+#      `{"gracePeriodHours": 6}`. Scans the StatusIndex GSI for stuck
+#      Registered rows past the grace window, HEAD-checks each expected
+#      storage key, enqueues recoverable files to upload_trigger_queue.
+#      Never deletes; missing-object cases are metric'd + logged only.
+resource "aws_lambda_function" "reconcile_lambda" {
+  description   = "Recovers stuck-Registered manifest_files by HEAD-checking the storage bucket and enqueueing recoverable files to upload_trigger_queue. Safe to invoke manually or on schedule; never deletes."
+  function_name = "${var.environment_name}-${var.service_name}-reconcile-lambda-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
+  handler       = "bootstrap"
+  runtime       = "provided.al2023"
+  architectures = ["arm64"]
+  role          = aws_iam_role.reconcile_lambda_role.arn
+  timeout       = 600
+  memory_size   = 512
+  s3_bucket     = var.lambda_bucket
+  s3_key        = "${var.service_name}/reconcile/upload-v2-reconcile-${var.image_tag}.zip"
+
+  vpc_config {
+    subnet_ids         = tolist(data.terraform_remote_state.vpc.outputs.private_subnet_ids)
+    security_group_ids = [data.terraform_remote_state.platform_infrastructure.outputs.upload_v2_security_group_id]
+  }
+
+  environment {
+    variables = {
+      ENV                      = var.environment_name
+      MANIFEST_TABLE           = aws_dynamodb_table.manifest_dynamo_table.name
+      MANIFEST_FILE_TABLE      = aws_dynamodb_table.manifest_files_dynamo_table.name
+      UPLOAD_TRIGGER_QUEUE_URL = aws_sqs_queue.upload_trigger_queue.url
+      DEFAULT_STORAGE_BUCKET   = data.terraform_remote_state.platform_infrastructure.outputs.storage_bucket_id
+      REGION                   = var.aws_region
+      RDS_PROXY_ENDPOINT       = data.terraform_remote_state.pennsieve_postgres.outputs.rds_proxy_endpoint
+      LOG_LEVEL                = "info"
+    }
+  }
+}
+
+resource "aws_lambda_permission" "reconcile_allow_events" {
+  statement_id  = "AllowEventBridgeInvokeReconcile"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.reconcile_lambda.function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.reconcile_schedule.arn
+}
+
+### ARCHIVE-SWEEPER LAMBDA
+#
+# Daily EventBridge sweep (see cloudwatch.tf) of manifest_table for rows
+# older than MaxAgeDays (default 90) whose Status != Archived, firing an
+# async Lambda.Invoke to archive_lambda for each. archive_lambda writes
+# the manifest to CSV in the archive bucket and removes the manifest_files
+# rows. Never mutates state itself; only dispatches.
+resource "aws_lambda_function" "archive_sweeper_lambda" {
+  description   = "Daily sweep of manifest_table: invokes archive_lambda for manifests older than MaxAgeDays (default 90) that aren't already Archived."
+  function_name = "${var.environment_name}-${var.service_name}-archive-sweeper-lambda-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
+  handler       = "bootstrap"
+  runtime       = "provided.al2023"
+  architectures = ["arm64"]
+  role          = aws_iam_role.archive_sweeper_role.arn
+  timeout       = 600
+  memory_size   = 256
+  s3_bucket     = var.lambda_bucket
+  s3_key        = "${var.service_name}/archive-sweeper/upload-v2-archive-sweeper-${var.image_tag}.zip"
+
+  environment {
+    variables = {
+      ENV                = var.environment_name
+      MANIFEST_TABLE     = aws_dynamodb_table.manifest_dynamo_table.name
+      ARCHIVE_LAMBDA_ARN = aws_lambda_function.archive_lambda.arn
+      REGION             = var.aws_region
+      LOG_LEVEL          = "info"
+    }
+  }
+}
+
+resource "aws_lambda_permission" "archive_sweeper_allow_events" {
+  statement_id  = "AllowEventBridgeInvokeArchiveSweeper"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.archive_sweeper_lambda.function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.archive_sweeper_schedule.arn
+}

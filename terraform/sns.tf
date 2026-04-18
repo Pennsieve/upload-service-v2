@@ -31,3 +31,10 @@ data "aws_iam_policy_document" "imported_file_sns_topic_iam_policy" {
     }
   }
 }
+
+# Ops alerts topic for the reconcile + archive-sweeper lambdas. Operators
+# subscribe to this topic (email / Slack / etc.) to get notified when the
+# CloudWatch alarms defined in cloudwatch.tf trigger.
+resource "aws_sns_topic" "reconcile_alerts" {
+  name = "${var.environment_name}-${var.service_name}-reconcile-alerts-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
+}
