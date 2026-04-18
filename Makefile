@@ -8,6 +8,8 @@ SERVICE_PACKAGE_NAME ?= "upload-v2-service-${VERSION}.zip"
 UPLOADHANDLER_PACKAGE_NAME ?= "upload-v2-handler-${VERSION}.zip"
 MOVETRIGGER_PACKAGE_NAME ?= "upload-v2-move-trigger-${VERSION}.zip"
 ARCHIVER_PACKAGE_NAME ?= "manifest-archiver-${VERSION}.zip"
+RECONCILE_PACKAGE_NAME ?= "upload-v2-reconcile-${VERSION}.zip"
+ARCHIVE_SWEEPER_PACKAGE_NAME ?= "upload-v2-archive-sweeper-${VERSION}.zip"
 PACKAGE_NAME  ?= "${SERVICE_NAME}-${VERSION}.zip"
 
 .DEFAULT: help
@@ -94,6 +96,24 @@ package:
 			zip -r $(WORKING_DIR)/lambda/bin/archiver/$(ARCHIVER_PACKAGE_NAME) .
 	@echo ""
 	@echo "***********************"
+	@echo "*   Building Reconcile lambda   *"
+	@echo "***********************"
+	@echo ""
+	cd $(WORKING_DIR)/lambda/reconcile; \
+  		env GOOS=linux GOARCH=arm64 go build -tags lambda.norpc -o $(WORKING_DIR)/lambda/bin/reconcile/bootstrap; \
+		cd $(WORKING_DIR)/lambda/bin/reconcile/ ; \
+			zip -r $(WORKING_DIR)/lambda/bin/reconcile/$(RECONCILE_PACKAGE_NAME) .
+	@echo ""
+	@echo "***********************"
+	@echo "*   Building Archive Sweeper lambda   *"
+	@echo "***********************"
+	@echo ""
+	cd $(WORKING_DIR)/lambda/archive-sweeper; \
+  		env GOOS=linux GOARCH=arm64 go build -tags lambda.norpc -o $(WORKING_DIR)/lambda/bin/archive-sweeper/bootstrap; \
+		cd $(WORKING_DIR)/lambda/bin/archive-sweeper/ ; \
+			zip -r $(WORKING_DIR)/lambda/bin/archive-sweeper/$(ARCHIVE_SWEEPER_PACKAGE_NAME) .
+	@echo ""
+	@echo "***********************"
 	@echo "*   Building Fargate   *"
 	@echo "***********************"
 	@echo ""
@@ -132,3 +152,17 @@ publish:
 	@echo ""
 	aws s3 cp $(WORKING_DIR)/lambda/bin/moveTrigger/$(MOVETRIGGER_PACKAGE_NAME) s3://$(LAMBDA_BUCKET)/upload-service-v2/trigger/
 	rm -rf $(WORKING_DIR)/lambda/bin/moveTrigger/$(MOVETRIGGER_PACKAGE_NAME)
+	@echo ""
+	@echo "************************************"
+	@echo "*   Publishing Reconcile lambda    *"
+	@echo "************************************"
+	@echo ""
+	aws s3 cp $(WORKING_DIR)/lambda/bin/reconcile/$(RECONCILE_PACKAGE_NAME) s3://$(LAMBDA_BUCKET)/upload-service-v2/reconcile/
+	rm -rf $(WORKING_DIR)/lambda/bin/reconcile/$(RECONCILE_PACKAGE_NAME)
+	@echo ""
+	@echo "*****************************************"
+	@echo "*   Publishing Archive Sweeper lambda   *"
+	@echo "*****************************************"
+	@echo ""
+	aws s3 cp $(WORKING_DIR)/lambda/bin/archive-sweeper/$(ARCHIVE_SWEEPER_PACKAGE_NAME) s3://$(LAMBDA_BUCKET)/upload-service-v2/archive-sweeper/
+	rm -rf $(WORKING_DIR)/lambda/bin/archive-sweeper/$(ARCHIVE_SWEEPER_PACKAGE_NAME)
