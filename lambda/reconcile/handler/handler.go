@@ -74,12 +74,20 @@ func InitializeClients() {
 }
 
 // Payload is the JSON body that invokes the lambda. Exactly one of
-// ManifestNodeID or GracePeriodHours should be set.
+// ManifestNodeID or GracePeriodHours should be set. Concurrency caps the
+// number of in-flight HEAD requests; default is 16, which suits a 512 MB
+// Lambda (HEAD is network-bound, not CPU-bound).
 type Payload struct {
 	ManifestNodeID   string `json:"manifestNodeId,omitempty"`
 	GracePeriodHours int    `json:"gracePeriodHours,omitempty"`
 	DryRun           bool   `json:"dryRun,omitempty"`
+	Concurrency      int    `json:"concurrency,omitempty"`
 }
+
+const (
+	defaultConcurrency = 16
+	maxConcurrency     = 64
+)
 
 // Result is the aggregate outcome of a reconciliation run.
 type Result struct {
@@ -125,16 +133,24 @@ func Handle(ctx context.Context, p Payload) (Result, error) {
 		defaultStorageBucket:  defaultStorageBucket,
 	}
 
+	concurrency := p.Concurrency
+	if concurrency <= 0 {
+		concurrency = defaultConcurrency
+	}
+	if concurrency > maxConcurrency {
+		concurrency = maxConcurrency
+	}
+
 	var result Result
 	result.DryRun = p.DryRun
 	result.PerManifest = make(map[string]ManifestStats)
 
 	if p.ManifestNodeID != "" {
-		if err := store.reconcileManifest(ctx, p.ManifestNodeID, p.DryRun, &result); err != nil {
+		if err := store.reconcileManifest(ctx, p.ManifestNodeID, p.DryRun, concurrency, &result); err != nil {
 			result.Errors = append(result.Errors, err.Error())
 		}
 	} else {
-		if err := store.reconcileByGracePeriod(ctx, p.GracePeriodHours, p.DryRun, &result); err != nil {
+		if err := store.reconcileByGracePeriod(ctx, p.GracePeriodHours, p.DryRun, concurrency, &result); err != nil {
 			result.Errors = append(result.Errors, err.Error())
 		}
 	}

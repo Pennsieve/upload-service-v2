@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-lambda-go/events"
@@ -66,30 +67,49 @@ func (s *store) resolveManifest(ctx context.Context, manifestID string) (*resolv
 }
 
 // reconcileManifest recovers all stuck-Registered files for a single
-// manifest (one-shot mode).
-func (s *store) reconcileManifest(ctx context.Context, manifestID string, dryRun bool, result *Result) error {
+// manifest (one-shot mode). HEAD calls are fanned out across `concurrency`
+// goroutines bounded by a semaphore — S3 HEAD is network-bound, so 16-way
+// parallelism on a 512 MB Lambda collapses the first-run backlog without
+// hitting vCPU limits.
+func (s *store) reconcileManifest(ctx context.Context, manifestID string, dryRun bool, concurrency int, result *Result) error {
 	resolved, err := s.resolveManifest(ctx, manifestID)
 	if err != nil {
 		return err
 	}
-	stats := ManifestStats{}
+	var mu sync.Mutex
+	sem := make(chan struct{}, concurrency)
+	var wg sync.WaitGroup
+
 	err = s.forEachRegisteredFile(ctx, manifestID, func(uploadID string, size int64) {
-		stats.FilesScanned++
-		result.FilesScanned++
-		s.reconcileFile(ctx, resolved, uploadID, size, dryRun, &stats, result)
+		sem <- struct{}{}
+		wg.Add(1)
+		go func(uid string, sz int64) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			s.reconcileFile(ctx, resolved, uid, sz, dryRun, &mu, result)
+		}(uploadID, size)
 	})
+	wg.Wait()
+
+	mu.Lock()
 	result.ManifestsScanned = 1
-	result.PerManifest[manifestID] = stats
+	mu.Unlock()
 	return err
 }
 
 // reconcileByGracePeriod scans StatusIndex for Status=Registered across all
 // manifests, filtering out manifests whose DateCreated is newer than the
 // grace window (still legitimately in-progress). Caches manifest resolutions
-// so each manifest only pays one Postgres lookup per run.
-func (s *store) reconcileByGracePeriod(ctx context.Context, gracePeriodHours int, dryRun bool, result *Result) error {
+// so each manifest only pays one Postgres lookup per run. HEAD calls fan
+// out across `concurrency` goroutines; manifest resolution stays on the
+// paginator goroutine so the cache remains uncontended.
+func (s *store) reconcileByGracePeriod(ctx context.Context, gracePeriodHours int, dryRun bool, concurrency int, result *Result) error {
 	cutoff := time.Now().Add(-time.Duration(gracePeriodHours) * time.Hour).Unix()
 	cache := make(map[string]*resolvedManifest)
+
+	var mu sync.Mutex
+	sem := make(chan struct{}, concurrency)
+	var wg sync.WaitGroup
 
 	p := dynamodb.NewQueryPaginator(s.dy, &dynamodb.QueryInput{
 		TableName:              aws.String(s.manifestFileTable),
@@ -104,6 +124,7 @@ func (s *store) reconcileByGracePeriod(ctx context.Context, gracePeriodHours int
 	for p.HasMorePages() {
 		page, err := p.NextPage(ctx)
 		if err != nil {
+			wg.Wait()
 			return fmt.Errorf("scan StatusIndex: %w", err)
 		}
 		for _, item := range page.Items {
@@ -119,7 +140,9 @@ func (s *store) reconcileByGracePeriod(ctx context.Context, gracePeriodHours int
 				r, err := s.resolveManifest(ctx, manifestID)
 				if err != nil {
 					log.WithError(err).WithField("manifest_id", manifestID).Warn("resolve failed, skipping manifest")
+					mu.Lock()
 					result.Errors = append(result.Errors, err.Error())
+					mu.Unlock()
 					cache[manifestID] = nil // skip subsequent files for this manifest
 					continue
 				}
@@ -136,13 +159,16 @@ func (s *store) reconcileByGracePeriod(ctx context.Context, gracePeriodHours int
 				continue
 			}
 
-			stats := result.PerManifest[manifestID]
-			stats.FilesScanned++
-			result.FilesScanned++
-			s.reconcileFile(ctx, resolved, uploadID, 0, dryRun, &stats, result)
-			result.PerManifest[manifestID] = stats
+			sem <- struct{}{}
+			wg.Add(1)
+			go func(res *resolvedManifest, uid string) {
+				defer wg.Done()
+				defer func() { <-sem }()
+				s.reconcileFile(ctx, res, uid, 0, dryRun, &mu, result)
+			}(resolved, uploadID)
 		}
 	}
+	wg.Wait()
 
 	// Manifests that actually produced at least one file counted as scanned.
 	scanned := 0
@@ -151,7 +177,9 @@ func (s *store) reconcileByGracePeriod(ctx context.Context, gracePeriodHours int
 			scanned++
 		}
 	}
+	mu.Lock()
 	result.ManifestsScanned = scanned
+	mu.Unlock()
 	return nil
 }
 
@@ -186,16 +214,21 @@ func (s *store) forEachRegisteredFile(ctx context.Context, manifestID string, fn
 }
 
 // reconcileFile does the per-file recovery: HEAD the storage key, enqueue if
-// present, otherwise count as missing.
+// present, otherwise count as missing. Safe to call concurrently — all
+// Result/PerManifest updates are serialized through mu. I/O (HEAD,
+// UpdateItem, SendMessage) runs outside the mutex.
 func (s *store) reconcileFile(
 	ctx context.Context,
 	resolved *resolvedManifest,
 	uploadID string,
 	expectedSize int64,
 	dryRun bool,
-	stats *ManifestStats,
+	mu *sync.Mutex,
 	result *Result,
 ) {
+	manifestID := resolved.manifest.ManifestId
+	bumpScanned(mu, result, manifestID)
+
 	key := fmt.Sprintf("%s/%s", resolved.keyPrefix, uploadID)
 	head, err := s.s3.HeadObject(ctx, &s3.HeadObjectInput{
 		Bucket: aws.String(resolved.storageBucket),
@@ -210,21 +243,20 @@ func (s *store) reconcileFile(
 		// permission) are transient — leave Registered so the next
 		// scheduled run retries.
 		if isS3NotFound(err) {
-			stats.Missing++
-			result.Missing++
+			bumpMissing(mu, result, manifestID)
 			if !dryRun {
-				if updErr := s.markFailedOrphan(ctx, resolved.manifest.ManifestId, uploadID); updErr != nil {
-					result.Errors = append(result.Errors, fmt.Sprintf("markFailedOrphan %s: %v", uploadID, updErr))
+				if updErr := s.markFailedOrphan(ctx, manifestID, uploadID); updErr != nil {
+					appendError(mu, result, fmt.Sprintf("markFailedOrphan %s: %v", uploadID, updErr))
 					log.WithError(updErr).WithFields(log.Fields{
-						"manifest_id": resolved.manifest.ManifestId,
+						"manifest_id": manifestID,
 						"upload_id":   uploadID,
 					}).Warn("failed to mark FailedOrphan (row remains Registered)")
 				}
 			}
 		} else {
-			result.Errors = append(result.Errors, fmt.Sprintf("HEAD %s: %v", uploadID, err))
+			appendError(mu, result, fmt.Sprintf("HEAD %s: %v", uploadID, err))
 			log.WithError(err).WithFields(log.Fields{
-				"manifest_id": resolved.manifest.ManifestId,
+				"manifest_id": manifestID,
 				"upload_id":   uploadID,
 				"key":         key,
 			}).Warn("HEAD failed")
@@ -233,10 +265,9 @@ func (s *store) reconcileFile(
 	}
 
 	if dryRun {
-		stats.Recovered++
-		result.Recovered++
+		bumpRecovered(mu, result, manifestID)
 		log.WithFields(log.Fields{
-			"manifest_id": resolved.manifest.ManifestId,
+			"manifest_id": manifestID,
 			"upload_id":   uploadID,
 			"key":         key,
 			"size":        aws.ToInt64(head.ContentLength),
@@ -245,16 +276,50 @@ func (s *store) reconcileFile(
 	}
 
 	if err := s.enqueueRecovery(ctx, resolved.storageBucket, key, aws.ToInt64(head.ContentLength)); err != nil {
+		mu.Lock()
 		result.EnqueueFailed++
 		result.Errors = append(result.Errors, fmt.Sprintf("enqueue %s: %v", uploadID, err))
+		mu.Unlock()
 		log.WithError(err).WithFields(log.Fields{
-			"manifest_id": resolved.manifest.ManifestId,
+			"manifest_id": manifestID,
 			"upload_id":   uploadID,
 		}).Warn("enqueue failed")
 		return
 	}
+	bumpRecovered(mu, result, manifestID)
+}
+
+func bumpScanned(mu *sync.Mutex, r *Result, manifestID string) {
+	mu.Lock()
+	defer mu.Unlock()
+	r.FilesScanned++
+	stats := r.PerManifest[manifestID]
+	stats.FilesScanned++
+	r.PerManifest[manifestID] = stats
+}
+
+func bumpMissing(mu *sync.Mutex, r *Result, manifestID string) {
+	mu.Lock()
+	defer mu.Unlock()
+	r.Missing++
+	stats := r.PerManifest[manifestID]
+	stats.Missing++
+	r.PerManifest[manifestID] = stats
+}
+
+func bumpRecovered(mu *sync.Mutex, r *Result, manifestID string) {
+	mu.Lock()
+	defer mu.Unlock()
+	r.Recovered++
+	stats := r.PerManifest[manifestID]
 	stats.Recovered++
-	result.Recovered++
+	r.PerManifest[manifestID] = stats
+}
+
+func appendError(mu *sync.Mutex, r *Result, msg string) {
+	mu.Lock()
+	defer mu.Unlock()
+	r.Errors = append(r.Errors, msg)
 }
 
 // markFailedOrphan flips a Registered row to FailedOrphan status. The
