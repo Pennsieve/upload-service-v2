@@ -1034,6 +1034,20 @@ data "aws_iam_policy_document" "reconcile_lambda_policy_document" {
     ]
   }
 
+  # UpdateItem on manifest_files so markFailedOrphan can flip
+  # confirmed-missing rows from Registered -> FailedOrphan (terminal state
+  # that removes them from the StatusIndex=Registered scan on future runs).
+  statement {
+    sid    = "ReconcileMarkFailedOrphan"
+    effect = "Allow"
+    actions = [
+      "dynamodb:UpdateItem",
+    ]
+    resources = [
+      aws_dynamodb_table.manifest_files_dynamo_table.arn,
+    ]
+  }
+
   # Postgres connection via RDS Proxy (for storage-bucket resolution).
   statement {
     sid    = "ReconcileRDS"
