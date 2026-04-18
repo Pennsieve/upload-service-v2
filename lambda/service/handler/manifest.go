@@ -192,6 +192,18 @@ func postManifestRoute(request events.APIGatewayV2HTTPRequest, claims *authorize
 	// Currently, the merge only happens within the files included in the call.
 	upload.PackageTypeResolver(res.Files)
 
+	// Retry path for reconciler-marked orphans: flip any incoming files that
+	// are currently FailedOrphan on the server back to Registered, so the
+	// subsequent SyncFiles call's transition table handles them like fresh
+	// retries. The cleaner long-term fix is to teach pennsieve-go-core's
+	// getWriteRequest that curStatus=FailedOrphan is an accept-retry state
+	// (alongside Registered/Failed/Unknown); until that lands this local
+	// reset keeps the end-to-end retry-on-reupload flow working.
+	if err := resetFailedOrphans(context.Background(), store.dynamodb, store.fileTableName, activeManifest.ManifestId, res.Files); err != nil {
+		log.WithError(err).WithField("manifestId", activeManifest.ManifestId).
+			Warn("resetFailedOrphans: best-effort reset encountered errors; continuing with SyncFiles")
+	}
+
 	// ADDING FILES TO MANIFEST
 	addFilesResponse, err := store.dy.SyncFiles(activeManifest.ManifestId, res.Files, nil, store.tableName, store.fileTableName)
 	if err != nil {

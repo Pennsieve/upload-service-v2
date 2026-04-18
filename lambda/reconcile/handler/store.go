@@ -202,12 +202,25 @@ func (s *store) reconcileFile(
 		Key:    aws.String(key),
 	})
 	if err != nil {
-		// Any error (NotFound, Forbidden, etc.) → file is unrecoverable via
-		// this Lambda. Log the specifics but don't spam the metric with
-		// non-missing errors — only NoSuchKey / 404 count as "missing".
+		// S3 is strongly consistent for read-after-write (since 2020), so a
+		// NotFound / 404 on HEAD means the object was never written or has
+		// been deleted. That's terminal: flip the DynamoDB row to
+		// FailedOrphan so subsequent reconciliation runs skip it (Status ==
+		// Registered query doesn't match). Other errors (5xx, throttle,
+		// permission) are transient — leave Registered so the next
+		// scheduled run retries.
 		if isS3NotFound(err) {
 			stats.Missing++
 			result.Missing++
+			if !dryRun {
+				if updErr := s.markFailedOrphan(ctx, resolved.manifest.ManifestId, uploadID); updErr != nil {
+					result.Errors = append(result.Errors, fmt.Sprintf("markFailedOrphan %s: %v", uploadID, updErr))
+					log.WithError(updErr).WithFields(log.Fields{
+						"manifest_id": resolved.manifest.ManifestId,
+						"upload_id":   uploadID,
+					}).Warn("failed to mark FailedOrphan (row remains Registered)")
+				}
+			}
 		} else {
 			result.Errors = append(result.Errors, fmt.Sprintf("HEAD %s: %v", uploadID, err))
 			log.WithError(err).WithFields(log.Fields{
@@ -242,6 +255,43 @@ func (s *store) reconcileFile(
 	}
 	stats.Recovered++
 	result.Recovered++
+}
+
+// markFailedOrphan flips a Registered row to FailedOrphan status. The
+// conditional expression guards against races — if the row transitioned
+// out of Registered between our HEAD and this update (e.g. agent completed
+// late), the update is a no-op.
+func (s *store) markFailedOrphan(ctx context.Context, manifestID, uploadID string) error {
+	_, err := s.dy.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName: aws.String(s.manifestFileTable),
+		Key: map[string]dyTypes.AttributeValue{
+			"ManifestId": &dyTypes.AttributeValueMemberS{Value: manifestID},
+			"UploadId":   &dyTypes.AttributeValueMemberS{Value: uploadID},
+		},
+		// Drop from the sparse InProgressIndex GSI since FailedOrphan is
+		// terminal. Setting Status alone isn't enough — InProgressIndex is
+		// queried by CheckUpdateManifestStatus to decide manifest completion.
+		UpdateExpression: aws.String("SET #s = :new REMOVE InProgress"),
+		ConditionExpression: aws.String("#s = :reg"),
+		ExpressionAttributeNames: map[string]string{
+			"#s": "Status",
+		},
+		ExpressionAttributeValues: map[string]dyTypes.AttributeValue{
+			":new": &dyTypes.AttributeValueMemberS{Value: manifestFile.FailedOrphan.String()},
+			":reg": &dyTypes.AttributeValueMemberS{Value: manifestFile.Registered.String()},
+		},
+	})
+	if err != nil {
+		// ConditionalCheckFailedException means the row transitioned out of
+		// Registered between HEAD and this update — treat as a benign race
+		// and return nil (nothing to do). Any other error propagates up.
+		var ccf *dyTypes.ConditionalCheckFailedException
+		if errors.As(err, &ccf) {
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 func (s *store) enqueueRecovery(ctx context.Context, bucket, key string, size int64) error {
