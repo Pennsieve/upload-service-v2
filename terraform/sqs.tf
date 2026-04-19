@@ -20,10 +20,16 @@ resource "aws_sqs_queue" "upload_trigger_deadletter_queue" {
 
 # Mapping SQS Source to Lambda Function
 resource "aws_lambda_event_source_mapping" "upload_source_mapping" {
-  event_source_arn                   = aws_sqs_queue.upload_trigger_queue.arn
-  function_name                      = aws_lambda_function.upload_lambda.arn
-  batch_size                         = 25
-  maximum_batching_window_in_seconds = 5
+  event_source_arn = aws_sqs_queue.upload_trigger_queue.arn
+  function_name    = aws_lambda_function.upload_lambda.arn
+  batch_size       = 25
+  # 1s (down from 5s): the window only matters when messages arrive
+  # slower than 25/batch_size — bulk uploads hit the batch cap first
+  # and invoke immediately regardless. For the small-drop case (trickle
+  # from eager client-side finalize) this shaves ~4s off the observed
+  # finalize->Pusher latency. Concurrency brake is still
+  # reserved_concurrent_executions=100 on the upload lambda.
+  maximum_batching_window_in_seconds = 1
   function_response_types            = ["ReportBatchItemFailures"]
 }
 
