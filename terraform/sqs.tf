@@ -51,6 +51,20 @@ resource "aws_sqs_queue_policy" "upload_trigger_sqs_policy" {
       }
     },
     {
+      "Sid": "AllowEventBridgeHeartbeat",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "events.amazonaws.com"
+      },
+      "Action": ["sqs:SendMessage"],
+      "Resource": "${aws_sqs_queue.upload_trigger_queue.arn}",
+      "Condition": {
+        "ArnEquals": {
+          "aws:SourceArn": "${aws_cloudwatch_event_rule.upload_lambda_heartbeat.arn}"
+        }
+      }
+    },
+    {
       "Effect": "Allow",
       "Action": [
         "lambda:CreateEventSourceMapping",
