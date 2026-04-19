@@ -179,6 +179,33 @@ resource "aws_cloudwatch_metric_alarm" "reconciliation_errors" {
 }
 
 ######################################
+# UPLOAD LAMBDA HEARTBEAT            #
+######################################
+#
+# Keeps the upload lambda's SQS pollers and execution environment warm.
+# Without this, idle periods (quiet hours / low traffic) scale pollers
+# down; the first finalize after a lull then waits 10-20s for Lambda to
+# scale them back up. Measured end-to-end finalize->Pusher delay dropped
+# from 10-22s to 6-8s once a steady trickle kept pollers warm.
+#
+# Fires every minute. The upload handler (store.go Handler) detects
+# heartbeat messages by their missing S3 Records and returns without
+# processing. Cost: ~43k invocations/month on a 512MB lambda — pennies.
+
+resource "aws_cloudwatch_event_rule" "upload_lambda_heartbeat" {
+  name                = "${var.environment_name}-${var.service_name}-upload-heartbeat-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
+  description         = "Pings upload_trigger_queue every minute to keep the upload lambda's SQS pollers warm."
+  schedule_expression = "rate(1 minute)"
+}
+
+resource "aws_cloudwatch_event_target" "upload_lambda_heartbeat_target" {
+  rule      = aws_cloudwatch_event_rule.upload_lambda_heartbeat.name
+  target_id = "upload-trigger-queue-heartbeat"
+  arn       = aws_sqs_queue.upload_trigger_queue.arn
+  input     = jsonencode({ heartbeat = true })
+}
+
+######################################
 # ARCHIVE-SWEEPER SCHEDULE + ALARMS  #
 ######################################
 #

@@ -375,6 +375,31 @@ func (s *UploadHandlerStore) Handler(ctx context.Context, sqsEvent events.SQSEve
 		BatchItemFailures: batchItemFailures,
 	}
 
+	// Drop heartbeat + malformed records up front. Heartbeats are emitted
+	// by the upload_lambda_heartbeat EventBridge rule (see terraform/
+	// cloudwatch.tf) to keep SQS pollers and the lambda execution
+	// environment warm during idle periods — they have no S3 Records
+	// payload and must be ack'd without processing. The same guard also
+	// hardens the Records[0] access below against any other non-S3
+	// message that might reach this queue.
+	liveRecords := sqsEvent.Records[:0]
+	heartbeatCount := 0
+	for _, m := range sqsEvent.Records {
+		parsedS3Event := events.S3Event{}
+		if err := json.Unmarshal([]byte(m.Body), &parsedS3Event); err != nil || len(parsedS3Event.Records) == 0 {
+			heartbeatCount++
+			continue
+		}
+		liveRecords = append(liveRecords, m)
+	}
+	if heartbeatCount > 0 {
+		log.Debugf("Dropped %d heartbeat/non-S3 message(s) from batch", heartbeatCount)
+	}
+	if len(liveRecords) == 0 {
+		return response, nil
+	}
+	sqsEvent.Records = liveRecords
+
 	// Map SQS Events by s3Key - This is used in case of failed imports.
 	s3KeySQSMessageMap := map[string]events.SQSMessage{}
 	for _, m := range sqsEvent.Records {
