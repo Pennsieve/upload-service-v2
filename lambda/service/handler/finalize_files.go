@@ -47,22 +47,20 @@ type finalizeRequest struct {
 	Files          []finalizeFileRequest `json:"files"`
 	// OnConflict controls how the upload lambda resolves name collisions with
 	// existing non-deleted packages under the same (dataset, folder) tuple.
-	// Values: "keepBoth" (default, auto-rename to " (N)"), "replace" (soft-
-	// delete predecessor and record provenance), "fail" (abort the import with
-	// an error listing conflicts). Empty string is treated as "keepBoth" for
-	// backward compatibility with older clients.
+	// Values: "keepBoth" (default, auto-rename to " (N)") or "replace"
+	// (soft-delete predecessor and record provenance). Empty string is
+	// treated as "keepBoth" for backward compatibility with older clients.
 	OnConflict string `json:"onConflict,omitempty"`
 }
 
 const (
 	onConflictKeepBoth = "keepBoth"
 	onConflictReplace  = "replace"
-	onConflictFail     = "fail"
 )
 
 func validOnConflict(s string) bool {
 	switch s {
-	case "", onConflictKeepBoth, onConflictReplace, onConflictFail:
+	case "", onConflictKeepBoth, onConflictReplace:
 		return true
 	default:
 		return false
@@ -99,7 +97,7 @@ func postFinalizeFilesRoute(request events.APIGatewayV2HTTPRequest, claims *auth
 		return errResp(400, fmt.Sprintf("batch_too_large: max %d files per request", maxFinalizeBatch))
 	}
 	if !validOnConflict(req.OnConflict) {
-		return errResp(400, "onConflict must be one of: keepBoth, replace, fail")
+		return errResp(400, "onConflict must be one of: keepBoth, replace")
 	}
 	resolvedOnConflict := req.OnConflict
 	if resolvedOnConflict == "" {
