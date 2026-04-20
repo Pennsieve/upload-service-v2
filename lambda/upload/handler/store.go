@@ -365,11 +365,22 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 			TraceId:        manifest.ManifestId,
 		})
 	}
+	var replacementPublishFailures int
 	if len(replacementJobs) > 0 {
 		if err := PublishDeletePackageJobs(ctx, s.sqsClient, s.jobsQueueURL, replacementJobs); err != nil {
+			replacementPublishFailures = 1
 			contextLogger.WithError(err).WithField("replacement_count", len(replacementJobs)).
 				Error("failed to enqueue one or more DeletePackageJob messages for replaced predecessors")
 		}
+		// Warn when a single ImportFiles batch generates a lot of replacements.
+		// 100 is a soft threshold — no throttling, just signal so ops can watch
+		// jobs_queue depth if this fires frequently. Pair with a CloudWatch
+		// alarm on jobs_queue ApproximateAgeOfOldestMessage.
+		if len(replacementJobs) > 100 {
+			contextLogger.WithField("replacement_count", len(replacementJobs)).
+				Warn("large replacement batch — monitor jobs_queue depth")
+		}
+		emitReplacementMetrics(len(replacementJobs), replacementPublishFailures)
 	}
 
 	// 8. Notify Pusher. Include replaced_package_id so the frontend can
