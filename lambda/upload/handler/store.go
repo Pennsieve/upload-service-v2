@@ -972,8 +972,6 @@ func conflictStrategyFromAttr(s string) conflictStrategy.Strategy {
 	switch s {
 	case "replace":
 		return conflictStrategy.Replace
-	case "fail":
-		return conflictStrategy.Fail
 	default:
 		return conflictStrategy.KeepBoth
 	}
