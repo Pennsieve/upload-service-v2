@@ -259,7 +259,7 @@ func TestMain(m *testing.M) {
 
 	mChangelogger := &test.MockChangelogger{}
 	mPusher := test.NewMockPusherClient()
-	store := NewUploadHandlerStore(pgdbClient, client, mSNS, s3Client, ManifestFileTableName, ManifestTableName, SNSTopic, mPusher, mChangelogger)
+	store := NewUploadHandlerStore(pgdbClient, client, mSNS, s3Client, ManifestFileTableName, ManifestTableName, SNSTopic, mPusher, mChangelogger, nil, "")
 
 	manifestId := "00000000-0000-0000-0000-000000000000"
 	err = populateManifest(store, manifestId, 1)
@@ -300,7 +300,7 @@ func TestUploadService(t *testing.T) {
 			mPusher := test.NewMockPusherClient()
 			mChangelogger := &test.MockChangelogger{}
 
-			store := NewUploadHandlerStore(pgdbClient, client, mSNS, s3Client, ManifestFileTableName, ManifestTableName, SNSTopic, mPusher, mChangelogger)
+			store := NewUploadHandlerStore(pgdbClient, client, mSNS, s3Client, ManifestFileTableName, ManifestTableName, SNSTopic, mPusher, mChangelogger, nil, "")
 
 			fn(t, store)
 		})

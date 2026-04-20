@@ -25,6 +25,7 @@ var (
 	SNSTopic              string
 	S3Client              *s3.Client
 	DynamoClient          *dynamodb.Client
+	SQSClient             *sqs.Client
 	ManifestTableName     string
 	ManifestFileTableName string
 	JobSQSQueueId         string
@@ -85,7 +86,8 @@ func InitializeClients() {
 	S3Client = s3.NewFromConfig(cfg)
 	SNSTopic = os.Getenv("IMPORTED_SNS_TOPIC")
 	DynamoClient = dynamodb.NewFromConfig(cfg)
-	ChangelogClient = changelog.NewClient(*sqs.NewFromConfig(cfg), JobSQSQueueId)
+	SQSClient = sqs.NewFromConfig(cfg)
+	ChangelogClient = changelog.NewClient(*SQSClient, JobSQSQueueId)
 }
 
 // Handler implements the function that is called when new SQS Events arrive.
@@ -111,7 +113,9 @@ func Handler(ctx context.Context, sqsEvent events.SQSEvent) (events.SQSEventResp
 		ManifestTableName,
 		SNSTopic,
 		PusherClient,
-		ChangelogClient)
+		ChangelogClient,
+		SQSClient,
+		JobSQSQueueId)
 
 	eventResponse, err = s.Handler(ctx, sqsEvent)
 	if err != nil {

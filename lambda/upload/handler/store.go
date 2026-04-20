@@ -11,6 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3Types "github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/google/uuid"
 	"github.com/pennsieve/pennsieve-go-core/pkg/changelog"
 	"github.com/pennsieve/pennsieve-go-core/pkg/domain"
@@ -18,6 +19,7 @@ import (
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/fileInfo/objectType"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/manifest/manifestFile"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/packageInfo"
+	"github.com/pennsieve/pennsieve-go-core/pkg/models/packageInfo/conflictStrategy"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/packageInfo/packageState"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/packageInfo/packageType"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/pgdb"
@@ -46,6 +48,8 @@ type UploadHandlerStore struct {
 	S3Client        domain.S3API
 	pusherClient    domain.PusherAPI
 	changelogClient Changelogger
+	sqsClient       *sqs.Client
+	jobsQueueURL    string
 	SNSTopic        string
 	fileTableName   string
 	tableName       string
@@ -64,7 +68,8 @@ type storageUpdateParams struct {
 // NewUploadHandlerStore returns a UploadHandlerStore object which implements the Queries
 func NewUploadHandlerStore(db *sql.DB, dy *dynamodb.Client, sns domain.SnsAPI,
 	s3 domain.S3API, fileTableName string, tableName string, snsTopic string,
-	pc domain.PusherAPI, changelogger Changelogger) *UploadHandlerStore {
+	pc domain.PusherAPI, changelogger Changelogger,
+	sqsClient *sqs.Client, jobsQueueURL string) *UploadHandlerStore {
 	return &UploadHandlerStore{
 		pgdb:            db,
 		dynamodb:        dy,
@@ -73,6 +78,8 @@ func NewUploadHandlerStore(db *sql.DB, dy *dynamodb.Client, sns domain.SnsAPI,
 		SNSTopic:        snsTopic,
 		S3Client:        s3,
 		changelogClient: changelogger,
+		sqsClient:       sqsClient,
+		jobsQueueURL:    jobsQueueURL,
 		pg:              NewUploadPgQueries(db),
 		dy:              NewUploadDyQueries(dy),
 		fileTableName:   fileTableName,
@@ -131,7 +138,7 @@ func (s *UploadHandlerStore) execTx(ctx context.Context, fn func(queries *Upload
 // agent uploaded straight to the storage bucket), so SNS publish is skipped —
 // there's nothing for the Fargate move task to do.
 func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, orgId int, user pgdb.User,
-	files []uploadFile.UploadFile, manifest *dydb.ManifestTable, directToStorage bool) error {
+	files []uploadFile.UploadFile, manifest *dydb.ManifestTable, directToStorage bool, onConflict string) error {
 
 	contextLogger := log.WithFields(log.Fields{
 		"service":     "Upload-service",
@@ -189,8 +196,9 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 	}
 
 	// 3. Create packages and Files in Transaction
+	strategy := conflictStrategyFromAttr(onConflict)
 	res, err = s.execTx(ctx, func(qtx *UploadPgQueries) (interface{}, error) {
-		packages, err := qtx.AddPackages(context.Background(), pkgParams)
+		packages, err := qtx.AddPackagesWithConflict(context.Background(), pkgParams, strategy)
 		if err != nil {
 			contextLogger.Error("Error creating packages: ", err)
 			return nil, err
@@ -337,17 +345,48 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 		contextLogger.Error("Error with notifying Changelog about imported records: ", err)
 	}
 
-	// 7. Notify Pusher
-	chName := strings.ReplaceAll(manifest.DatasetNodeId, "N:dataset:", "dataset-")
-	var pusherData []ps.UploadMessageItem
+	// 7. Publish DeletePackageJob for every replaced predecessor so the Scala
+	// jobs service can run the async S3 asset cleanup. The DB-level soft-
+	// delete (state=DELETING, name prefix) + storage decrement is already
+	// done by pennsieve-go-core's AddPackagesWithConflict inside the import
+	// transaction; the queue publish is the side effect the library leaves
+	// to us.
 	for _, pkg := range result.packages {
-		packageInfo := ps.UploadMessageItem{
-			Name:     pkg.Name,
-			NodeId:   pkg.NodeId,
-			ParentId: pkg.ParentId,
-			UploadId: pkg.ImportId,
+		if !pkg.ReplacesPackageId.Valid {
+			continue
 		}
-		pusherData = append(pusherData, packageInfo)
+		if err := PublishDeletePackageJob(
+			ctx,
+			s.sqsClient,
+			s.jobsQueueURL,
+			pkg.ReplacesPackageId.Int64,
+			orgId,
+			user.NodeId,
+			manifest.ManifestId,
+		); err != nil {
+			contextLogger.WithError(err).WithField("predecessor_id", pkg.ReplacesPackageId.Int64).
+				Error("failed to enqueue DeletePackageJob for replaced predecessor")
+		}
+	}
+
+	// 8. Notify Pusher. Include replaced_package_id so the frontend can
+	// remove the replaced row from the files table instead of rendering both
+	// the old (now trashed) and new packages side by side.
+	chName := strings.ReplaceAll(manifest.DatasetNodeId, "N:dataset:", "dataset-")
+	var pusherData []uploadPusherItem
+	for _, pkg := range result.packages {
+		item := uploadPusherItem{
+			UploadMessageItem: ps.UploadMessageItem{
+				Name:     pkg.Name,
+				NodeId:   pkg.NodeId,
+				ParentId: pkg.ParentId,
+				UploadId: pkg.ImportId,
+			},
+		}
+		if pkg.ReplacesPackageId.Valid {
+			item.ReplacedPackageId = &pkg.ReplacesPackageId.Int64
+		}
+		pusherData = append(pusherData, item)
 	}
 	err = s.pusherClient.Trigger(chName, "upload-event", pusherData)
 	if err != nil {
@@ -355,6 +394,16 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 	}
 
 	return nil
+}
+
+// uploadPusherItem extends the shared UploadMessageItem with the
+// replaced_package_id field that only the replace-on-conflict flow
+// populates. Kept local to upload-service-v2 to avoid churning the
+// shared pusher model for a field the rest of the platform does not
+// read. Frontend treats the field as optional.
+type uploadPusherItem struct {
+	ps.UploadMessageItem
+	ReplacedPackageId *int64 `json:"replaced_package_id,omitempty"`
 }
 
 // Handler is the primary entrypoint that handles importing files and is called by the Lambda
@@ -402,11 +451,17 @@ func (s *UploadHandlerStore) Handler(ctx context.Context, sqsEvent events.SQSEve
 
 	// Map SQS Events by s3Key - This is used in case of failed imports.
 	s3KeySQSMessageMap := map[string]events.SQSMessage{}
+	// s3KeyToOnConflict carries the OnConflict MessageAttribute (set by the
+	// service lambda's finalize handler) from the SQS message to the per-
+	// manifest ImportFiles call. Missing attribute = "keepBoth" for backward
+	// compatibility with legacy S3-triggered uploads that predate this flag.
+	s3KeyToOnConflict := map[string]string{}
 	for _, m := range sqsEvent.Records {
 		parsedS3Event := events.S3Event{}
 		_ = json.Unmarshal([]byte(m.Body), &parsedS3Event)
 		s3Key := parsedS3Event.Records[0].S3.Object.Key
 		s3KeySQSMessageMap[s3Key] = m
+		s3KeyToOnConflict[s3Key] = extractOnConflictAttr(m)
 	}
 
 	// 1. Parse UploadEntries
@@ -499,7 +554,13 @@ func (s *UploadHandlerStore) Handler(ctx context.Context, sqsEvent events.SQSEve
 			targetStatus = manifestFile.Finalized
 		}
 
-		err = s.ImportFiles(ctx, int(manifest.DatasetId), int(manifest.OrganizationId), *user, uploadFilesForManifest, manifest, direct)
+		// Resolve the manifest-wide onConflict strategy from the SQS message
+		// attributes. All messages for a single manifest in one batch should
+		// share the same value (set at finalize time); we take the first and
+		// log if anything in the group differs.
+		onConflict := resolveOnConflictForManifest(uploadFilesForManifest, s3KeyToOnConflict, contextLogger)
+
+		err = s.ImportFiles(ctx, int(manifest.DatasetId), int(manifest.OrganizationId), *user, uploadFilesForManifest, manifest, direct, onConflict)
 		if err != nil {
 			contextLogger.Error("Error in batch create packages: ", err)
 
@@ -507,7 +568,7 @@ func (s *UploadHandlerStore) Handler(ctx context.Context, sqsEvent events.SQSEve
 			// This will ensure that only the files that cause the failure will be returned to the sqs queue
 			for _, f := range uploadFilesForManifest {
 				singleFileArr := []uploadFile.UploadFile{f}
-				err = s.ImportFiles(ctx, int(manifest.DatasetId), int(manifest.OrganizationId), *user, singleFileArr, manifest, direct)
+				err = s.ImportFiles(ctx, int(manifest.DatasetId), int(manifest.OrganizationId), *user, singleFileArr, manifest, direct, onConflict)
 				if err != nil {
 					batchItemFailures = addToFailedFiles(singleFileArr, s3KeySQSMessageMap, batchItemFailures)
 					contextLogger.WithFields(
@@ -846,4 +907,60 @@ func addToFailedFiles(files []uploadFile.UploadFile, s3KeySQSMessageMap map[stri
 
 	}
 	return failures
+}
+
+// extractOnConflictAttr returns the OnConflict MessageAttribute from an SQS
+// message, or "keepBoth" when the attribute is missing or empty. Missing
+// attribute is the backward-compatible default: legacy S3-triggered uploads
+// and pre-v1.16 finalize messages never set this attribute.
+func extractOnConflictAttr(m events.SQSMessage) string {
+	attr, ok := m.MessageAttributes["OnConflict"]
+	if !ok {
+		return "keepBoth"
+	}
+	if attr.StringValue == nil || *attr.StringValue == "" {
+		return "keepBoth"
+	}
+	return *attr.StringValue
+}
+
+// resolveOnConflictForManifest picks the onConflict value for a manifest's
+// file group. Normally every message in the group carries the same value
+// (set at finalize time); we take the first file's value and log a warning
+// if a different value shows up within the group. That's defensive against
+// a client that somehow issues two concurrent finalize calls for the same
+// manifest with different conflict strategies — unlikely, but we don't want
+// a silent divergence if it happens.
+func resolveOnConflictForManifest(files []uploadFile.UploadFile, s3KeyToOnConflict map[string]string, logger *log.Entry) string {
+	if len(files) == 0 {
+		return "keepBoth"
+	}
+	chosen := s3KeyToOnConflict[files[0].S3Key]
+	if chosen == "" {
+		chosen = "keepBoth"
+	}
+	for _, f := range files[1:] {
+		if v, ok := s3KeyToOnConflict[f.S3Key]; ok && v != "" && v != chosen {
+			logger.WithFields(log.Fields{
+				"chosen": chosen,
+				"other":  v,
+			}).Warn("mixed onConflict values within manifest batch; using first-observed value")
+			break
+		}
+	}
+	return chosen
+}
+
+// conflictStrategyFromAttr maps the SQS MessageAttribute string to the typed
+// conflictStrategy.Strategy consumed by pennsieve-go-core. Unknown values
+// fall back to KeepBoth (legacy behavior) to keep older clients working.
+func conflictStrategyFromAttr(s string) conflictStrategy.Strategy {
+	switch s {
+	case "replace":
+		return conflictStrategy.Replace
+	case "fail":
+		return conflictStrategy.Fail
+	default:
+		return conflictStrategy.KeepBoth
+	}
 }
