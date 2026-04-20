@@ -345,27 +345,30 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 		contextLogger.Error("Error with notifying Changelog about imported records: ", err)
 	}
 
-	// 7. Publish DeletePackageJob for every replaced predecessor so the Scala
-	// jobs service can run the async S3 asset cleanup. The DB-level soft-
-	// delete (state=DELETING, name prefix) + storage decrement is already
-	// done by pennsieve-go-core's AddPackagesWithConflict inside the import
-	// transaction; the queue publish is the side effect the library leaves
-	// to us.
+	// 7. Publish a DeletePackageJob for every replaced predecessor so the
+	// Scala jobs service can run the async S3 asset cleanup. The DB-level
+	// soft-delete (state=DELETING, name prefix) + storage decrement is
+	// already done by pennsieve-go-core's AddPackagesWithConflict inside the
+	// import transaction; the queue publish is the side effect the library
+	// leaves to us. Batched via SendMessageBatch — at 100k-file replace
+	// scale this drops the SQS round-trip count ~10x vs per-message
+	// SendMessage.
+	var replacementJobs []DeletePackageJobParams
 	for _, pkg := range result.packages {
 		if !pkg.ReplacesPackageId.Valid {
 			continue
 		}
-		if err := PublishDeletePackageJob(
-			ctx,
-			s.sqsClient,
-			s.jobsQueueURL,
-			pkg.ReplacesPackageId.Int64,
-			orgId,
-			user.NodeId,
-			manifest.ManifestId,
-		); err != nil {
-			contextLogger.WithError(err).WithField("predecessor_id", pkg.ReplacesPackageId.Int64).
-				Error("failed to enqueue DeletePackageJob for replaced predecessor")
+		replacementJobs = append(replacementJobs, DeletePackageJobParams{
+			PackageId:      pkg.ReplacesPackageId.Int64,
+			OrganizationId: orgId,
+			UserNodeId:     user.NodeId,
+			TraceId:        manifest.ManifestId,
+		})
+	}
+	if len(replacementJobs) > 0 {
+		if err := PublishDeletePackageJobs(ctx, s.sqsClient, s.jobsQueueURL, replacementJobs); err != nil {
+			contextLogger.WithError(err).WithField("replacement_count", len(replacementJobs)).
+				Error("failed to enqueue one or more DeletePackageJob messages for replaced predecessors")
 		}
 	}
 

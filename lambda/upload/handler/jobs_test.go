@@ -20,6 +20,8 @@ import (
 // If this test fails, the Scala jobs service will reject our messages
 // silently (they go to the DLQ) and S3 asset cleanup won't fire after a
 // replace. See pennsieve-api/core/src/main/scala/com/pennsieve/messages/BackgroundJob.scala.
+// The envelope shape is the body of each SendMessageBatch entry — batching
+// at the SQS transport layer doesn't change the per-message JSON.
 func TestDeletePackageJobEnvelope(t *testing.T) {
 	payload := handler.DeletePackageJobEnvelope{
 		DeletePackageJob: handler.DeletePackageJobInner{
