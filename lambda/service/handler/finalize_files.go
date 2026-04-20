@@ -45,6 +45,28 @@ type finalizeFileRequest struct {
 type finalizeRequest struct {
 	ManifestNodeID string                `json:"manifestNodeId"`
 	Files          []finalizeFileRequest `json:"files"`
+	// OnConflict controls how the upload lambda resolves name collisions with
+	// existing non-deleted packages under the same (dataset, folder) tuple.
+	// Values: "keepBoth" (default, auto-rename to " (N)"), "replace" (soft-
+	// delete predecessor and record provenance), "fail" (abort the import with
+	// an error listing conflicts). Empty string is treated as "keepBoth" for
+	// backward compatibility with older clients.
+	OnConflict string `json:"onConflict,omitempty"`
+}
+
+const (
+	onConflictKeepBoth = "keepBoth"
+	onConflictReplace  = "replace"
+	onConflictFail     = "fail"
+)
+
+func validOnConflict(s string) bool {
+	switch s {
+	case "", onConflictKeepBoth, onConflictReplace, onConflictFail:
+		return true
+	default:
+		return false
+	}
 }
 
 type finalizeResult struct {
@@ -75,6 +97,13 @@ func postFinalizeFilesRoute(request events.APIGatewayV2HTTPRequest, claims *auth
 	}
 	if len(req.Files) > maxFinalizeBatch {
 		return errResp(400, fmt.Sprintf("batch_too_large: max %d files per request", maxFinalizeBatch))
+	}
+	if !validOnConflict(req.OnConflict) {
+		return errResp(400, "onConflict must be one of: keepBoth, replace, fail")
+	}
+	resolvedOnConflict := req.OnConflict
+	if resolvedOnConflict == "" {
+		resolvedOnConflict = onConflictKeepBoth
 	}
 	// Per-file input validation. Bad inputs fail the whole batch — we don't
 	// want to quietly drop malformed entries because the client may think they
@@ -224,7 +253,7 @@ func postFinalizeFilesRoute(request events.APIGatewayV2HTTPRequest, claims *auth
 	// VerifyFinalizedStatus ticker is the belt-and-suspenders consistency
 	// check.
 	if len(toImport) > 0 {
-		failed, err := enqueueToUploadQueue(ctx, store.sqsClient, uploadTriggerQueueURL, resolution.StorageBucket, keyPrefix, toImport)
+		failed, err := enqueueToUploadQueue(ctx, store.sqsClient, uploadTriggerQueueURL, resolution.StorageBucket, keyPrefix, toImport, resolvedOnConflict)
 		if err != nil {
 			log.WithError(err).Error("failed to enqueue to upload queue")
 			for _, f := range toImport {
@@ -331,6 +360,14 @@ func fetchManifestFileStatuses(
 // 256 KB cap. 250 files -> 25 batches, which with minimal round-trip latency
 // totals well under 500 ms even sequentially; we fan out to keep it under
 // ~100 ms.
+// OnConflictAttrName is the SQS MessageAttribute key used to carry the
+// upload conflict strategy from the finalize endpoint to the upload
+// lambda. Exported so tests and the upload lambda can reference the same
+// constant. Missing attribute on the consumer side is treated as keepBoth
+// for backward compatibility with messages enqueued before this flag
+// existed.
+const OnConflictAttrName = "OnConflict"
+
 func enqueueToUploadQueue(
 	ctx context.Context,
 	sqsClient *sqs.Client,
@@ -338,6 +375,7 @@ func enqueueToUploadQueue(
 	bucket string,
 	keyPrefix string,
 	files []finalizeFileRequest,
+	onConflict string,
 ) (map[string]struct{}, error) {
 	const sqsBatchLimit = 10
 	const sendConcurrency = 5
@@ -380,6 +418,12 @@ func enqueueToUploadQueue(
 				entries = append(entries, sqsTypes.SendMessageBatchRequestEntry{
 					Id:          aws.String(id),
 					MessageBody: aws.String(string(body)),
+					MessageAttributes: map[string]sqsTypes.MessageAttributeValue{
+						OnConflictAttrName: {
+							DataType:    aws.String("String"),
+							StringValue: aws.String(onConflict),
+						},
+					},
 				})
 			}
 
