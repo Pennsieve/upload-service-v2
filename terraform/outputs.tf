@@ -33,3 +33,7 @@ output "manifest_table_arn" {
 output "manifest_table_name" {
   value = aws_dynamodb_table.manifest_dynamo_table.name
 }
+
+output "file_finalized_topic_arn" {
+  value = aws_sns_topic.file_finalized_topic.arn
+}
