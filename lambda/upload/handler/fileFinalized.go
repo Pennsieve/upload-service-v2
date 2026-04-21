@@ -41,23 +41,34 @@ type FileFinalizedEvent struct {
 	TraceID        string `json:"traceId"`
 }
 
-// complianceTierCache is a process-wide map[orgId]tier. An org's
-// compliance tier changes at most once per deploy (and on change the
-// lambda sandboxes recycle naturally), so we never expire entries.
+// complianceTierCache is a process-wide cache of per-org compliance
+// tier. Entries expire after complianceTierTTL so that if an ops change
+// flips a workspace from standard → hipaa, warm Lambda sandboxes pick
+// up the new tier within the TTL window rather than waiting for a cold
+// restart.
+const complianceTierTTL = 10 * time.Minute
+
+type complianceTierEntry struct {
+	tier      string
+	expiresAt time.Time
+}
+
 var (
-	complianceTierCache   = map[int]string{}
+	complianceTierCache   = map[int]complianceTierEntry{}
 	complianceTierCacheMu sync.RWMutex
 )
 
 // getComplianceTier returns the cached compliance_tier for an org,
-// loading it from pennsieve.organizations on first miss. Unknown orgs
-// default to "standard" so missing rows don't block uploads.
+// loading it from pennsieve.organizations on miss or expiry. Unknown
+// orgs default to "standard" so missing rows don't block uploads.
 func (s *UploadHandlerStore) getComplianceTier(ctx context.Context, orgID int) string {
+	now := time.Now()
+
 	complianceTierCacheMu.RLock()
-	tier, ok := complianceTierCache[orgID]
+	entry, ok := complianceTierCache[orgID]
 	complianceTierCacheMu.RUnlock()
-	if ok {
-		return tier
+	if ok && now.Before(entry.expiresAt) {
+		return entry.tier
 	}
 
 	var loaded string
@@ -71,7 +82,10 @@ func (s *UploadHandlerStore) getComplianceTier(ctx context.Context, orgID int) s
 	}
 
 	complianceTierCacheMu.Lock()
-	complianceTierCache[orgID] = loaded
+	complianceTierCache[orgID] = complianceTierEntry{
+		tier:      loaded,
+		expiresAt: now.Add(complianceTierTTL),
+	}
 	complianceTierCacheMu.Unlock()
 	return loaded
 }
