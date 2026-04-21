@@ -23,6 +23,7 @@ var (
 	ChangelogClient       *changelog.Client
 	SNSClient             *sns.Client
 	SNSTopic              string
+	FileFinalizedTopic    string
 	S3Client              *s3.Client
 	DynamoClient          *dynamodb.Client
 	SQSClient             *sqs.Client
@@ -48,6 +49,7 @@ func init() {
 	ManifestTableName = os.Getenv("MANIFEST_TABLE")
 	JobSQSQueueId = os.Getenv("JOBS_QUEUE_ID")
 	SNSTopic = os.Getenv("IMPORTED_SNS_TOPIC")
+	FileFinalizedTopic = os.Getenv("FILE_FINALIZED_TOPIC")
 }
 
 // InitializeClients initializes the clients required by the Handler. Depends on values
@@ -85,6 +87,7 @@ func InitializeClients() {
 	SNSClient = sns.NewFromConfig(cfg)
 	S3Client = s3.NewFromConfig(cfg)
 	SNSTopic = os.Getenv("IMPORTED_SNS_TOPIC")
+	FileFinalizedTopic = os.Getenv("FILE_FINALIZED_TOPIC")
 	DynamoClient = dynamodb.NewFromConfig(cfg)
 	SQSClient = sqs.NewFromConfig(cfg)
 	ChangelogClient = changelog.NewClient(*SQSClient, JobSQSQueueId)
@@ -112,6 +115,7 @@ func Handler(ctx context.Context, sqsEvent events.SQSEvent) (events.SQSEventResp
 		ManifestFileTableName,
 		ManifestTableName,
 		SNSTopic,
+		FileFinalizedTopic,
 		PusherClient,
 		ChangelogClient,
 		SQSClient,

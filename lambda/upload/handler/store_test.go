@@ -41,7 +41,7 @@ func TestStore(t *testing.T) {
 			mChangelogger := &test.MockChangelogger{}
 
 			store := NewUploadHandlerStore(pgdbClient, client, mSNS, mS3,
-				ManifestFileTableName, ManifestTableName, SNSTopic, mPusher, mChangelogger, nil, "")
+				ManifestFileTableName, ManifestTableName, SNSTopic, "", mPusher, mChangelogger, nil, "")
 
 			fn(t, store)
 		})
@@ -236,7 +236,7 @@ func TestStoreWithPG(t *testing.T) {
 	orgID := 1
 
 	store := NewUploadHandlerStore(pgdbClient, client, mSNS, mS3,
-		ManifestFileTableName, ManifestTableName, SNSTopic, mPusher, mChangelogger, nil, "")
+		ManifestFileTableName, ManifestTableName, SNSTopic, "", mPusher, mChangelogger, nil, "")
 	require.NoError(t, store.WithOrg(orgID))
 
 	for scenario, fn := range map[string]func(

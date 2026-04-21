@@ -33,7 +33,7 @@ func TestS3(t *testing.T) {
 			mPusher := test.NewMockPusherClient()
 			mChangelogger := &test.MockChangelogger{}
 
-			store := NewUploadHandlerStore(pgdbClient, client, mSNS, mS3, ManifestFileTableName, ManifestTableName, SNSTopic, mPusher, mChangelogger, nil, "")
+			store := NewUploadHandlerStore(pgdbClient, client, mSNS, mS3, ManifestFileTableName, ManifestTableName, SNSTopic, "", mPusher, mChangelogger, nil, "")
 
 			fn(t, store)
 		})

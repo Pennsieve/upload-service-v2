@@ -40,19 +40,20 @@ var seenFileUUIDs = map[uuid.UUID]int{}
 
 // UploadHandlerStore provides the Queries interface and a db instance.
 type UploadHandlerStore struct {
-	pg              *UploadPgQueries
-	dy              *UploadDyQueries
-	pgdb            *sql.DB
-	dynamodb        *dynamodb.Client
-	SNSClient       domain.SnsAPI
-	S3Client        domain.S3API
-	pusherClient    domain.PusherAPI
-	changelogClient Changelogger
-	sqsClient       *sqs.Client
-	jobsQueueURL    string
-	SNSTopic        string
-	fileTableName   string
-	tableName       string
+	pg                 *UploadPgQueries
+	dy                 *UploadDyQueries
+	pgdb               *sql.DB
+	dynamodb           *dynamodb.Client
+	SNSClient          domain.SnsAPI
+	S3Client           domain.S3API
+	pusherClient       domain.PusherAPI
+	changelogClient    Changelogger
+	sqsClient          *sqs.Client
+	jobsQueueURL       string
+	SNSTopic           string
+	FileFinalizedTopic string
+	fileTableName      string
+	tableName          string
 }
 
 type PackagesAndFiles struct {
@@ -68,22 +69,24 @@ type storageUpdateParams struct {
 // NewUploadHandlerStore returns a UploadHandlerStore object which implements the Queries
 func NewUploadHandlerStore(db *sql.DB, dy *dynamodb.Client, sns domain.SnsAPI,
 	s3 domain.S3API, fileTableName string, tableName string, snsTopic string,
+	fileFinalizedTopic string,
 	pc domain.PusherAPI, changelogger Changelogger,
 	sqsClient *sqs.Client, jobsQueueURL string) *UploadHandlerStore {
 	return &UploadHandlerStore{
-		pgdb:            db,
-		dynamodb:        dy,
-		pusherClient:    pc,
-		SNSClient:       sns,
-		SNSTopic:        snsTopic,
-		S3Client:        s3,
-		changelogClient: changelogger,
-		sqsClient:       sqsClient,
-		jobsQueueURL:    jobsQueueURL,
-		pg:              NewUploadPgQueries(db),
-		dy:              NewUploadDyQueries(dy),
-		fileTableName:   fileTableName,
-		tableName:       tableName,
+		pgdb:               db,
+		dynamodb:           dy,
+		pusherClient:       pc,
+		SNSClient:          sns,
+		SNSTopic:           snsTopic,
+		FileFinalizedTopic: fileFinalizedTopic,
+		S3Client:           s3,
+		changelogClient:    changelogger,
+		sqsClient:          sqsClient,
+		jobsQueueURL:       jobsQueueURL,
+		pg:                 NewUploadPgQueries(db),
+		dy:                 NewUploadDyQueries(dy),
+		fileTableName:      fileTableName,
+		tableName:          tableName,
 	}
 }
 
@@ -310,6 +313,13 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 		if err != nil {
 			contextLogger.Error("Error with notifying SNS that records are imported.", err)
 		}
+	}
+
+	// 5b. Fan-out FileFinalized events to downstream consumers (scan-service, etc.).
+	// Runs for both direct-to-storage and Fargate-moved files. Failure here is logged
+	// but does not fail ImportFiles — the file is already committed in Postgres.
+	if err := s.PublishFileFinalized(ctx, result.files, manifest); err != nil {
+		contextLogger.Error("Error publishing FileFinalized events.", err)
 	}
 
 	// 6. Update activity Log
