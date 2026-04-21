@@ -262,7 +262,8 @@ data "aws_iam_policy_document" "upload_service_v2_iam_policy_document" {
     ]
 
     resources = [
-      aws_sns_topic.imported_file_sns_topic.arn
+      aws_sns_topic.imported_file_sns_topic.arn,
+      aws_sns_topic.file_finalized_topic.arn
     ]
   }
 
