@@ -38,7 +38,7 @@ func TestDyQueries(t *testing.T) {
 			mS3 := test.MockS3{}
 			mPusher := test.NewMockPusherClient()
 			mChangelogger := &test.MockChangelogger{}
-			store := NewUploadHandlerStore(pgdbClient, client, mSNS, mS3, ManifestFileTableName, ManifestTableName, SNSTopic, mPusher, mChangelogger, nil, "")
+			store := NewUploadHandlerStore(pgdbClient, client, mSNS, mS3, ManifestFileTableName, ManifestTableName, SNSTopic, "", mPusher, mChangelogger, nil, "")
 
 			fn(t, store)
 		})
