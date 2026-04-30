@@ -127,59 +127,53 @@ func (s *ArchiverStore) writeManifestToS3(ctx context.Context, fileName string, 
 	return archiverS3Key, nil
 }
 
-// removeManifestFiles removes all manifestFile entries in the manifestFileTable for a particular manifest
+// removeManifestFiles removes all manifestFile entries in the manifestFileTable
+// for a particular manifest. Returns an error if any page fails to delete after
+// retries — the caller MUST propagate this so AWS Lambda's async-retry policy
+// can re-attempt. Previously the inner error was logged-and-swallowed, which
+// produced silent orphans (Status=Archived manifest with file rows still
+// present) whenever DynamoDB throttling outlasted the SDK's transparent
+// retries during bulk archival runs.
 func (s *ArchiverStore) removeManifestFiles(ctx context.Context, manifestId string) error {
-
-	var err error
-	var files []dydbModels.ManifestFileTable
 	var startKey map[string]types.AttributeValue
-	startKey = nil
 
-	// Get First Page
-	files, startKey, err = s.dy.GetFilesPaginated(ctx, s.fileTableName, manifestId, sql.NullString{Valid: false}, 25, startKey)
-	if err != nil {
-		return err
-	}
-
-	if len(files) > 0 {
-		err = removeFilesFromManifest(ctx, files, s.fileTableName, manifestId)
-		if err != nil {
-			log.WithFields(
-				log.Fields{
-					"manifest_id": manifestId,
-				},
-			).Error("Error removing files from manifest: ", err)
-		}
-	}
-
-	for len(startKey) != 0 {
-		files, startKey, err = s.dy.GetFilesPaginated(ctx, s.fileTableName, manifestId, sql.NullString{Valid: false}, 25, startKey)
+	for {
+		files, next, err := s.dy.GetFilesPaginated(ctx, s.fileTableName, manifestId, sql.NullString{Valid: false}, 25, startKey)
 		if err != nil {
 			return err
 		}
 
 		if len(files) > 0 {
-			err = removeFilesFromManifest(ctx, files, s.fileTableName, manifestId)
-			if err != nil {
-				log.WithFields(
-					log.Fields{
-						"manifest_id": manifestId,
-					},
-				).Error("Error removing files from manifest: ", err)
+			if err := removeFilesFromManifest(ctx, files, s.fileTableName, manifestId); err != nil {
+				log.WithFields(log.Fields{"manifest_id": manifestId}).
+					Error("Error removing files from manifest: ", err)
+				return err
 			}
 		}
 
+		if len(next) == 0 {
+			return nil
+		}
+		startKey = next
 	}
-
-	return nil
-
 }
 
-// removeFilesFromManifest removes file-rows from the dynamodb manifest-file-table
+// removeFilesFromManifest removes file-rows from the dynamodb manifest-file-table.
+// Retries up to nrRetries times on transient BatchWriteItem failures (e.g.
+// ProvisionedThroughputExceededException after the SDK's own retries are
+// exhausted) AND on UnprocessedItems, with exponential backoff. Returns an
+// error if rows remain after all retries — the caller propagates this so
+// AWS Lambda's async-retry can re-attempt instead of silently leaving the
+// manifest's file rows behind a Status=Archived flag.
+//
+// Two prior bugs lived here:
+//   - The initial BatchWriteItem call returned its error directly, bypassing
+//     the inner UnprocessedItems retry buffer. A hard throttle on the first
+//     call was therefore unrecoverable from within the lambda.
+//   - The inner retry's error path used Fatalln (os.Exit(1)) which terminated
+//     the lambda runtime instead of returning a recoverable error.
 func removeFilesFromManifest(ctx context.Context, files []dydbModels.ManifestFileTable, fileTableName string, manifestId string) error {
 	var writeRequests []types.WriteRequest
-
-	// Iterate over file-rows and create delete request
 	for _, f := range files {
 		data, err := attributevalue.MarshalMap(dydbModels.ManifestFilePrimaryKey{
 			ManifestId: manifestId,
@@ -188,71 +182,37 @@ func removeFilesFromManifest(ctx context.Context, files []dydbModels.ManifestFil
 		if err != nil {
 			return err
 		}
+		writeRequests = append(writeRequests, types.WriteRequest{
+			DeleteRequest: &types.DeleteRequest{Key: data},
+		})
+	}
 
-		request := types.WriteRequest{
-			DeleteRequest: &types.DeleteRequest{
-				Key: data,
-			},
+	const nrRetries = 5
+	unProcessed := map[string][]types.WriteRequest{fileTableName: writeRequests}
+
+	for retryIndex := 0; len(unProcessed[fileTableName]) > 0; retryIndex++ {
+		if retryIndex == nrRetries {
+			return fmt.Errorf("manifest %s: %d rows still unprocessed after %d retries",
+				manifestId, len(unProcessed[fileTableName]), nrRetries)
+		}
+		if retryIndex > 0 {
+			time.Sleep(time.Duration(200*(1+retryIndex)) * time.Millisecond)
 		}
 
-		writeRequests = append(writeRequests, request)
-	}
-
-	// Create RequestItems for DynamoDB with all deleteRequests
-	requestItems := map[string][]types.WriteRequest{
-		fileTableName: writeRequests,
-	}
-
-	params := dynamodb.BatchWriteItemInput{
-		RequestItems:                requestItems,
-		ReturnConsumedCapacity:      "NONE",
-		ReturnItemCollectionMetrics: "NONE",
-	}
-
-	// Write files to upload file dynamodb table
-	data, err := store.dynamodb.BatchWriteItem(ctx, &params)
-	if err != nil {
-		log.WithFields(
-			log.Fields{
-				"manifest_id": manifestId,
-			},
-		).Error("Unable to Batch Delete: ", err)
-		return err
-	}
-
-	// Support retries in case delete does not delete all rows.
-	nrRetries := 5
-	retryIndex := 0
-	unProcessedItems := data.UnprocessedItems
-	for len(unProcessedItems) > 0 {
-		params = dynamodb.BatchWriteItemInput{
-			RequestItems:                unProcessedItems,
+		data, err := store.dynamodb.BatchWriteItem(ctx, &dynamodb.BatchWriteItemInput{
+			RequestItems:                unProcessed,
 			ReturnConsumedCapacity:      "NONE",
 			ReturnItemCollectionMetrics: "NONE",
-		}
-
-		data, err = store.dynamodb.BatchWriteItem(context.Background(), &params)
+		})
 		if err != nil {
-			log.WithFields(
-				log.Fields{
-					"manifest_id": manifestId,
-				},
-			).Fatalln("Unable to Batch Write: ", err)
+			log.WithFields(log.Fields{"manifest_id": manifestId, "retry": retryIndex}).
+				Warn("BatchWriteItem failed, will retry: ", err)
+			continue // keep unProcessed unchanged; retry the whole batch
 		}
-
-		unProcessedItems = data.UnprocessedItems
-
-		retryIndex++
-		if retryIndex == nrRetries {
-			log.WithFields(
-				log.Fields{
-					"manifest_id": manifestId,
-				},
-			).Warn("Dynamodb did not delete all files associated with the manifest.")
-			break
+		if len(data.UnprocessedItems[fileTableName]) == 0 {
+			return nil
 		}
-		time.Sleep(time.Duration(200*(1+retryIndex)) * time.Millisecond)
-
+		unProcessed = data.UnprocessedItems
 	}
 
 	return nil
