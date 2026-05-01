@@ -39,13 +39,24 @@ type archiveEvent struct {
 	RemoveFromDB   bool   `json:"remove_from_db"`
 }
 
-// run scans manifest_table with a FilterExpression bounding by age and
-// Status, then invokes archive_lambda async for each eligible manifest up
-// to maxInvokesPerRun.
+// nonArchivedStatuses enumerates every manifest.Status value except
+// Archived. The sweeper Queries each one against ManifestStatusIndex to
+// build the eligible-for-archival set. New non-Archived statuses MUST be
+// added here or they will silently never get archived.
+var nonArchivedStatuses = []manifest.Status{
+	manifest.Initiated,
+	manifest.Uploading,
+	manifest.Completed,
+	manifest.Cancelled,
+}
+
+// run queries ManifestStatusIndex once per non-Archived status, picking up
+// rows older than MaxAgeDays, and invokes archive_lambda async for each
+// eligible manifest up to maxInvokesPerRun.
 //
-// Uses Scan (not Query) because the manifest table has no index on
-// DateCreated/Status. The table is small (one row per manifest) relative to
-// manifest_files, so a full scan is acceptable for a daily job.
+// Replaces the previous Scan-with-FilterExpression approach. With the GSI
+// on (Status, DateCreated), each Query reads only the rows that match — no
+// per-row filter overhead, and no read charge for archived items.
 func (s *sweeper) run(ctx context.Context) (Result, error) {
 	res := Result{
 		DryRun:     s.dryRun,
@@ -54,25 +65,42 @@ func (s *sweeper) run(ctx context.Context) (Result, error) {
 
 	cutoff := time.Now().Add(-time.Duration(s.maxAgeDays) * 24 * time.Hour).Unix()
 
-	p := dynamodb.NewScanPaginator(s.dy, &dynamodb.ScanInput{
-		TableName: aws.String(s.manifestTable),
-		FilterExpression: aws.String(
-			"DateCreated < :cutoff AND #s <> :archived",
-		),
+	for _, status := range nonArchivedStatuses {
+		done, err := s.runForStatus(ctx, status, cutoff, &res)
+		if err != nil {
+			return res, err
+		}
+		if done {
+			return res, nil
+		}
+	}
+
+	return res, nil
+}
+
+// runForStatus pages through ManifestStatusIndex for a single status,
+// invoking archive_lambda for each eligible row. Returns done=true if the
+// caller should stop (MaxInvokesPerRun reached); err is set only on
+// unrecoverable Query failures.
+func (s *sweeper) runForStatus(ctx context.Context, status manifest.Status, cutoff int64, res *Result) (bool, error) {
+	p := dynamodb.NewQueryPaginator(s.dy, &dynamodb.QueryInput{
+		TableName:              aws.String(s.manifestTable),
+		IndexName:              aws.String("ManifestStatusIndex"),
+		KeyConditionExpression: aws.String("#s = :status AND DateCreated < :cutoff"),
 		ExpressionAttributeNames: map[string]string{
 			"#s": "Status",
 		},
 		ExpressionAttributeValues: map[string]dyTypes.AttributeValue{
-			":cutoff":   &dyTypes.AttributeValueMemberN{Value: fmt.Sprintf("%d", cutoff)},
-			":archived": &dyTypes.AttributeValueMemberS{Value: manifest.Archived.String()},
+			":status": &dyTypes.AttributeValueMemberS{Value: status.String()},
+			":cutoff": &dyTypes.AttributeValueMemberN{Value: fmt.Sprintf("%d", cutoff)},
 		},
 	})
 
 	for p.HasMorePages() {
 		page, err := p.NextPage(ctx)
 		if err != nil {
-			res.Errors = append(res.Errors, fmt.Sprintf("scan: %v", err))
-			return res, err
+			res.Errors = append(res.Errors, fmt.Sprintf("query %s: %v", status.String(), err))
+			return false, err
 		}
 		res.ManifestsScanned += int(page.ScannedCount)
 
@@ -82,17 +110,19 @@ func (s *sweeper) run(ctx context.Context) (Result, error) {
 				res.Errors = append(res.Errors, fmt.Sprintf("unmarshal manifest: %v", err))
 				continue
 			}
+			// Status isn't projected (it's the index hash key, but
+			// UnmarshalMap won't see it from key-only context); restore it
+			// so downstream logging is accurate.
+			m.Status = status.String()
 			res.ManifestsEligible++
 
 			if res.InvokesAttempted >= s.maxInvokesPerRun {
-				// Leave the rest for the next scheduled run; bail out of the
-				// page (also stops paginator on next HasMorePages check).
 				log.WithFields(log.Fields{
-					"eligible":     res.ManifestsEligible,
-					"max_per_run":  s.maxInvokesPerRun,
-					"manifest_id":  m.ManifestId,
+					"eligible":    res.ManifestsEligible,
+					"max_per_run": s.maxInvokesPerRun,
+					"manifest_id": m.ManifestId,
 				}).Info("hit MaxInvokesPerRun; deferring remaining manifests to next run")
-				return res, nil
+				return true, nil
 			}
 
 			logger := log.WithFields(log.Fields{
@@ -121,7 +151,7 @@ func (s *sweeper) run(ctx context.Context) (Result, error) {
 		}
 	}
 
-	return res, nil
+	return false, nil
 }
 
 func (s *sweeper) invokeArchive(ctx context.Context, m dydb.ManifestTable) error {

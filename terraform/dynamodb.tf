@@ -19,11 +19,33 @@ resource "aws_dynamodb_table" "manifest_dynamo_table" {
     type = "S"
   }
 
+  attribute {
+    name = "Status"
+    type = "S"
+  }
+
+  attribute {
+    name = "DateCreated"
+    type = "N"
+  }
+
   global_secondary_index {
     name            = "DatasetManifestIndex"
     hash_key        = "DatasetNodeId"
     range_key       = "UserId"
     projection_type = "ALL"
+  }
+
+  // Used by the archive-sweeper to find old un-archived manifests via Query
+  // instead of a Scan-with-FilterExpression. Partitioned by Status so the
+  // sweeper queries each non-Archived status (Initiated, Uploading,
+  // Completed, Cancelled) for items older than MaxAgeDays.
+  global_secondary_index {
+    name               = "ManifestStatusIndex"
+    hash_key           = "Status"
+    range_key          = "DateCreated"
+    projection_type    = "INCLUDE"
+    non_key_attributes = ["OrganizationId", "DatasetId"]
   }
 
   point_in_time_recovery {
