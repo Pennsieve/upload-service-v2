@@ -105,13 +105,16 @@ func postFinalizeFilesRoute(request events.APIGatewayV2HTTPRequest, claims *auth
 	}
 	// Per-file input validation. Bad inputs fail the whole batch — we don't
 	// want to quietly drop malformed entries because the client may think they
-	// were accepted.
+	// were accepted. Size 0 is explicitly allowed: empty files (.gitkeep,
+	// __init__.py, BIDS placeholders, sentinel files) are legitimate content
+	// that S3 stores natively, and the HEAD-verification step below already
+	// enforces the agent-reported size matches what S3 received.
 	for i, f := range req.Files {
 		if !isValidUUID(f.UploadID) {
 			return errResp(400, fmt.Sprintf("files[%d].uploadId must be a UUID", i))
 		}
-		if f.Size <= 0 {
-			return errResp(400, fmt.Sprintf("files[%d].size must be > 0", i))
+		if f.Size < 0 {
+			return errResp(400, fmt.Sprintf("files[%d].size must be non-negative", i))
 		}
 		if f.SHA256 == "" {
 			return errResp(400, fmt.Sprintf("files[%d].sha256 is required", i))
