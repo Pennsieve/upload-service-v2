@@ -31,21 +31,23 @@ func resolveBucketRegion(ctx context.Context, s3Client *s3.Client, bucket string
 		return v.(string), nil
 	}
 	out, err := s3Client.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: aws.String(bucket)})
-	if err == nil && out.BucketRegion != nil && *out.BucketRegion != "" {
-		bucketRegionCache.Store(bucket, *out.BucketRegion)
-		return *out.BucketRegion, nil
-	}
-	var responseError *smithyhttp.ResponseError
-	if errors.As(err, &responseError) {
-		if r := responseError.Response.Header.Get("x-amz-bucket-region"); r != "" {
-			bucketRegionCache.Store(bucket, r)
-			return r, nil
+	if err == nil {
+		if out.BucketRegion != nil && *out.BucketRegion != "" {
+			bucketRegionCache.Store(bucket, *out.BucketRegion)
+			return *out.BucketRegion, nil
 		}
-	}
-	if err != nil {
+		return "", fmt.Errorf("HeadBucket %s: no BucketRegion in response", bucket)
+	} else {
+		// can still get the region even on a failure which is all we need
+		var responseError *smithyhttp.ResponseError
+		if errors.As(err, &responseError) {
+			if r := responseError.Response.Header.Get("x-amz-bucket-region"); r != "" {
+				bucketRegionCache.Store(bucket, r)
+				return r, nil
+			}
+		}
 		return "", fmt.Errorf("HeadBucket %s: %w", bucket, err)
 	}
-	return "", fmt.Errorf("HeadBucket %s: no BucketRegion in response", bucket)
 }
 
 type storageCredentialsRequest struct {
