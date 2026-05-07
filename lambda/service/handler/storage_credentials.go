@@ -3,14 +3,18 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 	"github.com/pennsieve/pennsieve-go-core/pkg/authorizer"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/gateway"
 	dyQueries "github.com/pennsieve/pennsieve-go-core/pkg/queries/dydb"
@@ -18,6 +22,31 @@ import (
 	"github.com/pennsieve/pennsieve-upload-service-v2/service/pkg/storage"
 	log "github.com/sirupsen/logrus"
 )
+
+// keep a cache of bucket names after cold start
+var bucketRegionCache sync.Map
+
+func resolveBucketRegion(ctx context.Context, s3Client *s3.Client, bucket string) (string, error) {
+	if v, ok := bucketRegionCache.Load(bucket); ok {
+		return v.(string), nil
+	}
+	out, err := s3Client.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: aws.String(bucket)})
+	if err == nil && out.BucketRegion != nil && *out.BucketRegion != "" {
+		bucketRegionCache.Store(bucket, *out.BucketRegion)
+		return *out.BucketRegion, nil
+	}
+	var responseError *smithyhttp.ResponseError
+	if errors.As(err, &responseError) {
+		if r := responseError.Response.Header.Get("x-amz-bucket-region"); r != "" {
+			bucketRegionCache.Store(bucket, r)
+			return r, nil
+		}
+	}
+	if err != nil {
+		return "", fmt.Errorf("HeadBucket %s: %w", bucket, err)
+	}
+	return "", fmt.Errorf("HeadBucket %s: no BucketRegion in response", bucket)
+}
 
 type storageCredentialsRequest struct {
 	ManifestNodeID string `json:"manifestNodeId"`
@@ -88,7 +117,7 @@ func postStorageCredentialsRoute(request events.APIGatewayV2HTTPRequest, claims 
 			Body:       gateway.CreateErrorMessage("Storage not configured", 500),
 		}, nil
 	}
-	region := os.Getenv("REGION")
+	defaultRegion := os.Getenv("REGION")
 
 	// Resolve destination bucket via shared resolver (workspace-scoped today,
 	// per-dataset in the future).
@@ -144,12 +173,21 @@ func postStorageCredentialsRoute(request events.APIGatewayV2HTTPRequest, claims 
 
 	sessionName := fmt.Sprintf("storage-%d-%d", claims.OrgClaim.IntId, claims.UserClaim.Id)
 
-	cfg, err := config.LoadDefaultConfig(ctx, config.WithRegion(region))
+	cfg, err := config.LoadDefaultConfig(ctx, config.WithRegion(defaultRegion))
 	if err != nil {
 		log.WithError(err).Error("Failed to load AWS config")
 		return &events.APIGatewayV2HTTPResponse{
 			StatusCode: 500,
 			Body:       gateway.CreateErrorMessage("Internal error", 500),
+		}, nil
+	}
+
+	bucketRegion, err := resolveBucketRegion(ctx, s3.NewFromConfig(cfg), resolution.StorageBucket)
+	if err != nil {
+		log.WithError(err).WithField("bucket", resolution.StorageBucket).Error("failed to determine bucket region")
+		return &events.APIGatewayV2HTTPResponse{
+			StatusCode: 500,
+			Body:       gateway.CreateErrorMessage("Failed to determine storage bucket region", 500),
 		}, nil
 	}
 
@@ -176,7 +214,7 @@ func postStorageCredentialsRoute(request events.APIGatewayV2HTTPRequest, claims 
 		Expiration:      result.Credentials.Expiration.Format(time.RFC3339),
 		Bucket:          resolution.StorageBucket,
 		KeyPrefix:       resolution.KeyPrefix(req.ManifestNodeID),
-		Region:          region,
+		Region:          bucketRegion,
 	}
 
 	jsonBody, _ := json.Marshal(resp)
