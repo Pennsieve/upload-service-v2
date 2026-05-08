@@ -140,32 +140,11 @@ func TestResolve_SuccessButNoBucketRegionField(t *testing.T) {
 	}
 }
 
-func TestClientForBucket_PinsRegion(t *testing.T) {
-	resetCache()
-	src := newTestClient(roundTripperFunc(func(*http.Request) (*http.Response, error) {
-		return makeResp(301, map[string]string{"x-amz-bucket-region": "ca-central-1"}), nil
-	}))
-
-	got, err := ClientForBucket(context.Background(), src, "some-bucket")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if r := got.Options().Region; r != "ca-central-1" {
-		t.Errorf("client region = %q; want ca-central-1", r)
-	}
-	// Source client's region must remain untouched.
-	if r := src.Options().Region; r != "us-east-1" {
-		t.Errorf("source client region mutated to %q", r)
-	}
-}
-
 // Pennsieve runs primarily in us-east-1 but supports per-workspace storage
 // buckets in other regions (e.g. af-south-1). When a us-east-1 lambda HEADs
 // an af-south-1 bucket, S3 responds with 301 PermanentRedirect plus
 // x-amz-bucket-region: af-south-1. This test pins the production scenario:
-// the helper must return af-south-1 (not us-east-1, not the bucket name)
-// and the returned client must be region-pinned to af-south-1 for downstream
-// signing/routing.
+// Resolve must return af-south-1 (not us-east-1, not the bucket name).
 func TestProductionScenario_USEast1ClientResolvesAfSouth1Bucket(t *testing.T) {
 	resetCache()
 
@@ -186,30 +165,7 @@ func TestProductionScenario_USEast1ClientResolvesAfSouth1Bucket(t *testing.T) {
 	if region != "af-south-1" {
 		t.Errorf("Resolve = %q; want af-south-1 (the bucket's actual region from HEAD)", region)
 	}
-
-	bucketClient, err := ClientForBucket(context.Background(), usEast1Client, workspaceBucket)
-	if err != nil {
-		t.Fatalf("ClientForBucket: %v", err)
-	}
-	if r := bucketClient.Options().Region; r != "af-south-1" {
-		t.Errorf("returned client region = %q; want af-south-1", r)
-	}
 	if r := usEast1Client.Options().Region; r != "us-east-1" {
 		t.Errorf("discovery client mutated to %q; should still be us-east-1", r)
-	}
-}
-
-func TestClientForBucket_PropagatesError(t *testing.T) {
-	resetCache()
-	client := newTestClient(roundTripperFunc(func(*http.Request) (*http.Response, error) {
-		return makeResp(500, nil), nil
-	}))
-
-	got, err := ClientForBucket(context.Background(), client, "broken-bucket")
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-	if got != nil {
-		t.Errorf("expected nil client on error, got %+v", got)
 	}
 }

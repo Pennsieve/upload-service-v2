@@ -688,12 +688,14 @@ func (s *UploadHandlerStore) deleteOrphanFiles(files []OrphanS3File) error {
 		Delete: &f,
 	}
 
-	// pin client to bucket's region for cross-region storage buckets
-	bucketClient, err := bucketregion.ClientForBucket(ctx, S3Client, s3Bucket)
+	// resolve bucket region for cross-region storage buckets
+	bucketRegion, err := bucketregion.Resolve(ctx, S3Client, s3Bucket)
 	if err != nil {
 		return fmt.Errorf("resolve region for %s: %w", s3Bucket, err)
 	}
-	result, err := bucketClient.DeleteObjects(ctx, &params)
+	result, err := s.S3Client.DeleteObjects(ctx, &params, func(o *s3.Options) {
+		o.Region = bucketRegion
+	})
 	if err != nil {
 		return err
 	}

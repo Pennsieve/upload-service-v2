@@ -49,8 +49,8 @@ type resolvedManifest struct {
 	manifest      *dydb.ManifestTable
 	storageBucket string
 	keyPrefix     string // O{org}/D{ds}/{manifest}
-	// pinned to storageBucket's region; resolved once per manifest, reused for all files
-	s3Client *s3.Client
+	// storageBucket's region; resolved once per manifest, reused per HeadObject call
+	storageRegion string
 }
 
 func (s *store) resolveManifest(ctx context.Context, manifestID string) (*resolvedManifest, error) {
@@ -67,7 +67,7 @@ func (s *store) resolveManifest(ctx context.Context, manifestID string) (*resolv
 	if org.StorageBucket.Valid {
 		bucket = org.StorageBucket.String
 	}
-	bucketClient, err := bucketregion.ClientForBucket(ctx, s.s3, bucket)
+	region, err := bucketregion.Resolve(ctx, s.s3, bucket)
 	if err != nil {
 		return nil, fmt.Errorf("resolve region for %s: %w", bucket, err)
 	}
@@ -75,7 +75,7 @@ func (s *store) resolveManifest(ctx context.Context, manifestID string) (*resolv
 		manifest:      m,
 		storageBucket: bucket,
 		keyPrefix:     fmt.Sprintf("O%d/D%d/%s", m.OrganizationId, m.DatasetId, manifestID),
-		s3Client:      bucketClient,
+		storageRegion: region,
 	}, nil
 }
 
@@ -299,9 +299,11 @@ func (s *store) reconcileFile(
 	s.bumpScanned(result, manifestID)
 
 	key := fmt.Sprintf("%s/%s", resolved.keyPrefix, uploadID)
-	head, err := resolved.s3Client.HeadObject(ctx, &s3.HeadObjectInput{
+	head, err := s.s3.HeadObject(ctx, &s3.HeadObjectInput{
 		Bucket: aws.String(resolved.storageBucket),
 		Key:    aws.String(key),
+	}, func(o *s3.Options) {
+		o.Region = resolved.storageRegion
 	})
 	if err != nil {
 		// S3 is strongly consistent for read-after-write (since 2020), so a

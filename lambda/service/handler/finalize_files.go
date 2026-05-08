@@ -167,8 +167,8 @@ func postFinalizeFilesRoute(request events.APIGatewayV2HTTPRequest, claims *auth
 	}
 	keyPrefix := resolution.KeyPrefix(req.ManifestNodeID)
 
-	// pin client to bucket's region for cross-region storage buckets
-	bucketS3Client, err := bucketregion.ClientForBucket(ctx, store.s3Client, resolution.StorageBucket)
+	// resolve bucket region for cross-region storage buckets
+	bucketRegion, err := bucketregion.Resolve(ctx, store.s3Client, resolution.StorageBucket)
 	if err != nil {
 		log.WithError(err).WithField("bucket", resolution.StorageBucket).Error("finalize: failed to determine bucket region")
 		return errResp(500, "Failed to determine storage bucket region")
@@ -216,10 +216,12 @@ func postFinalizeFilesRoute(request events.APIGatewayV2HTTPRequest, claims *auth
 			// ChecksumMode: ENABLED is required for HeadObject to populate
 			// ChecksumSHA256; without it the field is nil even when S3 has
 			// stored the checksum, and the sha256 check below always fails.
-			head, err := bucketS3Client.HeadObject(ctx, &s3.HeadObjectInput{
+			head, err := store.s3Client.HeadObject(ctx, &s3.HeadObjectInput{
 				Bucket:       aws.String(resolution.StorageBucket),
 				Key:          aws.String(key),
 				ChecksumMode: s3Types.ChecksumModeEnabled,
+			}, func(o *s3.Options) {
+				o.Region = bucketRegion
 			})
 			if err != nil {
 				log.WithError(err).WithFields(log.Fields{

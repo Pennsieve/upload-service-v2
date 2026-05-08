@@ -110,8 +110,8 @@ func (s *UploadHandlerStore) uploadEntryFromS3Event(event *events.S3Event) (*Upl
 	s3Bucket := event.Records[0].S3.Bucket.Name
 	s3Key := event.Records[0].S3.Object.Key
 
-	// pin client to bucket's region for cross-region storage buckets
-	bucketClient, err := bucketregion.ClientForBucket(context.Background(), S3Client, s3Bucket)
+	// resolve bucket region for cross-region storage buckets
+	bucketRegion, err := bucketregion.Resolve(context.Background(), S3Client, s3Bucket)
 	if err != nil {
 		return nil, fmt.Errorf("resolve region for %s: %w", s3Bucket, err)
 	}
@@ -122,7 +122,9 @@ func (s *UploadHandlerStore) uploadEntryFromS3Event(event *events.S3Event) (*Upl
 		Key:          aws.String(s3Key),
 		ChecksumMode: s3Types.ChecksumModeEnabled,
 	}
-	result, err := bucketClient.HeadObject(context.Background(), &headObj)
+	result, err := s.S3Client.HeadObject(context.Background(), &headObj, func(o *s3.Options) {
+		o.Region = bucketRegion
+	})
 	if err != nil {
 
 		return nil, &S3FileNotExistError{

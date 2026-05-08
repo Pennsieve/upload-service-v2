@@ -230,6 +230,8 @@ func TestMain(m *testing.M) {
 	// region cache so tests don't depend on that behavior.
 	bucketregion.Set("dummy-s3-bucket", "us-east-1")
 	bucketregion.Set("pennsieve-dev-uploads-v2-use1", "us-east-1")
+	bucketregion.Set("testBucket", "us-east-1")
+	bucketregion.Set("123", "us-east-1") // fake bucket used by TestStore/test_deleting_orphaned_files
 
 	_, err = s3Client.CreateBucket(context.Background(), &s3.CreateBucketInput{
 		Bucket:                     aws.String("dummy-s3-bucket"),

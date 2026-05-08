@@ -47,13 +47,3 @@ func Resolve(ctx context.Context, client *s3.Client, bucket string) (string, err
 	}
 }
 
-// ClientForBucket returns an S3 client pinned to bucket's region.
-func ClientForBucket(ctx context.Context, client *s3.Client, bucket string) (*s3.Client, error) {
-	region, err := Resolve(ctx, client, bucket)
-	if err != nil {
-		return nil, err
-	}
-	opts := client.Options()
-	opts.Region = region
-	return s3.New(opts), nil
-}
