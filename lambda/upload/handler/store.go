@@ -26,6 +26,7 @@ import (
 	ps "github.com/pennsieve/pennsieve-go-core/pkg/models/pusher"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/uploadFile"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/uploadFolder"
+	"github.com/pennsieve/pennsieve-upload-service-v2/pkg/bucketregion"
 	log "github.com/sirupsen/logrus"
 	"regexp"
 	"strings"
@@ -687,7 +688,14 @@ func (s *UploadHandlerStore) deleteOrphanFiles(files []OrphanS3File) error {
 		Delete: &f,
 	}
 
-	result, err := s.S3Client.DeleteObjects(ctx, &params)
+	// resolve bucket region for cross-region storage buckets
+	bucketRegion, err := bucketregion.Resolve(ctx, S3Client, s3Bucket)
+	if err != nil {
+		return fmt.Errorf("resolve region for %s: %w", s3Bucket, err)
+	}
+	result, err := s.S3Client.DeleteObjects(ctx, &params, func(o *s3.Options) {
+		o.Region = bucketRegion
+	})
 	if err != nil {
 		return err
 	}

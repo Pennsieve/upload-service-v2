@@ -8,6 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3Types "github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/pennsieve/pennsieve-upload-service-v2/pkg/bucketregion"
 	log "github.com/sirupsen/logrus"
 	"regexp"
 	"strings"
@@ -55,6 +56,12 @@ func (s *UploadHandlerStore) GetUploadEntries(fileEvents []events.SQSMessage) ([
 
 				// Do not add sqs event to records as it is already added to the OrphanFiles list
 				continue
+			default:
+				// Unknown error from uploadEntryFromS3Event (e.g. region
+				// resolution failure). Don't fall through to the entry
+				// lookup below — entry is nil and we'd panic. Propagate
+				// so SQS retries.
+				return nil, nil, fmt.Errorf("uploadEntryFromS3Event: %w", err)
 			}
 
 		}
@@ -103,13 +110,21 @@ func (s *UploadHandlerStore) uploadEntryFromS3Event(event *events.S3Event) (*Upl
 	s3Bucket := event.Records[0].S3.Bucket.Name
 	s3Key := event.Records[0].S3.Object.Key
 
+	// resolve bucket region for cross-region storage buckets
+	bucketRegion, err := bucketregion.Resolve(context.Background(), S3Client, s3Bucket)
+	if err != nil {
+		return nil, fmt.Errorf("resolve region for %s: %w", s3Bucket, err)
+	}
+
 	// Get File Size
 	headObj := s3.HeadObjectInput{
 		Bucket:       aws.String(s3Bucket),
 		Key:          aws.String(s3Key),
 		ChecksumMode: s3Types.ChecksumModeEnabled,
 	}
-	result, err := s.S3Client.HeadObject(context.Background(), &headObj)
+	result, err := s.S3Client.HeadObject(context.Background(), &headObj, func(o *s3.Options) {
+		o.Region = bucketRegion
+	})
 	if err != nil {
 
 		return nil, &S3FileNotExistError{

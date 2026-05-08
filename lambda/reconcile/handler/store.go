@@ -21,6 +21,7 @@ import (
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/manifest/manifestFile"
 	dyQueries "github.com/pennsieve/pennsieve-go-core/pkg/queries/dydb"
 	pgQueries "github.com/pennsieve/pennsieve-go-core/pkg/queries/pgdb"
+	"github.com/pennsieve/pennsieve-upload-service-v2/pkg/bucketregion"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -48,6 +49,8 @@ type resolvedManifest struct {
 	manifest      *dydb.ManifestTable
 	storageBucket string
 	keyPrefix     string // O{org}/D{ds}/{manifest}
+	// storageBucket's region; resolved once per manifest, reused per HeadObject call
+	storageRegion string
 }
 
 func (s *store) resolveManifest(ctx context.Context, manifestID string) (*resolvedManifest, error) {
@@ -64,10 +67,15 @@ func (s *store) resolveManifest(ctx context.Context, manifestID string) (*resolv
 	if org.StorageBucket.Valid {
 		bucket = org.StorageBucket.String
 	}
+	region, err := bucketregion.Resolve(ctx, s.s3, bucket)
+	if err != nil {
+		return nil, fmt.Errorf("resolve region for %s: %w", bucket, err)
+	}
 	return &resolvedManifest{
 		manifest:      m,
 		storageBucket: bucket,
 		keyPrefix:     fmt.Sprintf("O%d/D%d/%s", m.OrganizationId, m.DatasetId, manifestID),
+		storageRegion: region,
 	}, nil
 }
 
@@ -294,6 +302,8 @@ func (s *store) reconcileFile(
 	head, err := s.s3.HeadObject(ctx, &s3.HeadObjectInput{
 		Bucket: aws.String(resolved.storageBucket),
 		Key:    aws.String(key),
+	}, func(o *s3.Options) {
+		o.Region = resolved.storageRegion
 	})
 	if err != nil {
 		// S3 is strongly consistent for read-after-write (since 2020), so a

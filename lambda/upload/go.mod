@@ -7,6 +7,8 @@ toolchain go1.23.4
 //
 //replace github.com/pennsieve/pennsieve-go-core => ../../../pennsieve-go-core
 
+replace github.com/pennsieve/pennsieve-upload-service-v2/pkg/bucketregion => ../../pkg/bucketregion
+
 require (
 	github.com/aws/aws-lambda-go v1.46.0
 	github.com/aws/aws-sdk-go-v2 v1.25.3
@@ -21,6 +23,7 @@ require (
 	github.com/aws/smithy-go v1.20.1
 	github.com/google/uuid v1.6.0
 	github.com/pennsieve/pennsieve-go-core v1.16.1
+	github.com/pennsieve/pennsieve-upload-service-v2/pkg/bucketregion v0.0.0-00010101000000-000000000000
 	github.com/pusher/pusher-http-go/v5 v5.1.1
 	github.com/sirupsen/logrus v1.9.3
 	github.com/stretchr/testify v1.8.1

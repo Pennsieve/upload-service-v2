@@ -5,6 +5,9 @@ go 1.24.0
 //replace (
 //	github.com/pennsieve/pennsieve-go-core => ../../../pennsieve-go-core
 //)
+
+replace github.com/pennsieve/pennsieve-upload-service-v2/pkg/bucketregion => ../../pkg/bucketregion
+
 require (
 	github.com/aws/aws-lambda-go v1.46.0
 	github.com/aws/aws-sdk-go-v2 v1.41.6
@@ -13,6 +16,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.30.4
 	github.com/google/uuid v1.6.0
 	github.com/pennsieve/pennsieve-go-core v1.16.1
+	github.com/pennsieve/pennsieve-upload-service-v2/pkg/bucketregion v0.0.0-00010101000000-000000000000
 	github.com/sirupsen/logrus v1.9.3
 	github.com/valyala/fastjson v1.6.4
 )
