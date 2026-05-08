@@ -5,11 +5,12 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+
+	"github.com/pennsieve/pennsieve-upload-service-v2/pkg/bucketregion/internal/cache"
 )
 
 // roundTripperFunc lets us script HTTP responses for the SDK client.
@@ -27,7 +28,7 @@ func newTestClient(rt http.RoundTripper) *s3.Client {
 	})
 }
 
-func resetCache() { cache = sync.Map{} }
+func resetCache() { cache.Reset() }
 
 func makeResp(status int, headers map[string]string) *http.Response {
 	h := http.Header{}
@@ -44,6 +45,7 @@ func makeResp(status int, headers map[string]string) *http.Response {
 func TestResolve_CacheHit(t *testing.T) {
 	resetCache()
 	cache.Store("cached-bucket", "ap-south-1")
+
 
 	// RoundTripper would fail the test if called — cache hit shouldn't
 	// trigger a network request.

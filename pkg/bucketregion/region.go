@@ -8,24 +8,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
+
+	"github.com/pennsieve/pennsieve-upload-service-v2/pkg/bucketregion/internal/cache"
 )
-
-// keep a cache of bucket names after cold start
-var cache sync.Map
-
-// Set seeds the cache. Intended for tests where HeadBucket against the test
-// S3 backend (e.g. minio) doesn't reliably return x-amz-bucket-region.
-func Set(bucket, region string) { cache.Store(bucket, region) }
 
 // Resolve returns bucket's AWS region; the client can be in any region.
 func Resolve(ctx context.Context, client *s3.Client, bucket string) (string, error) {
-	if v, ok := cache.Load(bucket); ok {
-		return v.(string), nil
+	if region, ok := cache.Load(bucket); ok {
+		return region, nil
 	}
 	out, err := client.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: aws.String(bucket)})
 	if err == nil {

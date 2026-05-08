@@ -21,7 +21,7 @@ import (
 	pgdb2 "github.com/pennsieve/pennsieve-go-core/pkg/models/pgdb"
 	"github.com/pennsieve/pennsieve-go-core/pkg/queries/pgdb"
 	testHelpers "github.com/pennsieve/pennsieve-go-core/test"
-	"github.com/pennsieve/pennsieve-upload-service-v2/pkg/bucketregion"
+	"github.com/pennsieve/pennsieve-upload-service-v2/pkg/bucketregion/buckettest"
 	"github.com/pennsieve/pennsieve-upload-service-v2/upload/test"
 	log "github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
@@ -228,10 +228,10 @@ func TestMain(m *testing.M) {
 	S3Client = s3Client
 	// minio's HeadBucket doesn't reliably return x-amz-bucket-region; seed the
 	// region cache so tests don't depend on that behavior.
-	bucketregion.Set("dummy-s3-bucket", "us-east-1")
-	bucketregion.Set("pennsieve-dev-uploads-v2-use1", "us-east-1")
-	bucketregion.Set("testBucket", "us-east-1")
-	bucketregion.Set("123", "us-east-1") // fake bucket used by TestStore/test_deleting_orphaned_files
+	buckettest.Seed("dummy-s3-bucket", "us-east-1")
+	buckettest.Seed("pennsieve-dev-uploads-v2-use1", "us-east-1")
+	buckettest.Seed("testBucket", "us-east-1")
+	buckettest.Seed("123", "us-east-1") // fake bucket used by TestStore/test_deleting_orphaned_files
 
 	_, err = s3Client.CreateBucket(context.Background(), &s3.CreateBucketInput{
 		Bucket:                     aws.String("dummy-s3-bucket"),
