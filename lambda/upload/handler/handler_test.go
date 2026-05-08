@@ -222,6 +222,7 @@ func TestMain(m *testing.M) {
 	mSNS := test.MockSNS{}
 
 	s3Client := getS3Client()
+	S3Client = s3Client
 
 	_, err = s3Client.CreateBucket(context.Background(), &s3.CreateBucketInput{
 		Bucket:                     aws.String("dummy-s3-bucket"),
