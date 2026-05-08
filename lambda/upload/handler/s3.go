@@ -56,6 +56,12 @@ func (s *UploadHandlerStore) GetUploadEntries(fileEvents []events.SQSMessage) ([
 
 				// Do not add sqs event to records as it is already added to the OrphanFiles list
 				continue
+			default:
+				// Unknown error from uploadEntryFromS3Event (e.g. region
+				// resolution failure). Don't fall through to the entry
+				// lookup below — entry is nil and we'd panic. Propagate
+				// so SQS retries.
+				return nil, nil, fmt.Errorf("uploadEntryFromS3Event: %w", err)
 			}
 
 		}

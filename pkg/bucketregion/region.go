@@ -18,6 +18,10 @@ import (
 // keep a cache of bucket names after cold start
 var cache sync.Map
 
+// Set seeds the cache. Intended for tests where HeadBucket against the test
+// S3 backend (e.g. minio) doesn't reliably return x-amz-bucket-region.
+func Set(bucket, region string) { cache.Store(bucket, region) }
+
 // Resolve returns bucket's AWS region; the client can be in any region.
 func Resolve(ctx context.Context, client *s3.Client, bucket string) (string, error) {
 	if v, ok := cache.Load(bucket); ok {
