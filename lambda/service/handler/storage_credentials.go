@@ -3,10 +3,8 @@ package handler
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
-	"sync"
 	"time"
 
 	"github.com/aws/aws-lambda-go/events"
@@ -14,41 +12,14 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
-	smithyhttp "github.com/aws/smithy-go/transport/http"
 	"github.com/pennsieve/pennsieve-go-core/pkg/authorizer"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/gateway"
 	dyQueries "github.com/pennsieve/pennsieve-go-core/pkg/queries/dydb"
 	pgQueries "github.com/pennsieve/pennsieve-go-core/pkg/queries/pgdb"
+	"github.com/pennsieve/pennsieve-upload-service-v2/pkg/bucketregion"
 	"github.com/pennsieve/pennsieve-upload-service-v2/service/pkg/storage"
 	log "github.com/sirupsen/logrus"
 )
-
-// keep a cache of bucket names after cold start
-var bucketRegionCache sync.Map
-
-func resolveBucketRegion(ctx context.Context, s3Client *s3.Client, bucket string) (string, error) {
-	if v, ok := bucketRegionCache.Load(bucket); ok {
-		return v.(string), nil
-	}
-	out, err := s3Client.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: aws.String(bucket)})
-	if err == nil {
-		if out.BucketRegion != nil && *out.BucketRegion != "" {
-			bucketRegionCache.Store(bucket, *out.BucketRegion)
-			return *out.BucketRegion, nil
-		}
-		return "", fmt.Errorf("HeadBucket %s: no BucketRegion in response", bucket)
-	} else {
-		// can still get the region even on a failure which is all we need
-		var responseError *smithyhttp.ResponseError
-		if errors.As(err, &responseError) {
-			if r := responseError.Response.Header.Get("x-amz-bucket-region"); r != "" {
-				bucketRegionCache.Store(bucket, r)
-				return r, nil
-			}
-		}
-		return "", fmt.Errorf("HeadBucket %s: %w", bucket, err)
-	}
-}
 
 type storageCredentialsRequest struct {
 	ManifestNodeID string `json:"manifestNodeId"`
@@ -184,7 +155,7 @@ func postStorageCredentialsRoute(request events.APIGatewayV2HTTPRequest, claims 
 		}, nil
 	}
 
-	bucketRegion, err := resolveBucketRegion(ctx, s3.NewFromConfig(cfg), resolution.StorageBucket)
+	bucketRegion, err := bucketregion.Resolve(ctx, s3.NewFromConfig(cfg), resolution.StorageBucket)
 	if err != nil {
 		log.WithError(err).WithField("bucket", resolution.StorageBucket).Error("failed to determine bucket region")
 		return &events.APIGatewayV2HTTPResponse{

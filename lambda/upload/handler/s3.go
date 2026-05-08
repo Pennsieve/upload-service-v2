@@ -8,6 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3Types "github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/pennsieve/pennsieve-upload-service-v2/pkg/bucketregion"
 	log "github.com/sirupsen/logrus"
 	"regexp"
 	"strings"
@@ -103,13 +104,19 @@ func (s *UploadHandlerStore) uploadEntryFromS3Event(event *events.S3Event) (*Upl
 	s3Bucket := event.Records[0].S3.Bucket.Name
 	s3Key := event.Records[0].S3.Object.Key
 
+	// pin client to bucket's region for cross-region storage buckets
+	bucketClient, err := bucketregion.ClientForBucket(context.Background(), S3Client, s3Bucket)
+	if err != nil {
+		return nil, fmt.Errorf("resolve region for %s: %w", s3Bucket, err)
+	}
+
 	// Get File Size
 	headObj := s3.HeadObjectInput{
 		Bucket:       aws.String(s3Bucket),
 		Key:          aws.String(s3Key),
 		ChecksumMode: s3Types.ChecksumModeEnabled,
 	}
-	result, err := s.S3Client.HeadObject(context.Background(), &headObj)
+	result, err := bucketClient.HeadObject(context.Background(), &headObj)
 	if err != nil {
 
 		return nil, &S3FileNotExistError{

@@ -20,6 +20,7 @@ import (
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/manifest/manifestFile"
 	pgQueries "github.com/pennsieve/pennsieve-go-core/pkg/queries/pgdb"
 	dyQueriesNs "github.com/pennsieve/pennsieve-go-core/pkg/queries/dydb"
+	"github.com/pennsieve/pennsieve-upload-service-v2/pkg/bucketregion"
 	"github.com/pennsieve/pennsieve-upload-service-v2/service/pkg/storage"
 	log "github.com/sirupsen/logrus"
 )
@@ -166,6 +167,13 @@ func postFinalizeFilesRoute(request events.APIGatewayV2HTTPRequest, claims *auth
 	}
 	keyPrefix := resolution.KeyPrefix(req.ManifestNodeID)
 
+	// pin client to bucket's region for cross-region storage buckets
+	bucketS3Client, err := bucketregion.ClientForBucket(ctx, store.s3Client, resolution.StorageBucket)
+	if err != nil {
+		log.WithError(err).WithField("bucket", resolution.StorageBucket).Error("finalize: failed to determine bucket region")
+		return errResp(500, "Failed to determine storage bucket region")
+	}
+
 	// Look up all files' current status in one BatchGetItem. The result map
 	// serves two purposes:
 	//   1. idempotency — skip files already in Finalized status
@@ -208,7 +216,7 @@ func postFinalizeFilesRoute(request events.APIGatewayV2HTTPRequest, claims *auth
 			// ChecksumMode: ENABLED is required for HeadObject to populate
 			// ChecksumSHA256; without it the field is nil even when S3 has
 			// stored the checksum, and the sha256 check below always fails.
-			head, err := store.s3Client.HeadObject(ctx, &s3.HeadObjectInput{
+			head, err := bucketS3Client.HeadObject(ctx, &s3.HeadObjectInput{
 				Bucket:       aws.String(resolution.StorageBucket),
 				Key:          aws.String(key),
 				ChecksumMode: s3Types.ChecksumModeEnabled,
