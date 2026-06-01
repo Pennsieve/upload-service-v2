@@ -74,6 +74,8 @@ github.com/pennsieve/pennsieve-go-core v1.16.0 h1:UoIEYp5cEKxuJ+bZsRU9PppO5Vs/JK
 github.com/pennsieve/pennsieve-go-core v1.16.0/go.mod h1:MeMDPuGOXkY8q+opOES8r7ib3EAt5dveB+PMjgtLNKM=
 github.com/pennsieve/pennsieve-go-core v1.16.1 h1:ciLIbCeOpTvs+PFqDFrE11a+vwsdXS96wCnEV2zzJ9c=
 github.com/pennsieve/pennsieve-go-core v1.16.1/go.mod h1:MeMDPuGOXkY8q+opOES8r7ib3EAt5dveB+PMjgtLNKM=
+github.com/pennsieve/pennsieve-go-core v1.16.2 h1:RgRqsfO+ultCzOwcNMSN0u+FqbgO1E/h41MYspqsEAE=
+github.com/pennsieve/pennsieve-go-core v1.16.2/go.mod h1:MeMDPuGOXkY8q+opOES8r7ib3EAt5dveB+PMjgtLNKM=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/pusher/pusher-http-go/v5 v5.1.1 h1:ZLUGdLA8yXMvByafIkS47nvuXOHrYmlh4bsQvuZnYVQ=

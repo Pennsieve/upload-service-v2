@@ -31,6 +31,7 @@ resource "aws_lambda_function" "upload_lambda" {
       IMPORTED_SNS_TOPIC    = aws_sns_topic.imported_file_sns_topic.arn,
       FILE_FINALIZED_TOPIC  = aws_sns_topic.file_finalized_topic.arn,
       JOBS_QUEUE_ID         = data.terraform_remote_state.platform_infrastructure.outputs.jobs_queue_id,
+      DELETE_QUEUE_ID       = data.terraform_remote_state.platform_infrastructure.outputs.jobs_queue_v2_id,
       REGION              = var.aws_region,
       RDS_PROXY_ENDPOINT  = data.terraform_remote_state.pennsieve_postgres.outputs.rds_proxy_endpoint,
       LOG_LEVEL           = "info",

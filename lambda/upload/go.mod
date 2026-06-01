@@ -22,7 +22,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.49.2
 	github.com/aws/smithy-go v1.20.1
 	github.com/google/uuid v1.6.0
-	github.com/pennsieve/pennsieve-go-core v1.16.1
+	github.com/pennsieve/pennsieve-go-core v1.16.2
 	github.com/pennsieve/pennsieve-upload-service-v2/pkg/bucketregion v0.0.0-00010101000000-000000000000
 	github.com/pusher/pusher-http-go/v5 v5.1.1
 	github.com/sirupsen/logrus v1.9.3

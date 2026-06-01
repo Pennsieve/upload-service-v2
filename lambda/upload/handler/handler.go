@@ -3,6 +3,8 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"os"
+
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -16,7 +18,6 @@ import (
 	pgQueries "github.com/pennsieve/pennsieve-go-core/pkg/queries/pgdb"
 	"github.com/pusher/pusher-http-go/v5"
 	log "github.com/sirupsen/logrus"
-	"os"
 )
 
 var (
@@ -30,6 +31,7 @@ var (
 	ManifestTableName     string
 	ManifestFileTableName string
 	JobSQSQueueId         string
+	DeleteSQSQueueId      string
 	PusherConfig          *ps.Config
 	PusherClient          *pusher.Client
 )
@@ -48,6 +50,7 @@ func init() {
 	ManifestFileTableName = os.Getenv("MANIFEST_FILE_TABLE")
 	ManifestTableName = os.Getenv("MANIFEST_TABLE")
 	JobSQSQueueId = os.Getenv("JOBS_QUEUE_ID")
+	DeleteSQSQueueId = os.Getenv("DELETE_QUEUE_ID")
 	SNSTopic = os.Getenv("IMPORTED_SNS_TOPIC")
 	FileFinalizedTopic = os.Getenv("FILE_FINALIZED_TOPIC")
 }
@@ -119,7 +122,7 @@ func Handler(ctx context.Context, sqsEvent events.SQSEvent) (events.SQSEventResp
 		PusherClient,
 		ChangelogClient,
 		SQSClient,
-		JobSQSQueueId)
+		DeleteSQSQueueId)
 
 	eventResponse, err = s.Handler(ctx, sqsEvent)
 	if err != nil {
