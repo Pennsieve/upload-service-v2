@@ -364,18 +364,7 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 	// AddPackagesWithConflict inside the import transaction; sending the
 	// delete job is the part it leaves to us. Runs after the transaction —
 	// the SQS send isn't part of it and couldn't be rolled back anyway.
-	var replacementJobs []packagedelete.DeleteRequest
-	for _, pkg := range result.packages {
-		if !pkg.ReplacesPackageId.Valid {
-			continue
-		}
-		replacementJobs = append(replacementJobs, packagedelete.DeleteRequest{
-			PackageID:      pkg.ReplacesPackageId.Int64,
-			OrganizationID: int64(orgId),
-			UserNodeID:     user.NodeId,
-			TraceID:        manifest.ManifestId,
-		})
-	}
+	replacementJobs := buildDeleteRequests(result.packages, orgId, user.NodeId, manifest.ManifestId)
 	var replacementPublishFailures int
 	if len(replacementJobs) > 0 {
 		sender := &sqsQueueSender{client: s.sqsClient, queueURL: s.deleteQueueURL}

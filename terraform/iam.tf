@@ -293,7 +293,6 @@ data "aws_iam_policy_document" "upload_service_v2_iam_policy_document" {
 
     resources = [
       data.terraform_remote_state.platform_infrastructure.outputs.jobs_queue_v2_arn,
-      "${data.terraform_remote_state.platform_infrastructure.outputs.jobs_queue_v2_arn}/*",
     ]
   }
 
