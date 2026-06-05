@@ -6,6 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
+	"strings"
+	"time"
+
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
@@ -26,11 +30,9 @@ import (
 	ps "github.com/pennsieve/pennsieve-go-core/pkg/models/pusher"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/uploadFile"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/uploadFolder"
+	"github.com/pennsieve/pennsieve-go-core/pkg/packagedelete"
 	"github.com/pennsieve/pennsieve-upload-service-v2/pkg/bucketregion"
 	log "github.com/sirupsen/logrus"
-	"regexp"
-	"strings"
-	"time"
 )
 
 // seenFileUUIDs allows this Lambda to avoid trying to create the same file in Postgres more than once.
@@ -50,7 +52,7 @@ type UploadHandlerStore struct {
 	pusherClient       domain.PusherAPI
 	changelogClient    Changelogger
 	sqsClient          *sqs.Client
-	jobsQueueURL       string
+	deleteQueueURL     string
 	SNSTopic           string
 	FileFinalizedTopic string
 	fileTableName      string
@@ -72,7 +74,7 @@ func NewUploadHandlerStore(db *sql.DB, dy *dynamodb.Client, sns domain.SnsAPI,
 	s3 domain.S3API, fileTableName string, tableName string, snsTopic string,
 	fileFinalizedTopic string,
 	pc domain.PusherAPI, changelogger Changelogger,
-	sqsClient *sqs.Client, jobsQueueURL string) *UploadHandlerStore {
+	sqsClient *sqs.Client, deleteQueueURL string) *UploadHandlerStore {
 	return &UploadHandlerStore{
 		pgdb:               db,
 		dynamodb:           dy,
@@ -83,7 +85,7 @@ func NewUploadHandlerStore(db *sql.DB, dy *dynamodb.Client, sns domain.SnsAPI,
 		S3Client:           s3,
 		changelogClient:    changelogger,
 		sqsClient:          sqsClient,
-		jobsQueueURL:       jobsQueueURL,
+		deleteQueueURL:     deleteQueueURL,
 		pg:                 NewUploadPgQueries(db),
 		dy:                 NewUploadDyQueries(dy),
 		fileTableName:      fileTableName,
@@ -356,40 +358,28 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 		contextLogger.Error("Error with notifying Changelog about imported records: ", err)
 	}
 
-	// 7. Publish a DeletePackageJob for every replaced predecessor so the
-	// Scala jobs service can run the async S3 asset cleanup. The DB-level
-	// soft-delete (state=DELETING, name prefix) + storage decrement is
-	// already done by pennsieve-go-core's AddPackagesWithConflict inside the
-	// import transaction; the queue publish is the side effect the library
-	// leaves to us. Batched via SendMessageBatch — at 100k-file replace
-	// scale this drops the SQS round-trip count ~10x vs per-message
-	// SendMessage.
-	var replacementJobs []DeletePackageJobParams
-	for _, pkg := range result.packages {
-		if !pkg.ReplacesPackageId.Valid {
-			continue
-		}
-		replacementJobs = append(replacementJobs, DeletePackageJobParams{
-			PackageId:      pkg.ReplacesPackageId.Int64,
-			OrganizationId: orgId,
-			UserNodeId:     user.NodeId,
-			TraceId:        manifest.ManifestId,
-		})
-	}
+	// 7. Hand each replaced predecessor off to process-jobs-service for the
+	// async cleanup (storage decrement, S3 delete, restore record). The DB
+	// soft-delete (rename + state=DELETING) is already done by go-core's
+	// AddPackagesWithConflict inside the import transaction; sending the
+	// delete job is the part it leaves to us. Runs after the transaction —
+	// the SQS send isn't part of it and couldn't be rolled back anyway.
+	replacementJobs := buildDeleteRequests(result.packages, orgId, user.NodeId, manifest.ManifestId)
 	var replacementPublishFailures int
 	if len(replacementJobs) > 0 {
-		if err := PublishDeletePackageJobs(ctx, s.sqsClient, s.jobsQueueURL, replacementJobs); err != nil {
+		sender := &sqsQueueSender{client: s.sqsClient, queueURL: s.deleteQueueURL}
+		if err := packagedelete.DeletePackages(ctx, sender, replacementJobs); err != nil {
 			replacementPublishFailures = 1
 			contextLogger.WithError(err).WithField("replacement_count", len(replacementJobs)).
 				Error("failed to enqueue one or more DeletePackageJob messages for replaced predecessors")
 		}
 		// Warn when a single ImportFiles batch generates a lot of replacements.
 		// 100 is a soft threshold — no throttling, just signal so ops can watch
-		// jobs_queue depth if this fires frequently. Pair with a CloudWatch
-		// alarm on jobs_queue ApproximateAgeOfOldestMessage.
+		// queue depth if this fires frequently. Pair with a CloudWatch alarm
+		// on the delete queue's ApproximateAgeOfOldestMessage.
 		if len(replacementJobs) > 100 {
 			contextLogger.WithField("replacement_count", len(replacementJobs)).
-				Warn("large replacement batch — monitor jobs_queue depth")
+				Warn("large replacement batch — monitor delete queue depth")
 		}
 		emitReplacementMetrics(len(replacementJobs), replacementPublishFailures)
 	}

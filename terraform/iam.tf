@@ -281,6 +281,21 @@ data "aws_iam_policy_document" "upload_service_v2_iam_policy_document" {
     ]
   }
 
+  // Send DeletePackageJob messages to jobs_queue_v2 (process-jobs-service)
+  // for the replace-on-conflict flow.
+  statement {
+    sid    = "SendDeletePackageJobs"
+    effect = "Allow"
+
+    actions = [
+      "sqs:SendMessage",
+    ]
+
+    resources = [
+      data.terraform_remote_state.platform_infrastructure.outputs.jobs_queue_v2_arn,
+    ]
+  }
+
   // Interact with JobService KMS key
   statement {
     sid    = "KMSDecryptMessages"
