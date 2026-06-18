@@ -248,6 +248,8 @@ func TestStoreWithPG(t *testing.T) {
 		"import single file with leading slash":           testImportFilesSingleWithLeadingSlash,
 		"import single file in folder with leading slash": testImportFilesSingleInFolderWithLeadingSlash,
 		"import files with leading slash in path values":  testImportFilesWithLeadingSlash,
+		"dedupes a file repeated within one batch":        testImportFilesDuplicateInBatch,
+		"retry import is not skipped across calls":         testImportFilesNotSkippedAcrossCalls,
 	} {
 		t.Run(scenario, func(t *testing.T) {
 			t.Cleanup(func() {
@@ -605,6 +607,117 @@ func testImportFiles(t *testing.T, orgID int, store *UploadHandlerStore) {
 		}
 	}
 
+}
+
+// testImportFilesDuplicateInBatch verifies the in-batch de-duplication still
+// works: AWS can deliver the same S3 create-object event more than once, and
+// when both land in a single batch only one file/package must be created. This
+// is the legitimate purpose of the per-call seenFileUUIDs map.
+func testImportFilesDuplicateInBatch(t *testing.T, orgID int, store *UploadHandlerStore) {
+	datasetID := 1
+	user := pgdbmodels.User{
+		Id:           int64(1),
+		NodeId:       "N:user:99f02be5-009c-4ecd-9006-f016d48628bf",
+		Email:        uuid.NewString(),
+		FirstName:    uuid.NewString(),
+		LastName:     uuid.NewString(),
+		IsSuperAdmin: false,
+		PreferredOrg: int64(orgID),
+	}
+	manifestID := uuid.NewString()
+	manifest := &dydb.ManifestTable{
+		ManifestId:     manifestID,
+		DatasetId:      int64(datasetID),
+		DatasetNodeId:  uuid.NewString(),
+		OrganizationId: int64(orgID),
+		UserId:         user.Id,
+	}
+	uploadID := uuid.NewString()
+	const fileSize = int64(1024)
+	dup := uploadFile.UploadFile{
+		ManifestId: manifestID,
+		UploadId:   uploadID,
+		S3Bucket:   uuid.NewString(),
+		S3Key:      fmt.Sprintf("%s/%s", manifestID, uploadID),
+		Path:       "",
+		Name:       "dup.txt",
+		Extension:  "txt",
+		FileType:   fileType.Text,
+		Type:       packageType.Text,
+		Size:       fileSize,
+	}
+	// Same upload event appears twice in the batch.
+	files := []uploadFile.UploadFile{dup, dup}
+
+	require.NoError(t, store.ImportFiles(context.Background(), datasetID, orgID, user, files, manifest, false, ""))
+
+	// Exactly one package and one file despite the duplicate.
+	test.AssertRowCount(t, store.pgdb, orgID, "packages", 1)
+	test.AssertRowCount(t, store.pgdb, orgID, "files", 1)
+	// Storage counted once, not twice.
+	test.AssertExistsOneWhere(t, store.pgdb, orgID, "dataset_storage",
+		map[string]any{"dataset_id": datasetID, "size": fileSize})
+}
+
+// testImportFilesNotSkippedAcrossCalls is the regression guard for the
+// finalized-but-missing-file bug. seenFileUUIDs used to be process-global and
+// was mutated inside the import transaction; a transient rollback left the UUID
+// recorded, so the caller's retry skipped the file as a "duplicate" while the
+// manifest was still marked Finalized — silently losing the file. The map is
+// now scoped per ImportFiles call, so a second invocation for the same file
+// (SQS redelivery, or a retry after a rolled-back attempt) re-processes it
+// instead of dropping it. The second import re-running is observable as the
+// dataset storage being incremented again.
+func testImportFilesNotSkippedAcrossCalls(t *testing.T, orgID int, store *UploadHandlerStore) {
+	datasetID := 1
+	user := pgdbmodels.User{
+		Id:           int64(1),
+		NodeId:       "N:user:99f02be5-009c-4ecd-9006-f016d48628bf",
+		Email:        uuid.NewString(),
+		FirstName:    uuid.NewString(),
+		LastName:     uuid.NewString(),
+		IsSuperAdmin: false,
+		PreferredOrg: int64(orgID),
+	}
+	manifestID := uuid.NewString()
+	manifest := &dydb.ManifestTable{
+		ManifestId:     manifestID,
+		DatasetId:      int64(datasetID),
+		DatasetNodeId:  uuid.NewString(),
+		OrganizationId: int64(orgID),
+		UserId:         user.Id,
+	}
+	uploadID := uuid.NewString()
+	const fileSize = int64(2048)
+	file := uploadFile.UploadFile{
+		ManifestId: manifestID,
+		UploadId:   uploadID,
+		S3Bucket:   uuid.NewString(),
+		S3Key:      fmt.Sprintf("%s/%s", manifestID, uploadID),
+		Path:       "",
+		Name:       "retry.txt",
+		Extension:  "txt",
+		FileType:   fileType.Text,
+		Type:       packageType.Text,
+		Size:       fileSize,
+	}
+
+	// First import (e.g. the delivery that ultimately rolled back in prod, or
+	// the first SQS delivery).
+	require.NoError(t, store.ImportFiles(context.Background(), datasetID, orgID, user, []uploadFile.UploadFile{file}, manifest, false, ""))
+	test.AssertRowCount(t, store.pgdb, orgID, "files", 1)
+	test.AssertExistsOneWhere(t, store.pgdb, orgID, "dataset_storage",
+		map[string]any{"dataset_id": datasetID, "size": fileSize})
+
+	// Second, independent import call for the same file. With the old global
+	// map this would be silently skipped (storage would stay at fileSize); with
+	// per-call scoping it is re-processed.
+	require.NoError(t, store.ImportFiles(context.Background(), datasetID, orgID, user, []uploadFile.UploadFile{file}, manifest, false, ""))
+	// The DB upsert keeps a single file row by uuid...
+	test.AssertRowCount(t, store.pgdb, orgID, "files", 1)
+	// ...but the file was genuinely re-imported rather than dropped.
+	test.AssertExistsOneWhere(t, store.pgdb, orgID, "dataset_storage",
+		map[string]any{"dataset_id": datasetID, "size": 2 * fileSize})
 }
 
 func testImportFilesWithLeadingSlash(t *testing.T, orgID int, store *UploadHandlerStore) {
