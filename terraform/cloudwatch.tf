@@ -127,15 +127,16 @@ resource "aws_cloudwatch_log_subscription_filter" "cloudwatch_archive_sweeper_gr
 # RECONCILE SCHEDULE + ALARMS        #
 ######################################
 #
-# Fires the reconcile-orphans lambda daily with a 6-hour grace period. The
+# Fires the reconcile-orphans lambda hourly with a 6-hour grace period. The
 # interleaved sync+upload in the agent keeps files in Registered for seconds
 # to minutes per file even on large manifests, so 6 hours is a safe buffer
-# for single-day legitimate uploads.
+# for single-day legitimate uploads. Hourly (vs. the previous daily) cadence
+# caps worst-case recovery of a stuck-Registered file at ~7h instead of ~24h.
 
 resource "aws_cloudwatch_event_rule" "reconcile_schedule" {
-  name                = "${var.environment_name}-${var.service_name}-reconcile-daily-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
-  description         = "Daily sweep for stuck-Registered manifest files past the 6h grace period."
-  schedule_expression = "cron(0 7 * * ? *)" # 07:00 UTC = 02:00 US/Central = 03:00 US/Eastern
+  name                = "${var.environment_name}-${var.service_name}-reconcile-hourly-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
+  description         = "Hourly sweep for stuck-Registered manifest files past the 6h grace period."
+  schedule_expression = "cron(0 * * * ? *)" # top of every hour, UTC
 }
 
 resource "aws_cloudwatch_event_target" "reconcile_schedule_target" {
@@ -156,7 +157,7 @@ resource "aws_cloudwatch_metric_alarm" "orphans_missing" {
   evaluation_periods  = 1
   metric_name         = "OrphansMissing"
   namespace           = "UploadService/Reconcile"
-  period              = 86400
+  period              = 3600
   statistic           = "Sum"
   threshold           = 10
   treat_missing_data  = "notBreaching"
@@ -171,7 +172,7 @@ resource "aws_cloudwatch_metric_alarm" "reconciliation_errors" {
   evaluation_periods  = 1
   metric_name         = "ReconciliationErrors"
   namespace           = "UploadService/Reconcile"
-  period              = 86400
+  period              = 3600
   statistic           = "Sum"
   threshold           = 0
   treat_missing_data  = "notBreaching"
