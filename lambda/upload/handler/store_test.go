@@ -660,17 +660,11 @@ func testImportFilesDuplicateInBatch(t *testing.T, orgID int, store *UploadHandl
 		map[string]any{"dataset_id": datasetID, "size": fileSize})
 }
 
-// testImportFilesNotSkippedAcrossCalls is the regression guard for the
-// finalized-but-missing-file bug. seenFileUUIDs used to be process-global and
-// was mutated inside the import transaction; a transient rollback left the UUID
-// recorded, so the caller's retry skipped the file as a "duplicate" while the
-// manifest was still marked Finalized — silently losing the file. The map is
-// now scoped per ImportFiles call, so a second invocation for the same file
-// (SQS redelivery, or a retry after a rolled-back attempt) re-processes it
-// instead of dropping it. Re-processing is observable via the SNS publish that
-// triggers the Fargate move task: a file the import skips is never published,
-// so it never reaches final storage. With the old global map the second call
-// published nothing and the file was lost.
+// testImportFilesNotSkippedAcrossCalls guards against the bug where a
+// process-global seenFileUUIDs map caused a retried import to skip the file
+// as a "duplicate", silently losing it. A second ImportFiles call for the
+// same file must re-process it, observable via the SNS publish that triggers
+// the move task — a skipped file is never published.
 func testImportFilesNotSkippedAcrossCalls(t *testing.T, orgID int, store *UploadHandlerStore) {
 	datasetID := 1
 	user := pgdbmodels.User{
