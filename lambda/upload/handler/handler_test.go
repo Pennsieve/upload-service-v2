@@ -220,7 +220,7 @@ func TestMain(m *testing.M) {
 		log.Fatal("cannot connect to db:", err)
 	}
 
-	mSNS := test.MockSNS{}
+	mSNS := test.NewMockSNS()
 
 	s3Client := getS3Client()
 	// Production init populates this in InitializeClients(); tests must mirror
@@ -305,7 +305,7 @@ func TestUploadService(t *testing.T) {
 				log.Fatal("cannot connect to db:", err)
 			}
 
-			mSNS := test.MockSNS{}
+			mSNS := test.NewMockSNS()
 			s3Client := test.MockS3{}
 			mPusher := test.NewMockPusherClient()
 			mChangelogger := &test.MockChangelogger{}
