@@ -7,6 +7,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/aws-sdk-go-v2/service/sns"
+	snsTypes "github.com/aws/aws-sdk-go-v2/service/sns/types"
 	"github.com/aws/smithy-go/middleware"
 	"github.com/pennsieve/pennsieve-go-core/pkg/changelog"
 	"github.com/pusher/pusher-http-go/v5"
@@ -14,15 +15,27 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type MockSNS struct{}
+type MockSNS struct {
+	// PublishedEntries records every entry passed to PublishBatch across calls.
+	PublishedEntries []snsTypes.PublishBatchRequestEntry
+}
 
-func (s MockSNS) PublishBatch(ctx context.Context, params *sns.PublishBatchInput, optFns ...func(*sns.Options)) (*sns.PublishBatchOutput, error) {
+func NewMockSNS() *MockSNS {
+	return &MockSNS{}
+}
+
+func (s *MockSNS) PublishBatch(ctx context.Context, params *sns.PublishBatchInput, optFns ...func(*sns.Options)) (*sns.PublishBatchOutput, error) {
+	s.PublishedEntries = append(s.PublishedEntries, params.PublishBatchRequestEntries...)
 	result := sns.PublishBatchOutput{
 		Failed:         nil,
 		Successful:     nil,
 		ResultMetadata: middleware.Metadata{},
 	}
 	return &result, nil
+}
+
+func (s *MockSNS) Clear() {
+	s.PublishedEntries = nil
 }
 
 type MockS3 struct{}

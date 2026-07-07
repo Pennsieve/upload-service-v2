@@ -35,7 +35,7 @@ func TestStore(t *testing.T) {
 				log.Fatal("cannot connect to db:", err)
 			}
 
-			mSNS := test.MockSNS{}
+			mSNS := test.NewMockSNS()
 			mS3 := test.MockS3{}
 			mPusher := test.NewMockPusherClient()
 			mChangelogger := &test.MockChangelogger{}
@@ -228,7 +228,7 @@ func TestStoreWithPG(t *testing.T) {
 		log.Fatal("cannot connect to db:", err)
 	}
 
-	mSNS := test.MockSNS{}
+	mSNS := test.NewMockSNS()
 	mS3 := test.MockS3{}
 	mChangelogger := &test.MockChangelogger{}
 	mPusher := test.NewMockPusherClient()
@@ -248,6 +248,8 @@ func TestStoreWithPG(t *testing.T) {
 		"import single file with leading slash":           testImportFilesSingleWithLeadingSlash,
 		"import single file in folder with leading slash": testImportFilesSingleInFolderWithLeadingSlash,
 		"import files with leading slash in path values":  testImportFilesWithLeadingSlash,
+		"dedupes a file repeated within one batch":        testImportFilesDuplicateInBatch,
+		"retry import is not skipped across calls":        testImportFilesNotSkippedAcrossCalls,
 	} {
 		t.Run(scenario, func(t *testing.T) {
 			t.Cleanup(func() {
@@ -258,6 +260,7 @@ func TestStoreWithPG(t *testing.T) {
 				testHelpers.Truncate(t, store.pgdb, orgID, "dataset_storage")
 				mChangelogger.Clear()
 				mPusher.Clear()
+				mSNS.Clear()
 			})
 
 			fn(t, orgID, store)
@@ -605,6 +608,124 @@ func testImportFiles(t *testing.T, orgID int, store *UploadHandlerStore) {
 		}
 	}
 
+}
+
+// testImportFilesDuplicateInBatch verifies the in-batch de-duplication still
+// works: AWS can deliver the same S3 create-object event more than once, and
+// when both land in a single batch only one file/package must be created. This
+// is the legitimate purpose of the per-call seenFileUUIDs map.
+func testImportFilesDuplicateInBatch(t *testing.T, orgID int, store *UploadHandlerStore) {
+	datasetID := 1
+	user := pgdbmodels.User{
+		Id:           int64(1),
+		NodeId:       "N:user:99f02be5-009c-4ecd-9006-f016d48628bf",
+		Email:        uuid.NewString(),
+		FirstName:    uuid.NewString(),
+		LastName:     uuid.NewString(),
+		IsSuperAdmin: false,
+		PreferredOrg: int64(orgID),
+	}
+	manifestID := uuid.NewString()
+	manifest := &dydb.ManifestTable{
+		ManifestId:     manifestID,
+		DatasetId:      int64(datasetID),
+		DatasetNodeId:  uuid.NewString(),
+		OrganizationId: int64(orgID),
+		UserId:         user.Id,
+	}
+	uploadID := uuid.NewString()
+	const fileSize = int64(1024)
+	dup := uploadFile.UploadFile{
+		ManifestId: manifestID,
+		UploadId:   uploadID,
+		S3Bucket:   uuid.NewString(),
+		S3Key:      fmt.Sprintf("%s/%s", manifestID, uploadID),
+		Path:       "",
+		Name:       "dup.txt",
+		Extension:  "txt",
+		FileType:   fileType.Text,
+		Type:       packageType.Text,
+		Size:       fileSize,
+	}
+	// Same upload event appears twice in the batch.
+	files := []uploadFile.UploadFile{dup, dup}
+
+	require.NoError(t, store.ImportFiles(context.Background(), datasetID, orgID, user, files, manifest, false, ""))
+
+	// Exactly one package and one file despite the duplicate.
+	test.AssertRowCount(t, store.pgdb, orgID, "packages", 1)
+	test.AssertRowCount(t, store.pgdb, orgID, "files", 1)
+	// Storage counted once, not twice.
+	test.AssertExistsOneWhere(t, store.pgdb, orgID, "dataset_storage",
+		map[string]any{"dataset_id": datasetID, "size": fileSize})
+}
+
+// testImportFilesNotSkippedAcrossCalls guards against the bug where a
+// process-global seenFileUUIDs map caused a retried import to skip the file
+// as a "duplicate", silently losing it. A second ImportFiles call for the
+// same file must re-process it, observable via the SNS publish that triggers
+// the move task — a skipped file is never published.
+func testImportFilesNotSkippedAcrossCalls(t *testing.T, orgID int, store *UploadHandlerStore) {
+	datasetID := 1
+	user := pgdbmodels.User{
+		Id:           int64(1),
+		NodeId:       "N:user:99f02be5-009c-4ecd-9006-f016d48628bf",
+		Email:        uuid.NewString(),
+		FirstName:    uuid.NewString(),
+		LastName:     uuid.NewString(),
+		IsSuperAdmin: false,
+		PreferredOrg: int64(orgID),
+	}
+	manifestID := uuid.NewString()
+	manifest := &dydb.ManifestTable{
+		ManifestId:     manifestID,
+		DatasetId:      int64(datasetID),
+		DatasetNodeId:  uuid.NewString(),
+		OrganizationId: int64(orgID),
+		UserId:         user.Id,
+	}
+	uploadID := uuid.NewString()
+	const fileSize = int64(2048)
+	file := uploadFile.UploadFile{
+		ManifestId: manifestID,
+		UploadId:   uploadID,
+		S3Bucket:   uuid.NewString(),
+		S3Key:      fmt.Sprintf("%s/%s", manifestID, uploadID),
+		Path:       "",
+		Name:       "retry.txt",
+		Extension:  "txt",
+		FileType:   fileType.Text,
+		Type:       packageType.Text,
+		Size:       fileSize,
+	}
+
+	snsMock := store.SNSClient.(*test.MockSNS)
+
+	// First import (e.g. the delivery that ultimately rolled back in prod, or
+	// the first SQS delivery).
+	require.NoError(t, store.ImportFiles(context.Background(), datasetID, orgID, user, []uploadFile.UploadFile{file}, manifest, false, ""))
+	test.AssertRowCount(t, store.pgdb, orgID, "files", 1)
+	test.AssertExistsOneWhere(t, store.pgdb, orgID, "dataset_storage",
+		map[string]any{"dataset_id": datasetID, "size": fileSize})
+	require.Len(t, snsMock.PublishedEntries, 1)
+	assert.Equal(t, uploadID, *snsMock.PublishedEntries[0].Id)
+
+	// Second, independent import call for the same file. With the old global
+	// map the file was silently skipped: nothing reached AddFiles, so nothing
+	// was published to the move-task topic and the file never arrived at final
+	// storage. With per-call scoping the file is fully re-processed.
+	snsMock.Clear()
+	require.NoError(t, store.ImportFiles(context.Background(), datasetID, orgID, user, []uploadFile.UploadFile{file}, manifest, false, ""))
+	// The DB upsert keeps a single package and file row — the retry does not
+	// duplicate anything.
+	test.AssertRowCount(t, store.pgdb, orgID, "packages", 1)
+	test.AssertRowCount(t, store.pgdb, orgID, "files", 1)
+	test.AssertExistsOneWhere(t, store.pgdb, orgID, "files",
+		map[string]any{"uuid": uploadID, "size": fileSize})
+	// The retry went through the full import pipeline: the file was published
+	// to the move-task topic again rather than dropped.
+	require.Len(t, snsMock.PublishedEntries, 1)
+	assert.Equal(t, uploadID, *snsMock.PublishedEntries[0].Id)
 }
 
 func testImportFilesWithLeadingSlash(t *testing.T, orgID int, store *UploadHandlerStore) {

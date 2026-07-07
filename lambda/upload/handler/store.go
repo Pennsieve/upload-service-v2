@@ -35,12 +35,6 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// seenFileUUIDs allows this Lambda to avoid trying to create the same file in Postgres more than once.
-// Can happen if AWS sends out the same S3 create object event more than once.
-// This could be a local variable to ImportFiles(). Just here in case the Lambda gets used more than once
-// we get a little more de-duplication.
-var seenFileUUIDs = map[uuid.UUID]int{}
-
 // UploadHandlerStore provides the Queries interface and a db instance.
 type UploadHandlerStore struct {
 	pg                 *UploadPgQueries
@@ -203,6 +197,16 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 
 	// 3. Create packages and Files in Transaction
 	strategy := conflictStrategyFromAttr(onConflict)
+	// seenFileUUIDs de-duplicates the same file appearing more than once
+	// within this batch — AWS can deliver the same S3 create-object event
+	// twice. It is scoped to this call (not process-global) on purpose: the
+	// transaction below can roll back on a transient failure (e.g. row-lock
+	// contention during folder/package creation), and the caller retries.
+	// A process-global map would survive the rollback, causing the retry to
+	// skip the file as a "duplicate" while the manifest is still marked
+	// Finalized — silently losing the file. Per-call scope means every retry
+	// starts clean.
+	seenFileUUIDs := map[uuid.UUID]int{}
 	res, err = s.execTx(ctx, func(qtx *UploadPgQueries) (interface{}, error) {
 		packages, err := qtx.AddPackagesWithConflict(context.Background(), pkgParams, strategy)
 		if err != nil {

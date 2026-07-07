@@ -34,7 +34,7 @@ func TestDyQueries(t *testing.T) {
 				log.Fatal("cannot connect to db:", err)
 			}
 
-			mSNS := test.MockSNS{}
+			mSNS := test.NewMockSNS()
 			mS3 := test.MockS3{}
 			mPusher := test.NewMockPusherClient()
 			mChangelogger := &test.MockChangelogger{}
