@@ -77,6 +77,73 @@ func TestIsTerminalResolveError(t *testing.T) {
 	}
 }
 
+// TestValidatePayload covers mode selection. Handle's first real action is
+// ConnectRDS, so an invalid payload has to be rejected before that — and a
+// payload that accidentally satisfies two modes must not silently pick one,
+// since "reportOnly plus gracePeriodHours" would otherwise run the mutating
+// sweep when the operator asked for a read-only audit.
+func TestValidatePayload(t *testing.T) {
+	tests := []struct {
+		name    string
+		payload Payload
+		wantErr bool
+	}{
+		{name: "grace period alone", payload: Payload{GracePeriodHours: 6}},
+		{name: "manifest alone", payload: Payload{ManifestNodeID: "abc"}},
+		{name: "reportOnly alone", payload: Payload{ReportOnly: true}},
+		{name: "reportOnly with dryRun is fine", payload: Payload{ReportOnly: true, DryRun: true}},
+		{name: "nothing set", payload: Payload{}, wantErr: true},
+		{name: "empty except concurrency", payload: Payload{Concurrency: 8}, wantErr: true},
+		{name: "reportOnly plus grace period", payload: Payload{ReportOnly: true, GracePeriodHours: 6}, wantErr: true},
+		{name: "reportOnly plus manifest", payload: Payload{ReportOnly: true, ManifestNodeID: "abc"}, wantErr: true},
+		{name: "manifest plus grace period", payload: Payload{ManifestNodeID: "abc", GracePeriodHours: 6}, wantErr: true},
+		{name: "all three", payload: Payload{ReportOnly: true, ManifestNodeID: "abc", GracePeriodHours: 6}, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validatePayload(tt.payload)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("validatePayload(%+v) error = %v, wantErr %v", tt.payload, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// TestEmitMetricsReportFields checks that reportOnly runs publish the orphan-byte
+// metrics and ordinary runs do not — an always-present zero would make
+// "nobody has measured this" indistinguishable from "measured, and it is zero".
+func TestEmitMetricsReportFields(t *testing.T) {
+	withReport := Result{Report: &OrphanReport{ObjectsPresent: 3, BytesPresent: 4096}}
+	if got := metricNames(withReport); !contains(got, "OrphanedBytesPresent") || !contains(got, "OrphanedObjectsPresent") {
+		t.Errorf("reportOnly run should publish orphan metrics, got %v", got)
+	}
+	if got := metricNames(Result{Recovered: 5}); contains(got, "OrphanedBytesPresent") {
+		t.Errorf("non-report run should not publish orphan metrics, got %v", got)
+	}
+}
+
+// metricNames pulls the published metric names out of the EMF payload.
+func metricNames(r Result) []string {
+	emf := buildEMF(r)
+	aws := emf["_aws"].(map[string]any)
+	defs := aws["CloudWatchMetrics"].([]map[string]any)
+	var out []string
+	for _, m := range defs[0]["Metrics"].([]map[string]string) {
+		out = append(out, m["Name"])
+	}
+	return out
+}
+
+func contains(hay []string, needle string) bool {
+	for _, h := range hay {
+		if h == needle {
+			return true
+		}
+	}
+	return false
+}
+
 // TestDatasetNotFoundErrorIsMatchable pins the assumption resolveManifest depends
 // on: pgdb converts sql.ErrNoRows into a typed DatasetNotFoundError rather than
 // propagating ErrNoRows, and that type is reachable through errors.As after

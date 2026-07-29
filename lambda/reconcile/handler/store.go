@@ -53,7 +53,25 @@ type resolvedManifest struct {
 	storageRegion string
 }
 
+// resolveManifest locates a manifest's objects and confirms the manifest is
+// actually importable. Used by the recovery paths, which must not enqueue work
+// that can never succeed.
 func (s *store) resolveManifest(ctx context.Context, manifestID string) (*resolvedManifest, error) {
+	r, err := s.resolveManifestLocation(ctx, manifestID)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.assertDatasetExists(ctx, r.manifest); err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+// resolveManifestLocation works out which bucket, region and key prefix a
+// manifest's objects live under. Deliberately says nothing about whether the
+// manifest can be imported — reportOnly needs to locate objects belonging to
+// deleted datasets, which are exactly the ones resolveManifest rejects.
+func (s *store) resolveManifestLocation(ctx context.Context, manifestID string) (*resolvedManifest, error) {
 	dy := dyQueries.New(s.dy)
 	m, err := dy.GetManifestById(ctx, s.manifestTable, manifestID)
 	if err != nil {
@@ -63,37 +81,6 @@ func (s *store) resolveManifest(ctx context.Context, manifestID string) (*resolv
 	if err != nil {
 		return nil, fmt.Errorf("get organization %d: %w", m.OrganizationId, err)
 	}
-
-	// Confirm the dataset still exists before treating this manifest as
-	// recoverable. Without this check a manifest whose dataset row has been
-	// deleted looks perfectly healthy here — the DynamoDB manifest row and the
-	// org row both survive dataset deletion — so every run HEADs the objects,
-	// re-enqueues them, and the upload lambda fails each one on
-	// packages_dataset_id_fkey. That loop is what pinned the prod
-	// upload_trigger DLQ at ~1470 messages (210 files/day x 7-day retention)
-	// and fired the DLQ alarm daily.
-	//
-	// datasets lives in the per-org schema and pgdb's getDataset issues an
-	// unqualified `FROM datasets`, so the search_path has to be set first.
-	// Safe here because resolveManifest only runs on reconcileByGracePeriod's
-	// paginator goroutine (results are cached per manifest) — the concurrent
-	// HEAD workers never touch Postgres, so no other goroutine can observe a
-	// half-switched search_path.
-	orgPg, err := s.pg.WithOrg(int(m.OrganizationId))
-	if err != nil {
-		return nil, fmt.Errorf("set search_path for org %d: %w", m.OrganizationId, err)
-	}
-	if _, err := orgPg.GetDatasetById(ctx, m.DatasetId); err != nil {
-		// pgdb's scanDataset converts sql.ErrNoRows into a typed
-		// DatasetNotFoundError, so matching on sql.ErrNoRows here would never
-		// fire. Any other error is treated as possibly-transient below.
-		var notFound pgQueries.DatasetNotFoundError
-		if errors.As(err, &notFound) {
-			return nil, fmt.Errorf("%w: dataset %d (org %d)", errDatasetGone, m.DatasetId, m.OrganizationId)
-		}
-		return nil, fmt.Errorf("get dataset %d: %w", m.DatasetId, err)
-	}
-
 	bucket := s.defaultStorageBucket
 	if org.StorageBucket.Valid {
 		bucket = org.StorageBucket.String
@@ -108,6 +95,39 @@ func (s *store) resolveManifest(ctx context.Context, manifestID string) (*resolv
 		keyPrefix:     fmt.Sprintf("O%d/D%d/%s", m.OrganizationId, m.DatasetId, manifestID),
 		storageRegion: region,
 	}, nil
+}
+
+// assertDatasetExists returns errDatasetGone when the manifest's dataset row is
+// no longer in Postgres.
+//
+// Without this check a manifest whose dataset has been deleted looks perfectly
+// healthy — the DynamoDB manifest row and the org row both survive dataset
+// deletion — so every run HEADs the objects, re-enqueues them, and the upload
+// lambda fails each one on packages_dataset_id_fkey. That loop is what pinned
+// the prod upload_trigger DLQ at ~1470 messages (210 files/day x 7-day
+// retention) and fired the DLQ alarm daily.
+//
+// datasets lives in the per-org schema and pgdb's getDataset issues an
+// unqualified `FROM datasets`, so the search_path has to be set first. Safe
+// here because this only runs on reconcileByGracePeriod's paginator goroutine
+// (results are cached per manifest) — the concurrent HEAD workers never touch
+// Postgres, so no other goroutine can observe a half-switched search_path.
+func (s *store) assertDatasetExists(ctx context.Context, m *dydb.ManifestTable) error {
+	orgPg, err := s.pg.WithOrg(int(m.OrganizationId))
+	if err != nil {
+		return fmt.Errorf("set search_path for org %d: %w", m.OrganizationId, err)
+	}
+	if _, err := orgPg.GetDatasetById(ctx, m.DatasetId); err != nil {
+		// pgdb's scanDataset converts sql.ErrNoRows into a typed
+		// DatasetNotFoundError, so matching on sql.ErrNoRows here would never
+		// fire. Any other error is treated as possibly-transient by the caller.
+		var notFound pgQueries.DatasetNotFoundError
+		if errors.As(err, &notFound) {
+			return fmt.Errorf("%w: dataset %d (org %d)", errDatasetGone, m.DatasetId, m.OrganizationId)
+		}
+		return fmt.Errorf("get dataset %d: %w", m.DatasetId, err)
+	}
+	return nil
 }
 
 // reconcileManifest recovers all stuck-Registered files for a single
@@ -269,6 +289,146 @@ func (s *store) reconcileByGracePeriod(ctx context.Context, gracePeriodHours int
 	result.ManifestsScanned = scanned
 	s.mu.Unlock()
 	return nil
+}
+
+// reportFailedOrphans audits every FailedOrphan row and reports which ones still
+// have bytes in the storage bucket. Strictly read-only: no UpdateItem, no
+// SendMessage, no DeleteObject. Its purpose is to size the population a cleanup
+// tool would target, so that decision can be made against a number rather than
+// an assumption.
+//
+// Most FailedOrphan rows are expected to have no object at all — the status is
+// normally reached via the HEAD-404 path, meaning the client never finished its
+// PUT. Rows whose object *does* survive are the interesting ones, and they are
+// broken out per manifest with a datasetGone flag.
+func (s *store) reportFailedOrphans(ctx context.Context, concurrency int, result *Result) error {
+	report := &OrphanReport{PerManifest: make(map[string]OrphanManifestStats)}
+	result.Report = report
+
+	// Resolution is cached per manifest and, like the recovery path, happens on
+	// this goroutine only — assertDatasetExists mutates the connection's
+	// search_path, so it must not race the HEAD workers.
+	type resolution struct {
+		loc         *resolvedManifest
+		datasetGone bool
+		err         error
+	}
+	cache := make(map[string]*resolution)
+
+	sem := make(chan struct{}, concurrency)
+	var wg sync.WaitGroup
+
+	p := dynamodb.NewQueryPaginator(s.dy, &dynamodb.QueryInput{
+		TableName:              aws.String(s.manifestFileTable),
+		IndexName:              aws.String("StatusIndex"),
+		KeyConditionExpression: aws.String("#status = :hashKey"),
+		ExpressionAttributeValues: map[string]dyTypes.AttributeValue{
+			":hashKey": &dyTypes.AttributeValueMemberS{Value: manifestFile.FailedOrphan.String()},
+		},
+		ExpressionAttributeNames: map[string]string{"#status": "Status"},
+	})
+
+	for p.HasMorePages() {
+		page, err := p.NextPage(ctx)
+		if err != nil {
+			wg.Wait()
+			return fmt.Errorf("scan StatusIndex for FailedOrphan: %w", err)
+		}
+		for _, item := range page.Items {
+			var manifestID, uploadID string
+			_ = attributevalue.Unmarshal(item["ManifestId"], &manifestID)
+			_ = attributevalue.Unmarshal(item["UploadId"], &uploadID)
+			if manifestID == "" || uploadID == "" {
+				continue
+			}
+
+			res, ok := cache[manifestID]
+			if !ok {
+				res = &resolution{}
+				loc, err := s.resolveManifestLocation(ctx, manifestID)
+				if err != nil {
+					// Can't locate the objects (manifest row gone, org gone,
+					// region lookup failed). Nothing to report for these beyond
+					// the row count.
+					res.err = err
+					log.WithError(err).WithField("manifest_id", manifestID).
+						Debug("reportFailedOrphans: cannot locate manifest, skipping")
+				} else {
+					res.loc = loc
+					res.datasetGone = errors.Is(s.assertDatasetExists(ctx, loc.manifest), errDatasetGone)
+				}
+				cache[manifestID] = res
+			}
+
+			s.bumpReportScanned(report, manifestID, res.datasetGone)
+			if res.loc == nil {
+				continue
+			}
+
+			sem <- struct{}{}
+			wg.Add(1)
+			go func(loc *resolvedManifest, mid, uid string) {
+				defer wg.Done()
+				defer func() { <-sem }()
+
+				head, err := s.s3.HeadObject(ctx, &s3.HeadObjectInput{
+					Bucket: aws.String(loc.storageBucket),
+					Key:    aws.String(fmt.Sprintf("%s/%s", loc.keyPrefix, uid)),
+				}, func(o *s3.Options) {
+					// Workspace buckets are not all in us-east-1 (there is an
+					// af-south-1 one), and the default client would 301 on those.
+					o.Region = loc.storageRegion
+				})
+				if err != nil {
+					s.mu.Lock()
+					if isS3NotFound(err) {
+						report.ObjectsAbsent++
+					} else {
+						// Unclassifiable — the report undercounts, so say so
+						// rather than silently treating it as absent.
+						report.HeadErrors++
+					}
+					s.mu.Unlock()
+					return
+				}
+				s.bumpReportPresent(report, mid, aws.ToInt64(head.ContentLength))
+			}(res.loc, manifestID, uploadID)
+		}
+	}
+	wg.Wait()
+
+	log.WithFields(log.Fields{
+		"files_scanned":   report.FilesScanned,
+		"objects_present": report.ObjectsPresent,
+		"objects_absent":  report.ObjectsAbsent,
+		"bytes_present":   report.BytesPresent,
+		"head_errors":     report.HeadErrors,
+		"manifests":       len(report.PerManifest),
+	}).Info("failed-orphan report complete")
+	return nil
+}
+
+func (s *store) bumpReportScanned(r *OrphanReport, manifestID string, datasetGone bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r.FilesScanned++
+	st := r.PerManifest[manifestID]
+	st.FilesScanned++
+	if datasetGone {
+		st.DatasetGone = true
+	}
+	r.PerManifest[manifestID] = st
+}
+
+func (s *store) bumpReportPresent(r *OrphanReport, manifestID string, size int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r.ObjectsPresent++
+	r.BytesPresent += size
+	st := r.PerManifest[manifestID]
+	st.ObjectsPresent++
+	st.BytesPresent += size
+	r.PerManifest[manifestID] = st
 }
 
 // errDatasetGone marks a resolve failure caused by the manifest's dataset row
@@ -480,7 +640,7 @@ func (s *store) markFailedOrphan(ctx context.Context, manifestID, uploadID strin
 		// Drop from the sparse InProgressIndex GSI since FailedOrphan is
 		// terminal. Setting Status alone isn't enough — InProgressIndex is
 		// queried by CheckUpdateManifestStatus to decide manifest completion.
-		UpdateExpression: aws.String("SET #s = :new REMOVE InProgress"),
+		UpdateExpression:    aws.String("SET #s = :new REMOVE InProgress"),
 		ConditionExpression: aws.String("#s = :reg"),
 		ExpressionAttributeNames: map[string]string{
 			"#s": "Status",
