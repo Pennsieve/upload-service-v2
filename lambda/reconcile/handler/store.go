@@ -63,6 +63,37 @@ func (s *store) resolveManifest(ctx context.Context, manifestID string) (*resolv
 	if err != nil {
 		return nil, fmt.Errorf("get organization %d: %w", m.OrganizationId, err)
 	}
+
+	// Confirm the dataset still exists before treating this manifest as
+	// recoverable. Without this check a manifest whose dataset row has been
+	// deleted looks perfectly healthy here — the DynamoDB manifest row and the
+	// org row both survive dataset deletion — so every run HEADs the objects,
+	// re-enqueues them, and the upload lambda fails each one on
+	// packages_dataset_id_fkey. That loop is what pinned the prod
+	// upload_trigger DLQ at ~1470 messages (210 files/day x 7-day retention)
+	// and fired the DLQ alarm daily.
+	//
+	// datasets lives in the per-org schema and pgdb's getDataset issues an
+	// unqualified `FROM datasets`, so the search_path has to be set first.
+	// Safe here because resolveManifest only runs on reconcileByGracePeriod's
+	// paginator goroutine (results are cached per manifest) — the concurrent
+	// HEAD workers never touch Postgres, so no other goroutine can observe a
+	// half-switched search_path.
+	orgPg, err := s.pg.WithOrg(int(m.OrganizationId))
+	if err != nil {
+		return nil, fmt.Errorf("set search_path for org %d: %w", m.OrganizationId, err)
+	}
+	if _, err := orgPg.GetDatasetById(ctx, m.DatasetId); err != nil {
+		// pgdb's scanDataset converts sql.ErrNoRows into a typed
+		// DatasetNotFoundError, so matching on sql.ErrNoRows here would never
+		// fire. Any other error is treated as possibly-transient below.
+		var notFound pgQueries.DatasetNotFoundError
+		if errors.As(err, &notFound) {
+			return nil, fmt.Errorf("%w: dataset %d (org %d)", errDatasetGone, m.DatasetId, m.OrganizationId)
+		}
+		return nil, fmt.Errorf("get dataset %d: %w", m.DatasetId, err)
+	}
+
 	bucket := s.defaultStorageBucket
 	if org.StorageBucket.Valid {
 		bucket = org.StorageBucket.String
@@ -118,11 +149,12 @@ func (s *store) reconcileManifest(ctx context.Context, manifestID string, dryRun
 func (s *store) reconcileByGracePeriod(ctx context.Context, gracePeriodHours int, dryRun bool, concurrency int, result *Result) error {
 	cutoff := time.Now().Add(-time.Duration(gracePeriodHours) * time.Hour).Unix()
 	cache := make(map[string]*resolvedManifest)
-	// Tracks manifest IDs whose parent row in manifest_table is confirmed
-	// gone (not a transient error). Files pointing at these manifests have
-	// no recoverable state — flip them to FailedOrphan so they drop out of
-	// the StatusIndex=Registered scan on future runs.
-	missingManifests := make(map[string]bool)
+	// Tracks manifest IDs that can never be imported — either the manifest_table
+	// row or the Postgres dataset row is confirmed gone (not a transient error).
+	// Files pointing at these have no recoverable state, so flip them to
+	// FailedOrphan and they drop out of the StatusIndex=Registered scan on
+	// future runs instead of being re-enqueued forever.
+	unrecoverableManifests := make(map[string]bool)
 
 	sem := make(chan struct{}, concurrency)
 	var wg sync.WaitGroup
@@ -155,21 +187,28 @@ func (s *store) reconcileByGracePeriod(ctx context.Context, gracePeriodHours int
 			if !ok {
 				r, err := s.resolveManifest(ctx, manifestID)
 				if err != nil {
-					log.WithError(err).WithField("manifest_id", manifestID).Warn("resolve failed, skipping manifest")
-					s.mu.Lock()
-					result.Errors = append(result.Errors, err.Error())
-					s.mu.Unlock()
 					cache[manifestID] = nil
-					// Only treat the specific "manifest not found" case as a
-					// clean orphan. Any other resolve error (Postgres 5xx,
-					// throttling, missing org row, etc.) might be transient,
-					// so we skip-without-flipping and let a future run retry.
-					if isManifestNotFound(err) {
-						missingManifests[manifestID] = true
-					}
-					if !missingManifests[manifestID] {
+					// Only permanent failures (manifest row gone, dataset row
+					// gone) become clean orphans. Any other resolve error
+					// (Postgres 5xx, throttling, missing org row, region
+					// lookup) might be transient, so we skip-without-flipping
+					// and let a future run retry.
+					if !isTerminalResolveError(err) {
+						log.WithError(err).WithField("manifest_id", manifestID).Warn("resolve failed, skipping manifest")
+						s.mu.Lock()
+						result.Errors = append(result.Errors, err.Error())
+						s.mu.Unlock()
 						continue
 					}
+					unrecoverableManifests[manifestID] = true
+					// Deliberately NOT appended to result.Errors. This is an
+					// expected terminal state that we handle by flipping the rows
+					// to FailedOrphan; counting it as a reconciliation error would
+					// fire the errors alarm on every run until the flip lands,
+					// which just trains everyone to ignore that alarm. The rows are
+					// still counted toward Missing.
+					log.WithError(err).WithField("manifest_id", manifestID).
+						Info("manifest unrecoverable, flipping its rows to FailedOrphan")
 					// fall through to orphan-mark branch below
 				} else {
 					// Grace period check at the manifest level: skip if the
@@ -184,11 +223,14 @@ func (s *store) reconcileByGracePeriod(ctx context.Context, gracePeriodHours int
 			}
 
 			if resolved == nil {
-				if !missingManifests[manifestID] {
+				if !unrecoverableManifests[manifestID] {
 					continue
 				}
-				// Parent manifest row is gone — just flip this row to
-				// FailedOrphan. No HEAD needed (no bucket to check).
+				// Manifest is unrecoverable (its row or its dataset is gone) —
+				// just flip this row to FailedOrphan. No HEAD needed: for a
+				// missing manifest there's no bucket to check, and for a deleted
+				// dataset the object may well still be there but can never be
+				// imported.
 				if dryRun {
 					s.bumpScanned(result, manifestID)
 					s.bumpMissing(result, manifestID)
@@ -217,7 +259,7 @@ func (s *store) reconcileByGracePeriod(ctx context.Context, gracePeriodHours int
 
 	// Count manifests actually visited: cache entries with resolved != nil,
 	// plus confirmed-missing manifests (whose file rows we cleaned up).
-	scanned := len(missingManifests)
+	scanned := len(unrecoverableManifests)
 	for _, r := range cache {
 		if r != nil {
 			scanned++
@@ -229,17 +271,39 @@ func (s *store) reconcileByGracePeriod(ctx context.Context, gracePeriodHours int
 	return nil
 }
 
-// isManifestNotFound matches the hardcoded error string from
-// pennsieve-go-core's GetManifestById (no sentinel error or typed error
-// exists in that package). Other resolve errors (Postgres failures,
-// throttles, bad org rows) must not trigger an orphan flip.
-func isManifestNotFound(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "Manifest not found")
+// errDatasetGone marks a resolve failure caused by the manifest's dataset row
+// no longer existing in Postgres. A sentinel rather than a string match because
+// this one we raise ourselves.
+var errDatasetGone = errors.New("dataset no longer exists")
+
+// isTerminalResolveError reports whether a resolveManifest failure is permanent,
+// meaning no future run can succeed and the manifest_files rows should be
+// flipped to FailedOrphan rather than retried forever.
+//
+// Two cases qualify:
+//   - the DynamoDB manifest row is gone
+//   - the Postgres dataset row is gone (packages has an FK to datasets, so the
+//     import can never succeed)
+//
+// Everything else — Postgres 5xx, DynamoDB throttling, a missing org row, an
+// S3 region lookup failure — may be transient and must leave the rows in
+// Registered so a later run can retry.
+func isTerminalResolveError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, errDatasetGone) {
+		return true
+	}
+	// GetManifestById reports a missing manifest with a bare error string;
+	// pennsieve-go-core exposes no sentinel or typed error to match on.
+	return strings.Contains(err.Error(), "Manifest not found")
 }
 
-// markOrphanedRow flips a single manifest_files row whose parent manifest
-// is known-gone. Separate from reconcileFile because there's no bucket or
-// keyPrefix to resolve — all we have is manifestID + uploadID.
+// markOrphanedRow flips a single manifest_files row whose manifest is
+// unrecoverable — either the manifest row or its dataset is known-gone.
+// Separate from reconcileFile because there's no bucket or keyPrefix to
+// resolve (and nothing to HEAD) — all we have is manifestID + uploadID.
 func (s *store) markOrphanedRow(ctx context.Context, manifestID, uploadID string, result *Result) {
 	s.bumpScanned(result, manifestID)
 	if err := s.markFailedOrphan(ctx, manifestID, uploadID); err != nil {
@@ -247,7 +311,7 @@ func (s *store) markOrphanedRow(ctx context.Context, manifestID, uploadID string
 		log.WithError(err).WithFields(log.Fields{
 			"manifest_id": manifestID,
 			"upload_id":   uploadID,
-		}).Warn("failed to mark orphaned row FailedOrphan (parent manifest missing)")
+		}).Warn("failed to mark orphaned row FailedOrphan (manifest or dataset gone)")
 		return
 	}
 	s.bumpMissing(result, manifestID)
