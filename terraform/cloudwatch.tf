@@ -132,6 +132,12 @@ resource "aws_cloudwatch_log_subscription_filter" "cloudwatch_archive_sweeper_gr
 # to minutes per file even on large manifests, so 6 hours is a safe buffer
 # for single-day legitimate uploads. Hourly (vs. the previous daily) cadence
 # caps worst-case recovery of a stuck-Registered file at ~7h instead of ~24h.
+#
+# Cutting the grace period below 6h needs a per-file freshness check first.
+# The grace check is evaluated against the *manifest's* DateCreated, which can't
+# distinguish a file stranded by a dead client from one still in flight on a
+# long-running manifest. HeadObject already returns LastModified, so the object's
+# own age is available without a schema change — see the reconcile lambda.
 
 resource "aws_cloudwatch_event_rule" "reconcile_schedule" {
   name                = "${var.environment_name}-${var.service_name}-reconcile-hourly-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
@@ -160,6 +166,42 @@ resource "aws_cloudwatch_metric_alarm" "orphans_missing" {
   period              = 3600
   statistic           = "Sum"
   threshold           = 10
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = [aws_sns_topic.reconcile_alerts.arn]
+}
+
+# Sustained recovery activity. In a healthy system the reconciler recovers
+# roughly nothing: a file only reaches it if a client died between its S3 PUT
+# and its finalize call, which the pennsieve-app finalize journal now handles
+# client-side. So a *persistently* nonzero recovery count means something
+# upstream is leaking files, and the reconciler is quietly papering over it.
+#
+# This is the alarm that was missing. `OrphansRecovered` counts successful SQS
+# enqueues, not successful imports, so when 210 files for a deleted dataset were
+# re-enqueued and re-failed every single day for six weeks, the metric reported
+# a healthy-looking 210/day recovery and nothing paged. The only signal was the
+# DLQ alarm, which was written off as noise.
+#
+# Threshold is generous (24 hourly runs; a genuine client crash mid-upload can
+# legitimately strand a few hundred files in one batch) — this is meant to catch
+# a sustained leak, not a one-off.
+#
+# Deliberately keeps period = 86400 while its siblings above moved to 3600 for
+# the hourly cadence. Those alarms answer "did this run go wrong?", which should
+# be evaluated per run. This one answers "has recovery been happening day after
+# day?", so a daily bucket over 3 evaluation periods is the point — at 3600 it
+# would fire on any single busy hour and tell us nothing about a sustained leak.
+resource "aws_cloudwatch_metric_alarm" "orphans_recovered_sustained" {
+  alarm_name          = "${var.environment_name}-${var.service_name}-reconcile-orphans-recovered-sustained-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
+  alarm_description   = "Reconciler has been recovering orphaned files every day for 3 days. Something upstream is stranding files between S3 PUT and finalize; the sweep is masking it."
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 3
+  datapoints_to_alarm = 3
+  metric_name         = "OrphansRecovered"
+  namespace           = "UploadService/Reconcile"
+  period              = 86400
+  statistic           = "Sum"
+  threshold           = 500
   treat_missing_data  = "notBreaching"
   alarm_actions       = [aws_sns_topic.reconcile_alerts.arn]
 }
