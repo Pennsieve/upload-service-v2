@@ -32,7 +32,7 @@ test-ci:
 	mkdir -p testdata
 	chmod -R 777 testdata
 	docker compose -f docker-compose.test.yml down --remove-orphans
-	docker compose -f docker-compose.test.yml up --exit-code-from ci_tests ci_tests
+	docker compose -f docker-compose.test.yml up --build --exit-code-from ci_tests ci_tests
 
 go-get:
 	cd $(WORKING_DIR)/lambda/service; \

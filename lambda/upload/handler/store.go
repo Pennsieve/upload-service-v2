@@ -409,7 +409,7 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 	}
 	err = s.pusherClient.Trigger(chName, "upload-event", pusherData)
 	if err != nil {
-		log.Warnf(err.Error())
+		log.Warn(err)
 	}
 
 	return nil

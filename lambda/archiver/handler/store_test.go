@@ -56,18 +56,20 @@ func getS3Client() *s3.Client {
 	testDBUri := getEnv("MINIO_URL", "http://localhost:9002")
 
 	cfg, err := config.LoadDefaultConfig(context.TODO(),
+		config.WithRegion("us-east-1"),
 		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider("minioadmin", "minioadmin", "")),
-		config.WithEndpointResolverWithOptions(aws.EndpointResolverWithOptionsFunc(
-			func(service, region string, options ...interface{}) (aws.Endpoint, error) {
-				return aws.Endpoint{URL: testDBUri, HostnameImmutable: true}, nil
-			})),
 	)
 	if err != nil {
 		log.Error("Cannot create Minio resource")
 		panic(err)
 	}
 
-	s3Client := s3.NewFromConfig(cfg)
+	// S3 ignores the deprecated endpoint resolver, so MinIO is addressed
+	// through BaseEndpoint with path-style bucket names.
+	s3Client := s3.NewFromConfig(cfg, func(o *s3.Options) {
+		o.BaseEndpoint = aws.String(testDBUri)
+		o.UsePathStyle = true
+	})
 
 	return s3Client
 
