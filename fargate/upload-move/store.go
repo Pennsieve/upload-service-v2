@@ -207,7 +207,7 @@ func (s *UploadMoveStore) moveFile(workerId int, timeout time.Duration, items <-
 		}
 
 		// Copy File
-		fileSize := result.ContentLength           // size in bytes
+		fileSize := aws.ToInt64(result.ContentLength) // size in bytes
 		const maxFileSize = 5 * 1000 * 1000 * 1000 // 5GiB (real limit is 5GB but want to be conservative)
 		if fileSize < maxFileSize {
 			err = s.simpleCopyFile(stOrgItem, sourcePath, targetPath)

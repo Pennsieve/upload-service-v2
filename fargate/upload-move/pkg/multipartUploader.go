@@ -80,7 +80,7 @@ func MultiPartCopy(svc *s3.Client, timeout time.Duration, fileSize int64, source
 
 	// sort parts (required for complete method
 	sort.Slice(parts, func(i, j int) bool {
-		return parts[i].PartNumber < parts[j].PartNumber
+		return aws.ToInt32(parts[i].PartNumber) < aws.ToInt32(parts[j].PartNumber)
 	})
 
 	//create struct for completing the upload
@@ -133,7 +133,7 @@ func allocate(uploadId string, fileSize int64, sourceBucket string, sourceKey st
 			CopySource:      &copySource,
 			CopySourceRange: &copySourceRange,
 			Key:             &destKey,
-			PartNumber:      partNumber,
+			PartNumber:      aws.Int32(partNumber),
 			UploadId:        &uploadId,
 		}
 		partNumber++
@@ -223,7 +223,7 @@ func worker(ctx context.Context, svc *s3.Client, wg *sync.WaitGroup, workerId in
 
 			results <- cPart
 
-			log.Printf("Successfully upload part %d of %s\n", partInput.PartNumber, *partInput.UploadId)
+			log.Printf("Successfully upload part %d of %s\n", aws.ToInt32(partInput.PartNumber), *partInput.UploadId)
 		}
 
 	}

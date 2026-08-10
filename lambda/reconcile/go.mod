@@ -12,7 +12,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.30.4
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.51.4
 	github.com/aws/aws-sdk-go-v2/service/sqs v1.42.26
-	github.com/pennsieve/pennsieve-go-core v1.15.2
+	github.com/pennsieve/pennsieve-go-core v1.20.0
 	github.com/pennsieve/pennsieve-upload-service-v2/pkg/bucketregion v0.0.0-00010101000000-000000000000
 	github.com/sirupsen/logrus v1.9.3
 )
