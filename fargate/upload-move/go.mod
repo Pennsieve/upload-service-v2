@@ -1,6 +1,6 @@
 module github.com/pennsieve/pennsieve-upload-service-v2/upload-move-files
 
-go 1.24
+go 1.24.0
 
 //replace (
 //	github.com/pennsieve/pennsieve-go-core => ../../../pennsieve-go-core
