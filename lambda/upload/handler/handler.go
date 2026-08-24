@@ -96,6 +96,27 @@ func InitializeClients() {
 	ChangelogClient = changelog.NewClient(*SQSClient, JobSQSQueueId)
 }
 
+// filterLiveRecords splits a batch into messages that carry an S3 event and
+// those that do not. Heartbeats are emitted once a minute by the
+// upload_lambda_heartbeat EventBridge rule (modules/upload-service-v2/
+// cloudwatch.tf in clin-infrastructure) purely to keep the SQS pollers and
+// the execution environment warm; they carry no S3 Records. Anything else
+// unparseable is dropped by the same guard so the Records[0] accesses
+// downstream stay safe.
+func filterLiveRecords(records []events.SQSMessage) ([]events.SQSMessage, int) {
+	live := records[:0]
+	dropped := 0
+	for _, m := range records {
+		parsedS3Event := events.S3Event{}
+		if err := json.Unmarshal([]byte(m.Body), &parsedS3Event); err != nil || len(parsedS3Event.Records) == 0 {
+			dropped++
+			continue
+		}
+		live = append(live, m)
+	}
+	return live, dropped
+}
+
 // Handler implements the function that is called when new SQS Events arrive.
 func Handler(ctx context.Context, sqsEvent events.SQSEvent) (events.SQSEventResponse, error) {
 
@@ -103,11 +124,28 @@ func Handler(ctx context.Context, sqsEvent events.SQSEvent) (events.SQSEventResp
 		BatchItemFailures: []events.SQSBatchItemFailure{},
 	}
 
+	// Discard heartbeats before touching Postgres. A heartbeat needs no
+	// database, and connecting anyway had two costs: ~43k RDS connections a
+	// month for warmth pings, and — worse — during an RDS outage every ping
+	// failed and landed in the DLQ, so the DLQ alarm paged on a liveness
+	// signal instead of on real upload failures.
+	liveRecords, heartbeatCount := filterLiveRecords(sqsEvent.Records)
+	if heartbeatCount > 0 {
+		log.Debugf("Dropped %d heartbeat/non-S3 message(s) from batch", heartbeatCount)
+	}
+	if len(liveRecords) == 0 {
+		return eventResponse, nil
+	}
+	sqsEvent.Records = liveRecords
+
+	// db.Close() must be deferred only after the error check: ConnectRDS
+	// returns a nil *sql.DB on failure, and Close() on that panics with a
+	// nil-pointer dereference, replacing the real error with a stack trace.
 	db, err := pgQueries.ConnectRDS()
-	defer db.Close()
 	if err != nil {
 		return eventResponse, err
 	}
+	defer db.Close()
 
 	// Define store without Postgres connection (as this is different depending on the manifest/org)
 	s := NewUploadHandlerStore(
