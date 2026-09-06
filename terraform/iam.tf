@@ -1137,14 +1137,13 @@ data "aws_iam_policy_document" "archive_sweeper_policy_document" {
     resources = ["*"]
   }
 
-  # manifest_table has no index on DateCreated/Status so the sweep uses Scan
-  # with a FilterExpression. Table is small (one row per manifest) so
-  # full-scan cost is acceptable for a daily job.
+  # The sweep queries the ManifestStatusIndex GSI (Status, DateCreated)
+  # once per non-Archived status; it no longer scans the table.
   statement {
-    sid       = "ArchiveSweeperScan"
+    sid       = "ArchiveSweeperQuery"
     effect    = "Allow"
-    actions   = ["dynamodb:Scan"]
-    resources = [aws_dynamodb_table.manifest_dynamo_table.arn]
+    actions   = ["dynamodb:Query"]
+    resources = ["${aws_dynamodb_table.manifest_dynamo_table.arn}/index/ManifestStatusIndex"]
   }
 
   statement {
