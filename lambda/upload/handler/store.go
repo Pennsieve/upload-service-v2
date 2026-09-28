@@ -31,6 +31,7 @@ import (
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/uploadFile"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/uploadFolder"
 	"github.com/pennsieve/pennsieve-go-core/pkg/packagedelete"
+	"github.com/pennsieve/pennsieve-go-core/pkg/realtime"
 	"github.com/pennsieve/pennsieve-upload-service-v2/pkg/bucketregion"
 	log "github.com/sirupsen/logrus"
 )
@@ -44,6 +45,7 @@ type UploadHandlerStore struct {
 	SNSClient          domain.SnsAPI
 	S3Client           domain.S3API
 	pusherClient       domain.PusherAPI
+	publisher          realtime.Publisher // AppSync; when set, used instead of Pusher
 	changelogClient    Changelogger
 	sqsClient          *sqs.Client
 	deleteQueueURL     string
@@ -388,10 +390,10 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 		emitReplacementMetrics(len(replacementJobs), replacementPublishFailures)
 	}
 
-	// 8. Notify Pusher. Include replaced_package_id so the frontend can
-	// remove the replaced row from the files table instead of rendering both
-	// the old (now trashed) and new packages side by side.
-	chName := strings.ReplaceAll(manifest.DatasetNodeId, "N:dataset:", "dataset-")
+	// 8. Notify subscribers (AppSync where configured, else Pusher). Include
+	// replaced_package_id so the frontend can remove the replaced row from the
+	// files table instead of rendering both the old (now trashed) and new
+	// packages side by side.
 	var pusherData []uploadPusherItem
 	for _, pkg := range result.packages {
 		item := uploadPusherItem{
@@ -407,10 +409,7 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 		}
 		pusherData = append(pusherData, item)
 	}
-	err = s.pusherClient.Trigger(chName, "upload-event", pusherData)
-	if err != nil {
-		log.Warn(err)
-	}
+	s.notifyUpload(ctx, manifest.DatasetNodeId, pusherData)
 
 	return nil
 }
