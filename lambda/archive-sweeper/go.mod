@@ -1,6 +1,6 @@
 module github.com/pennsieve/pennsieve-upload-service-v2/archive-sweeper
 
-go 1.24.0
+go 1.27.1
 
 require (
 	github.com/aws/aws-lambda-go v1.46.0
