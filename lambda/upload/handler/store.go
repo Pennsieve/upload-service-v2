@@ -131,6 +131,34 @@ func (s *UploadHandlerStore) execTx(ctx context.Context, fn func(queries *Upload
 	return result, tx.Commit()
 }
 
+// dropAlreadyImported returns files without those whose upload UUID already
+// exists in the files table, logging each skipped file.
+func (s *UploadHandlerStore) dropAlreadyImported(ctx context.Context, files []uploadFile.UploadFile, contextLogger *log.Entry) ([]uploadFile.UploadFile, error) {
+	uuids := make([]string, 0, len(files))
+	for _, f := range files {
+		uuids = append(uuids, f.UploadId)
+	}
+
+	existing, err := s.pg.GetExistingFileUUIDs(ctx, uuids)
+	if err != nil {
+		contextLogger.Error("Unable to check for already imported files: ", err)
+		return nil, err
+	}
+	if len(existing) == 0 {
+		return files, nil
+	}
+
+	remaining := make([]uploadFile.UploadFile, 0, len(files))
+	for _, f := range files {
+		if _, ok := existing[f.UploadId]; ok {
+			contextLogger.WithFields(log.Fields{"upload_id": f.UploadId}).Warn("File already imported; skipping duplicate delivery.")
+			continue
+		}
+		remaining = append(remaining, f)
+	}
+	return remaining, nil
+}
+
 // ImportFiles creates rows for uploaded files in Packages and Files tables as a transaction
 // All files belong to a single manifest, and therefor single dataset in a single organization.
 //
@@ -155,6 +183,23 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 		if f.ManifestId != manifest.ManifestId {
 			return errors.New("not all files belong to the same manifest (required for ImportFiles method)")
 		}
+	}
+
+	// Drop files that were already imported by an earlier delivery. The
+	// finalize endpoint and S3 both deliver at-least-once, and a second
+	// delivery can arrive while the first import is still in flight (before
+	// the manifest row flips to Finalized). Re-importing is never correct:
+	// the package node id is derived from the upload id, so with the
+	// "replace" strategy the predecessor is renamed and the re-insert fails
+	// on unique_node_id; with "keepBoth" storage is double-counted. Treat an
+	// already-imported file as a successful no-op instead.
+	files, err := s.dropAlreadyImported(ctx, files, contextLogger)
+	if err != nil {
+		return err
+	}
+	if len(files) == 0 {
+		contextLogger.Info("All files in batch were already imported; nothing to do.")
+		return nil
 	}
 
 	var f uploadFile.UploadFile
