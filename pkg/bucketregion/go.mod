@@ -2,6 +2,8 @@ module github.com/pennsieve/pennsieve-upload-service-v2/pkg/bucketregion
 
 go 1.22
 
+toolchain go1.26.9
+
 require (
 	github.com/aws/aws-sdk-go-v2 v1.25.3
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.51.4

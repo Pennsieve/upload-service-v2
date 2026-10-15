@@ -1,6 +1,8 @@
 module github.com/pennsieve/pennsieve-upload-service-v2/reconcile
 
-go 1.24.0
+go 1.26.0
+
+toolchain go1.26.9
 
 replace github.com/pennsieve/pennsieve-upload-service-v2/pkg/bucketregion => ../../pkg/bucketregion
 
@@ -14,7 +16,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sqs v1.44.0
 	github.com/pennsieve/pennsieve-go-core v1.20.0
 	github.com/pennsieve/pennsieve-upload-service-v2/pkg/bucketregion v0.0.0-00010101000000-000000000000
-	github.com/sirupsen/logrus v1.9.3
+	github.com/sirupsen/logrus v1.10.2
 )
 
 require (
@@ -38,5 +40,5 @@ require (
 	github.com/aws/smithy-go v1.27.1 // indirect
 	github.com/google/uuid v1.3.0 // indirect
 	github.com/lib/pq v1.10.7 // indirect
-	golang.org/x/sys v0.15.0 // indirect
+	golang.org/x/sys v0.49.0 // indirect
 )

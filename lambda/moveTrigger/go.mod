@@ -2,7 +2,7 @@ module github.com/pennsieve/pennsieve-upload-service-v2/move-trigger
 
 go 1.22
 
-toolchain go1.23.4
+toolchain go1.26.9
 
 require (
 	github.com/aws/aws-lambda-go v1.32.0
