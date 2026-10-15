@@ -1,6 +1,8 @@
 module github.com/pennsieve/pennsieve-upload-service-v2/archiver
 
-go 1.24.0
+go 1.26.0
+
+toolchain go1.26.9
 
 //replace github.com/pennsieve/pennsieve-go-core => ../../../pennsieve-go-core
 
@@ -14,8 +16,8 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.59.0
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.107.0
 	github.com/pennsieve/pennsieve-go-core v1.20.0
-	github.com/sirupsen/logrus v1.9.0
-	github.com/stretchr/testify v1.8.1
+	github.com/sirupsen/logrus v1.10.2
+	github.com/stretchr/testify v1.12.1
 )
 
 require (
@@ -35,12 +37,8 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.38.4 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.45.4 // indirect
 	github.com/aws/smithy-go v1.27.6 // indirect
-	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/google/uuid v1.3.0 // indirect
-	github.com/kr/text v0.2.0 // indirect
 	github.com/lib/pq v1.10.7 // indirect
-	github.com/pmezard/go-difflib v1.0.0 // indirect
-	github.com/rogpeppe/go-internal v1.13.1 // indirect
-	golang.org/x/sys v0.21.0 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
+	go.yaml.in/yaml/v3 v3.0.5 // indirect
+	golang.org/x/sys v0.49.0 // indirect
 )
