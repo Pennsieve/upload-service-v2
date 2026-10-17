@@ -16,6 +16,7 @@ import (
 	"github.com/pennsieve/pennsieve-go-core/pkg/changelog"
 	ps "github.com/pennsieve/pennsieve-go-core/pkg/models/pusher"
 	pgQueries "github.com/pennsieve/pennsieve-go-core/pkg/queries/pgdb"
+	"github.com/pennsieve/pennsieve-go-core/pkg/realtime"
 	"github.com/pusher/pusher-http-go/v5"
 	log "github.com/sirupsen/logrus"
 )
@@ -34,6 +35,9 @@ var (
 	DeleteSQSQueueId      string
 	PusherConfig          *ps.Config
 	PusherClient          *pusher.Client
+	// Publisher sends upload events to the AppSync Event API; set only when
+	// REALTIME_EVENTS_ENDPOINT is configured, in which case Pusher is skipped.
+	Publisher realtime.Publisher
 )
 
 // init runs on cold start of lambda and configures logging and looks up env vars.
@@ -64,27 +68,10 @@ func InitializeClients() {
 		log.Fatalf("LoadDefaultConfig: %v\n", err)
 	}
 
-	ssmsvc := ssm.NewFromConfig(cfg)
-	param, err := ssmsvc.GetParameter(context.Background(), &ssm.GetParameterInput{
-		Name:           aws.String("/ops/pusher-config"),
-		WithDecryption: aws.Bool(true),
-	})
-	if err != nil {
-		log.Warnf("LoadDefaultConfig: %v\n", err)
+	if os.Getenv(realtime.EnvEventsEndpoint) != "" {
+		Publisher = realtime.FromEnv(context.Background())
 	} else {
-		value := *param.Parameter.Value
-		err = json.Unmarshal([]byte(value), &PusherConfig)
-		if err != nil {
-			log.Fatalf("ConvertPusherCongifToStruct: %v\n", err)
-		}
-
-		PusherClient = &pusher.Client{
-			AppID:   PusherConfig.AppId,
-			Key:     PusherConfig.Key,
-			Secret:  PusherConfig.Secret,
-			Cluster: PusherConfig.Cluster,
-			Secure:  true,
-		}
+		initPusher(cfg)
 	}
 
 	SNSClient = sns.NewFromConfig(cfg)
@@ -94,6 +81,33 @@ func InitializeClients() {
 	DynamoClient = dynamodb.NewFromConfig(cfg)
 	SQSClient = sqs.NewFromConfig(cfg)
 	ChangelogClient = changelog.NewClient(*SQSClient, JobSQSQueueId)
+}
+
+// initPusher builds the Pusher client from /ops/pusher-config, for
+// environments that haven't moved to the AppSync Event API.
+func initPusher(cfg aws.Config) {
+	ssmsvc := ssm.NewFromConfig(cfg)
+	param, err := ssmsvc.GetParameter(context.Background(), &ssm.GetParameterInput{
+		Name:           aws.String("/ops/pusher-config"),
+		WithDecryption: aws.Bool(true),
+	})
+	if err != nil {
+		log.Warnf("LoadDefaultConfig: %v\n", err)
+		return
+	}
+	value := *param.Parameter.Value
+	err = json.Unmarshal([]byte(value), &PusherConfig)
+	if err != nil {
+		log.Fatalf("ConvertPusherCongifToStruct: %v\n", err)
+	}
+
+	PusherClient = &pusher.Client{
+		AppID:   PusherConfig.AppId,
+		Key:     PusherConfig.Key,
+		Secret:  PusherConfig.Secret,
+		Cluster: PusherConfig.Cluster,
+		Secure:  true,
+	}
 }
 
 // filterLiveRecords splits a batch into messages that carry an S3 event and
@@ -161,6 +175,9 @@ func Handler(ctx context.Context, sqsEvent events.SQSEvent) (events.SQSEventResp
 		ChangelogClient,
 		SQSClient,
 		DeleteSQSQueueId)
+	if Publisher != nil {
+		s.WithRealtime(Publisher)
+	}
 
 	eventResponse, err = s.Handler(ctx, sqsEvent)
 	if err != nil {

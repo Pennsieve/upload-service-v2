@@ -31,6 +31,7 @@ import (
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/uploadFile"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/uploadFolder"
 	"github.com/pennsieve/pennsieve-go-core/pkg/packagedelete"
+	"github.com/pennsieve/pennsieve-go-core/pkg/realtime"
 	"github.com/pennsieve/pennsieve-upload-service-v2/pkg/bucketregion"
 	log "github.com/sirupsen/logrus"
 )
@@ -44,6 +45,7 @@ type UploadHandlerStore struct {
 	SNSClient          domain.SnsAPI
 	S3Client           domain.S3API
 	pusherClient       domain.PusherAPI
+	publisher          realtime.Publisher // AppSync; when set, used instead of Pusher
 	changelogClient    Changelogger
 	sqsClient          *sqs.Client
 	deleteQueueURL     string
@@ -131,6 +133,34 @@ func (s *UploadHandlerStore) execTx(ctx context.Context, fn func(queries *Upload
 	return result, tx.Commit()
 }
 
+// dropAlreadyImported returns files without those whose upload UUID already
+// exists in the files table, logging each skipped file.
+func (s *UploadHandlerStore) dropAlreadyImported(ctx context.Context, files []uploadFile.UploadFile, contextLogger *log.Entry) ([]uploadFile.UploadFile, error) {
+	uuids := make([]string, 0, len(files))
+	for _, f := range files {
+		uuids = append(uuids, f.UploadId)
+	}
+
+	existing, err := s.pg.GetExistingFileUUIDs(ctx, uuids)
+	if err != nil {
+		contextLogger.Error("Unable to check for already imported files: ", err)
+		return nil, err
+	}
+	if len(existing) == 0 {
+		return files, nil
+	}
+
+	remaining := make([]uploadFile.UploadFile, 0, len(files))
+	for _, f := range files {
+		if _, ok := existing[f.UploadId]; ok {
+			contextLogger.WithFields(log.Fields{"upload_id": f.UploadId}).Warn("File already imported; skipping duplicate delivery.")
+			continue
+		}
+		remaining = append(remaining, f)
+	}
+	return remaining, nil
+}
+
 // ImportFiles creates rows for uploaded files in Packages and Files tables as a transaction
 // All files belong to a single manifest, and therefor single dataset in a single organization.
 //
@@ -155,6 +185,23 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 		if f.ManifestId != manifest.ManifestId {
 			return errors.New("not all files belong to the same manifest (required for ImportFiles method)")
 		}
+	}
+
+	// Drop files that were already imported by an earlier delivery. The
+	// finalize endpoint and S3 both deliver at-least-once, and a second
+	// delivery can arrive while the first import is still in flight (before
+	// the manifest row flips to Finalized). Re-importing is never correct:
+	// the package node id is derived from the upload id, so with the
+	// "replace" strategy the predecessor is renamed and the re-insert fails
+	// on unique_node_id; with "keepBoth" storage is double-counted. Treat an
+	// already-imported file as a successful no-op instead.
+	files, err := s.dropAlreadyImported(ctx, files, contextLogger)
+	if err != nil {
+		return err
+	}
+	if len(files) == 0 {
+		contextLogger.Info("All files in batch were already imported; nothing to do.")
+		return nil
 	}
 
 	var f uploadFile.UploadFile
@@ -388,10 +435,10 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 		emitReplacementMetrics(len(replacementJobs), replacementPublishFailures)
 	}
 
-	// 8. Notify Pusher. Include replaced_package_id so the frontend can
-	// remove the replaced row from the files table instead of rendering both
-	// the old (now trashed) and new packages side by side.
-	chName := strings.ReplaceAll(manifest.DatasetNodeId, "N:dataset:", "dataset-")
+	// 8. Notify subscribers (AppSync where configured, else Pusher). Include
+	// replaced_package_id so the frontend can remove the replaced row from the
+	// files table instead of rendering both the old (now trashed) and new
+	// packages side by side.
 	var pusherData []uploadPusherItem
 	for _, pkg := range result.packages {
 		item := uploadPusherItem{
@@ -407,10 +454,7 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 		}
 		pusherData = append(pusherData, item)
 	}
-	err = s.pusherClient.Trigger(chName, "upload-event", pusherData)
-	if err != nil {
-		log.Warn(err)
-	}
+	s.notifyUpload(ctx, manifest.DatasetNodeId, pusherData)
 
 	return nil
 }

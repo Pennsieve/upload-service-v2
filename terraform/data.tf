@@ -72,18 +72,6 @@ data "terraform_remote_state" "pennsieve_postgres" {
   }
 }
 
-# Import ETL Infrastructure Data
-data "terraform_remote_state" "etl_infrastructure" {
-  backend = "s3"
-
-  config = {
-    bucket = "${var.aws_account}-terraform-state"
-    key    = "aws/${data.aws_region.current_region.name}/${var.vpc_name}/${var.environment_name}/etl-infrastructure/terraform.tfstate"
-    region = "us-east-1"
-  }
-}
-
-
 # Import AWS Default SecretsManager KMS Key
 data "aws_kms_key" "ssm_kms_key" {
   key_id = "alias/aws/secretsmanager"
@@ -117,7 +105,7 @@ data "terraform_remote_state" "api_gateway" {
 
   config = {
     bucket  = "${var.aws_account}-terraform-state"
-    key     = "aws/${data.aws_region.current_region.name}/${var.vpc_name}/${var.environment_name}/pennsieve-go-api/terraform.tfstate"
+    key     = "aws/${data.aws_region.current_region.name}/${var.vpc_name}/${var.environment_name}/auth-service/terraform.tfstate"
     region  = "us-east-1"
     profile = var.aws_account
   }

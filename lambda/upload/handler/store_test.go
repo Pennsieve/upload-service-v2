@@ -249,7 +249,8 @@ func TestStoreWithPG(t *testing.T) {
 		"import single file in folder with leading slash": testImportFilesSingleInFolderWithLeadingSlash,
 		"import files with leading slash in path values":  testImportFilesWithLeadingSlash,
 		"dedupes a file repeated within one batch":        testImportFilesDuplicateInBatch,
-		"retry import is not skipped across calls":        testImportFilesNotSkippedAcrossCalls,
+		"already imported file is a no-op on redelivery":  testImportFilesAlreadyImportedIsNoOp,
+		"redelivery with replace strategy does not fail":  testImportFilesRedeliveryWithReplace,
 	} {
 		t.Run(scenario, func(t *testing.T) {
 			t.Cleanup(func() {
@@ -660,12 +661,12 @@ func testImportFilesDuplicateInBatch(t *testing.T, orgID int, store *UploadHandl
 		map[string]any{"dataset_id": datasetID, "size": fileSize})
 }
 
-// testImportFilesNotSkippedAcrossCalls guards against the bug where a
-// process-global seenFileUUIDs map caused a retried import to skip the file
-// as a "duplicate", silently losing it. A second ImportFiles call for the
-// same file must re-process it, observable via the SNS publish that triggers
-// the move task — a skipped file is never published.
-func testImportFilesNotSkippedAcrossCalls(t *testing.T, orgID int, store *UploadHandlerStore) {
+// testImportFilesAlreadyImportedIsNoOp covers the duplicate-delivery case:
+// the finalize endpoint (or S3) delivers the same upload twice and the second
+// delivery is processed after the first import committed. The second call
+// must succeed without touching Postgres again — no duplicate rows, no
+// double-counted storage, and no second publish to the move-task topic.
+func testImportFilesAlreadyImportedIsNoOp(t *testing.T, orgID int, store *UploadHandlerStore) {
 	datasetID := 1
 	user := pgdbmodels.User{
 		Id:           int64(1),
@@ -701,8 +702,6 @@ func testImportFilesNotSkippedAcrossCalls(t *testing.T, orgID int, store *Upload
 
 	snsMock := store.SNSClient.(*test.MockSNS)
 
-	// First import (e.g. the delivery that ultimately rolled back in prod, or
-	// the first SQS delivery).
 	require.NoError(t, store.ImportFiles(context.Background(), datasetID, orgID, user, []uploadFile.UploadFile{file}, manifest, false, ""))
 	test.AssertRowCount(t, store.pgdb, orgID, "files", 1)
 	test.AssertExistsOneWhere(t, store.pgdb, orgID, "dataset_storage",
@@ -710,22 +709,74 @@ func testImportFilesNotSkippedAcrossCalls(t *testing.T, orgID int, store *Upload
 	require.Len(t, snsMock.PublishedEntries, 1)
 	assert.Equal(t, uploadID, *snsMock.PublishedEntries[0].Id)
 
-	// Second, independent import call for the same file. With the old global
-	// map the file was silently skipped: nothing reached AddFiles, so nothing
-	// was published to the move-task topic and the file never arrived at final
-	// storage. With per-call scoping the file is fully re-processed.
+	// Second delivery of the same file after the first import committed.
 	snsMock.Clear()
 	require.NoError(t, store.ImportFiles(context.Background(), datasetID, orgID, user, []uploadFile.UploadFile{file}, manifest, false, ""))
-	// The DB upsert keeps a single package and file row — the retry does not
-	// duplicate anything.
 	test.AssertRowCount(t, store.pgdb, orgID, "packages", 1)
 	test.AssertRowCount(t, store.pgdb, orgID, "files", 1)
-	test.AssertExistsOneWhere(t, store.pgdb, orgID, "files",
-		map[string]any{"uuid": uploadID, "size": fileSize})
-	// The retry went through the full import pipeline: the file was published
-	// to the move-task topic again rather than dropped.
-	require.Len(t, snsMock.PublishedEntries, 1)
-	assert.Equal(t, uploadID, *snsMock.PublishedEntries[0].Id)
+	// Storage is still counted exactly once.
+	test.AssertExistsOneWhere(t, store.pgdb, orgID, "dataset_storage",
+		map[string]any{"dataset_id": datasetID, "size": fileSize})
+	// Nothing was re-published: the file was recognised as already imported.
+	assert.Empty(t, snsMock.PublishedEntries)
+}
+
+// testImportFilesRedeliveryWithReplace reproduces the production failure:
+// with onConflict=replace, re-importing an already imported file renamed the
+// freshly created package as a "predecessor" and then failed to insert the
+// new package on unique_node_id (the node id is derived from the upload id).
+// A mixed batch must still import the new file and skip the duplicate.
+func testImportFilesRedeliveryWithReplace(t *testing.T, orgID int, store *UploadHandlerStore) {
+	datasetID := 1
+	user := pgdbmodels.User{
+		Id:           int64(1),
+		NodeId:       "N:user:99f02be5-009c-4ecd-9006-f016d48628bf",
+		Email:        uuid.NewString(),
+		FirstName:    uuid.NewString(),
+		LastName:     uuid.NewString(),
+		IsSuperAdmin: false,
+		PreferredOrg: int64(orgID),
+	}
+	manifestID := uuid.NewString()
+	manifest := &dydb.ManifestTable{
+		ManifestId:     manifestID,
+		DatasetId:      int64(datasetID),
+		DatasetNodeId:  uuid.NewString(),
+		OrganizationId: int64(orgID),
+		UserId:         user.Id,
+	}
+	newFile := func(name string, size int64) uploadFile.UploadFile {
+		uploadID := uuid.NewString()
+		return uploadFile.UploadFile{
+			ManifestId: manifestID,
+			UploadId:   uploadID,
+			S3Bucket:   uuid.NewString(),
+			S3Key:      fmt.Sprintf("%s/%s", manifestID, uploadID),
+			Path:       "sub",
+			Name:       name,
+			Extension:  "csv",
+			FileType:   fileType.CSV,
+			Type:       packageType.CSV,
+			Size:       size,
+		}
+	}
+	first := newFile("a.csv", 100)
+	second := newFile("b.csv", 200)
+
+	require.NoError(t, store.ImportFiles(context.Background(), datasetID, orgID, user, []uploadFile.UploadFile{first}, manifest, true, "replace"))
+	// 1 folder + 1 file package
+	test.AssertRowCount(t, store.pgdb, orgID, "packages", 2)
+	test.AssertRowCount(t, store.pgdb, orgID, "files", 1)
+
+	// Redelivery of `first` alongside a genuinely new file, same strategy.
+	require.NoError(t, store.ImportFiles(context.Background(), datasetID, orgID, user, []uploadFile.UploadFile{first, second}, manifest, true, "replace"))
+	test.AssertRowCount(t, store.pgdb, orgID, "packages", 3)
+	test.AssertRowCount(t, store.pgdb, orgID, "files", 2)
+	// The original package was not renamed into a "__DELETED__" predecessor.
+	test.AssertExistsOneWhere(t, store.pgdb, orgID, "packages",
+		map[string]any{"node_id": fmt.Sprintf("N:package:%s", first.UploadId), "name": "a.csv"})
+	test.AssertExistsOneWhere(t, store.pgdb, orgID, "dataset_storage",
+		map[string]any{"dataset_id": datasetID, "size": int64(300)})
 }
 
 func testImportFilesWithLeadingSlash(t *testing.T, orgID int, store *UploadHandlerStore) {
