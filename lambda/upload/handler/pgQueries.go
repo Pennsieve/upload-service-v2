@@ -10,6 +10,7 @@ import (
 	pgQueries "github.com/pennsieve/pennsieve-go-core/pkg/queries/pgdb"
 	log "github.com/sirupsen/logrus"
 	"sort"
+	"strings"
 )
 
 // UploadPgQueries is the UploadHandler Queries Struct embedding the shared Queries struct
@@ -25,6 +26,38 @@ func NewUploadPgQueries(db pgQueries.DBTX) *UploadPgQueries {
 		q,
 		db,
 	}
+}
+
+// GetExistingFileUUIDs returns the subset of the given upload UUIDs that
+// already have a row in the files table of the current organization schema.
+func (q *UploadPgQueries) GetExistingFileUUIDs(ctx context.Context, uuids []string) (map[string]struct{}, error) {
+	existing := map[string]struct{}{}
+	if len(uuids) == 0 {
+		return existing, nil
+	}
+
+	placeholders := make([]string, len(uuids))
+	args := make([]interface{}, len(uuids))
+	for i, u := range uuids {
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+		args[i] = u
+	}
+	query := fmt.Sprintf("SELECT uuid FROM files WHERE uuid IN (%s)", strings.Join(placeholders, ","))
+
+	rows, err := q.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var u string
+		if err := rows.Scan(&u); err != nil {
+			return nil, err
+		}
+		existing[u] = struct{}{}
+	}
+	return existing, rows.Err()
 }
 
 // GetCreateUploadFolders creates new folders in the organization.
@@ -129,7 +162,7 @@ func (q *UploadPgQueries) GetCreateUploadFolders(datasetId int, ownerId int, fol
 }
 
 // UpdateStorage updates storage in packages, dataset and organization for uploaded package
-// 	* Typically needs to be wrapped in Transaction as this contains multiple insert queries.
+//   - Typically needs to be wrapped in Transaction as this contains multiple insert queries.
 func (q *UploadPgQueries) UpdateStorage(files []pgdb.FileParams, packages []pgdb.Package, datasetId int64, orgId int64) error {
 
 	ctx := context.Background()
