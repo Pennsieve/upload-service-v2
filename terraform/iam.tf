@@ -403,8 +403,14 @@ resource "aws_iam_role" "upload_credentials_role" {
 }
 
 resource "aws_iam_role_policy_attachment" "upload_credentials_policy_attachment" {
+  count      = var.legacy_upload_credentials_enabled ? 1 : 0
   role       = aws_iam_role.upload_credentials_role.name
   policy_arn = aws_iam_policy.upload_credentials_policy.arn
+}
+
+moved {
+  from = aws_iam_role_policy_attachment.upload_credentials_policy_attachment
+  to   = aws_iam_role_policy_attachment.upload_credentials_policy_attachment[0]
 }
 
 resource "aws_iam_policy" "upload_credentials_policy" {
@@ -890,8 +896,14 @@ EOF
 }
 
 resource "aws_iam_role_policy_attachment" "cognito_identity_policy_attachment" {
+  count      = var.legacy_cognito_upload_enabled ? 1 : 0
   role       = aws_iam_role.cognito_identity_auth_role.id
   policy_arn = aws_iam_policy.upload_auth_identity_policy.arn
+}
+
+moved {
+  from = aws_iam_role_policy_attachment.cognito_identity_policy_attachment
+  to   = aws_iam_role_policy_attachment.cognito_identity_policy_attachment[0]
 }
 
 resource "aws_iam_policy" "upload_auth_identity_policy" {

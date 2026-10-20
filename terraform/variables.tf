@@ -67,6 +67,23 @@ variable "file_move_timeout" {
 variable "api_domain_name" {
 }
 
+# Legacy (pre-direct-to-storage) writes to the uploads bucket come through two
+# routes, each with its own switch. false detaches that route's uploads-bucket
+# policy, so its writes fail with AccessDenied; true re-attaches it. The roles,
+# the policies and the import/move pipeline stay in place either way.
+
+# POST /manifest/upload-credentials (upload_credentials_role): workflow data
+# targets before data-target-pennsieve moved to direct-to-storage uploads.
+variable "legacy_upload_credentials_enabled" {
+  default = true
+}
+
+# The Cognito identity pool's cognito_authenticated role: pennsieve-agent older
+# than v2.0.0 and anything built on it (e.g. processor-post-agent).
+variable "legacy_cognito_upload_enabled" {
+  default = true
+}
+
 locals {
   domain_name = data.terraform_remote_state.account.outputs.domain_name
   hosted_zone = data.terraform_remote_state.account.outputs.public_hosted_zone_id
