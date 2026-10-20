@@ -22,10 +22,6 @@ module "service_alarms" {
       function_name   = aws_lambda_function.archive_lambda.function_name
       timeout_seconds = aws_lambda_function.archive_lambda.timeout
     }
-    fargate-trigger = {
-      function_name   = aws_lambda_function.fargate_trigger_lambda.function_name
-      timeout_seconds = aws_lambda_function.fargate_trigger_lambda.timeout
-    }
     reconcile = {
       function_name   = aws_lambda_function.reconcile_lambda.function_name
       timeout_seconds = aws_lambda_function.reconcile_lambda.timeout
@@ -46,13 +42,8 @@ module "service_alarms" {
       queue_name      = aws_sqs_queue.upload_trigger_queue.name
       max_age_seconds = 3600
     }
-    imported-file = {
-      queue_name      = aws_sqs_queue.imported_file_queue.name
-      max_age_seconds = 3600
-    }
   }
 
   dlqs = {
-    imported-file = aws_sqs_queue.imported_file_deadletter_queue.name
   }
 }

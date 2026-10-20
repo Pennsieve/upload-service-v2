@@ -24,7 +24,6 @@ import (
 var (
 	ChangelogClient       *changelog.Client
 	SNSClient             *sns.Client
-	SNSTopic              string
 	FileFinalizedTopic    string
 	S3Client              *s3.Client
 	DynamoClient          *dynamodb.Client
@@ -55,7 +54,6 @@ func init() {
 	ManifestTableName = os.Getenv("MANIFEST_TABLE")
 	JobSQSQueueId = os.Getenv("JOBS_QUEUE_ID")
 	DeleteSQSQueueId = os.Getenv("DELETE_QUEUE_ID")
-	SNSTopic = os.Getenv("IMPORTED_SNS_TOPIC")
 	FileFinalizedTopic = os.Getenv("FILE_FINALIZED_TOPIC")
 }
 
@@ -76,7 +74,6 @@ func InitializeClients() {
 
 	SNSClient = sns.NewFromConfig(cfg)
 	S3Client = s3.NewFromConfig(cfg)
-	SNSTopic = os.Getenv("IMPORTED_SNS_TOPIC")
 	FileFinalizedTopic = os.Getenv("FILE_FINALIZED_TOPIC")
 	DynamoClient = dynamodb.NewFromConfig(cfg)
 	SQSClient = sqs.NewFromConfig(cfg)
@@ -169,7 +166,6 @@ func Handler(ctx context.Context, sqsEvent events.SQSEvent) (events.SQSEventResp
 		S3Client,
 		ManifestFileTableName,
 		ManifestTableName,
-		SNSTopic,
 		FileFinalizedTopic,
 		PusherClient,
 		ChangelogClient,

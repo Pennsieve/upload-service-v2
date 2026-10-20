@@ -45,7 +45,6 @@ func TestMain(m *testing.M) {
 	}
 	ManifestTableName, _ = os.LookupEnv("MANIFEST_TABLE")
 	ManifestFileTableName, _ = os.LookupEnv("MANIFEST_FILE_TABLE")
-	SNSTopic = getEnv("IMPORTED_SNS_TOPIC", "dummy_sns_topic")
 
 	var err error
 
@@ -269,7 +268,7 @@ func TestMain(m *testing.M) {
 
 	mChangelogger := &test.MockChangelogger{}
 	mPusher := test.NewMockPusherClient()
-	store := NewUploadHandlerStore(pgdbClient, client, mSNS, s3Client, ManifestFileTableName, ManifestTableName, SNSTopic, "", mPusher, mChangelogger, nil, "")
+	store := NewUploadHandlerStore(pgdbClient, client, mSNS, s3Client, ManifestFileTableName, ManifestTableName, "", mPusher, mChangelogger, nil, "")
 
 	manifestId := "00000000-0000-0000-0000-000000000000"
 	err = populateManifest(store, manifestId, 1)
@@ -310,7 +309,7 @@ func TestUploadService(t *testing.T) {
 			mPusher := test.NewMockPusherClient()
 			mChangelogger := &test.MockChangelogger{}
 
-			store := NewUploadHandlerStore(pgdbClient, client, mSNS, s3Client, ManifestFileTableName, ManifestTableName, SNSTopic, "", mPusher, mChangelogger, nil, "")
+			store := NewUploadHandlerStore(pgdbClient, client, mSNS, s3Client, ManifestFileTableName, ManifestTableName, "", mPusher, mChangelogger, nil, "")
 
 			fn(t, store)
 		})
