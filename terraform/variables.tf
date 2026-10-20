@@ -67,6 +67,15 @@ variable "file_move_timeout" {
 variable "api_domain_name" {
 }
 
+# Legacy (pre-direct-to-storage) clients write to the uploads bucket with
+# credentials from the Cognito identity pool or POST /manifest/upload-credentials.
+# false detaches the uploads-bucket policies from both roles, so those writes
+# fail with AccessDenied; set it back to true to restore them. The roles, the
+# policies and the import/move pipeline stay in place either way.
+variable "legacy_upload_bucket_writes_enabled" {
+  default = true
+}
+
 locals {
   domain_name = data.terraform_remote_state.account.outputs.domain_name
   hosted_zone = data.terraform_remote_state.account.outputs.public_hosted_zone_id
