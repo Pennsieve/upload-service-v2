@@ -41,7 +41,7 @@ func TestStore(t *testing.T) {
 			mChangelogger := &test.MockChangelogger{}
 
 			store := NewUploadHandlerStore(pgdbClient, client, mSNS, mS3,
-				ManifestFileTableName, ManifestTableName, SNSTopic, "", mPusher, mChangelogger, nil, "")
+				ManifestFileTableName, ManifestTableName, "", mPusher, mChangelogger, nil, "")
 
 			fn(t, store)
 		})
@@ -236,7 +236,7 @@ func TestStoreWithPG(t *testing.T) {
 	orgID := 1
 
 	store := NewUploadHandlerStore(pgdbClient, client, mSNS, mS3,
-		ManifestFileTableName, ManifestTableName, SNSTopic, "", mPusher, mChangelogger, nil, "")
+		ManifestFileTableName, ManifestTableName, "", mPusher, mChangelogger, nil, "")
 	require.NoError(t, store.WithOrg(orgID))
 
 	for scenario, fn := range map[string]func(
@@ -665,7 +665,8 @@ func testImportFilesDuplicateInBatch(t *testing.T, orgID int, store *UploadHandl
 // the finalize endpoint (or S3) delivers the same upload twice and the second
 // delivery is processed after the first import committed. The second call
 // must succeed without touching Postgres again — no duplicate rows, no
-// double-counted storage, and no second publish to the move-task topic.
+// double-counted storage, and nothing published. (The legacy move-task topic
+// is gone, and the FileFinalized topic is unset in these tests.)
 func testImportFilesAlreadyImportedIsNoOp(t *testing.T, orgID int, store *UploadHandlerStore) {
 	datasetID := 1
 	user := pgdbmodels.User{
@@ -706,8 +707,7 @@ func testImportFilesAlreadyImportedIsNoOp(t *testing.T, orgID int, store *Upload
 	test.AssertRowCount(t, store.pgdb, orgID, "files", 1)
 	test.AssertExistsOneWhere(t, store.pgdb, orgID, "dataset_storage",
 		map[string]any{"dataset_id": datasetID, "size": fileSize})
-	require.Len(t, snsMock.PublishedEntries, 1)
-	assert.Equal(t, uploadID, *snsMock.PublishedEntries[0].Id)
+	assert.Empty(t, snsMock.PublishedEntries)
 
 	// Second delivery of the same file after the first import committed.
 	snsMock.Clear()

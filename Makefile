@@ -6,7 +6,6 @@ API_DIR ?= "api"
 SERVICE_NAME  ?= "upload-service-v2"
 SERVICE_PACKAGE_NAME ?= "upload-v2-service-${VERSION}.zip"
 UPLOADHANDLER_PACKAGE_NAME ?= "upload-v2-handler-${VERSION}.zip"
-MOVETRIGGER_PACKAGE_NAME ?= "upload-v2-move-trigger-${VERSION}.zip"
 ARCHIVER_PACKAGE_NAME ?= "manifest-archiver-${VERSION}.zip"
 RECONCILE_PACKAGE_NAME ?= "upload-v2-reconcile-${VERSION}.zip"
 ARCHIVE_SWEEPER_PACKAGE_NAME ?= "upload-v2-archive-sweeper-${VERSION}.zip"
@@ -19,7 +18,7 @@ help:
 	@echo ""
 	@echo "make clean   - removes node_modules directory"
 	@echo "make test    - run tests"
-	@echo "make package - create venv and package lambdas and fargate functions"
+	@echo "make package - create venv and package lambdas"
 	@echo "make publish - package and publish lambda function"
 
 test: clean
@@ -39,12 +38,8 @@ go-get:
 		go get github.com/pennsieve/pennsieve-upload-service-v2/service
 	cd $(WORKING_DIR)/lambda/upload; \
 		go get github.com/pennsieve/pennsieve-upload-service-v2/upload
-	cd $(WORKING_DIR)/lambda/moveTrigger; \
-		go get github.com/pennsieve/pennsieve-upload-service-v2/move-trigger
 	cd $(WORKING_DIR)/lambda/archiver; \
 		go get github.com/pennsieve/pennsieve-upload-service-v2/archiver
-	cd $(WORKING_DIR)/fargate/upload-move; \
-		go get github.com/pennsieve/pennsieve-upload-service-v2/upload-move-files
 
 # Spin down active docker containers.
 docker-clean:
@@ -78,15 +73,6 @@ package:
 			zip -r $(WORKING_DIR)/lambda/bin/upload/$(UPLOADHANDLER_PACKAGE_NAME) .
 	@echo ""
 	@echo "***********************"
-	@echo "*   Building Move Trigger lambda   *"
-	@echo "***********************"
-	@echo ""
-	cd $(WORKING_DIR)/lambda/moveTrigger; \
-  		env GOOS=linux GOARCH=arm64 go build -tags lambda.norpc -o $(WORKING_DIR)/lambda/bin/moveTrigger/bootstrap; \
-		cd $(WORKING_DIR)/lambda/bin/moveTrigger/ ; \
-			zip -r $(WORKING_DIR)/lambda/bin/moveTrigger/$(MOVETRIGGER_PACKAGE_NAME) .
-	@echo ""
-	@echo "***********************"
 	@echo "*   Building Manifest Archiver lambda   *"
 	@echo "***********************"
 	@echo ""
@@ -112,15 +98,6 @@ package:
   		env GOOS=linux GOARCH=arm64 go build -tags lambda.norpc -o $(WORKING_DIR)/lambda/bin/archive-sweeper/bootstrap; \
 		cd $(WORKING_DIR)/lambda/bin/archive-sweeper/ ; \
 			zip -r $(WORKING_DIR)/lambda/bin/archive-sweeper/$(ARCHIVE_SWEEPER_PACKAGE_NAME) .
-	@echo ""
-	@echo "***********************"
-	@echo "*   Building Fargate   *"
-	@echo "***********************"
-	@echo ""
-	cd $(WORKING_DIR)/fargate/upload-move; \
-#		env GOOS=linux GOARCH=amd64 go build -o app/upload-move-files; \
-		docker build -t pennsieve/upload_move_files:${VERSION} . ;\
-		docker push pennsieve/upload_move_files:${VERSION} ;\
 
 publish:
 	@make package
@@ -145,13 +122,6 @@ publish:
 	@echo ""
 	aws s3 cp $(WORKING_DIR)/lambda/bin/archiver/$(ARCHIVER_PACKAGE_NAME) s3://$(LAMBDA_BUCKET)/upload-service-v2/archiver/
 	rm -rf $(WORKING_DIR)/lambda/bin/archiver/$(ARCHIVER_PACKAGE_NAME)
-	@echo ""
-	@echo "**************************************"
-	@echo "*   Publishing Move Trigger lambda   *"
-	@echo "**************************************"
-	@echo ""
-	aws s3 cp $(WORKING_DIR)/lambda/bin/moveTrigger/$(MOVETRIGGER_PACKAGE_NAME) s3://$(LAMBDA_BUCKET)/upload-service-v2/trigger/
-	rm -rf $(WORKING_DIR)/lambda/bin/moveTrigger/$(MOVETRIGGER_PACKAGE_NAME)
 	@echo ""
 	@echo "************************************"
 	@echo "*   Publishing Reconcile lambda    *"

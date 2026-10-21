@@ -24,17 +24,16 @@ resource "aws_lambda_function" "upload_lambda" {
 
   environment {
     variables = {
-      ENV                 = var.environment_name
-      PENNSIEVE_DOMAIN    = data.terraform_remote_state.account.outputs.domain_name,
-      MANIFEST_TABLE      = aws_dynamodb_table.manifest_dynamo_table.name,
-      MANIFEST_FILE_TABLE = aws_dynamodb_table.manifest_files_dynamo_table.name,
-      IMPORTED_SNS_TOPIC    = aws_sns_topic.imported_file_sns_topic.arn,
-      FILE_FINALIZED_TOPIC  = aws_sns_topic.file_finalized_topic.arn,
-      JOBS_QUEUE_ID         = data.terraform_remote_state.platform_infrastructure.outputs.jobs_queue_id,
-      DELETE_QUEUE_ID       = data.terraform_remote_state.platform_infrastructure.outputs.jobs_queue_v2_id,
-      REGION              = var.aws_region,
-      RDS_PROXY_ENDPOINT  = data.terraform_remote_state.pennsieve_postgres.outputs.rds_proxy_endpoint,
-      LOG_LEVEL           = "info",
+      ENV                  = var.environment_name
+      PENNSIEVE_DOMAIN     = data.terraform_remote_state.account.outputs.domain_name,
+      MANIFEST_TABLE       = aws_dynamodb_table.manifest_dynamo_table.name,
+      MANIFEST_FILE_TABLE  = aws_dynamodb_table.manifest_files_dynamo_table.name,
+      FILE_FINALIZED_TOPIC = aws_sns_topic.file_finalized_topic.arn,
+      JOBS_QUEUE_ID        = data.terraform_remote_state.platform_infrastructure.outputs.jobs_queue_id,
+      DELETE_QUEUE_ID      = data.terraform_remote_state.platform_infrastructure.outputs.jobs_queue_v2_id,
+      REGION               = var.aws_region,
+      RDS_PROXY_ENDPOINT   = data.terraform_remote_state.pennsieve_postgres.outputs.rds_proxy_endpoint,
+      LOG_LEVEL            = "info",
     }
   }
 }
@@ -69,9 +68,7 @@ resource "aws_lambda_function" "service_lambda" {
       REGION                       = var.aws_region
       RDS_PROXY_ENDPOINT           = data.terraform_remote_state.pennsieve_postgres.outputs.rds_proxy_endpoint,
       ARCHIVER_INVOKE_ARN          = aws_lambda_function.archive_lambda.arn,
-      UPLOAD_CREDENTIALS_ROLE_ARN  = aws_iam_role.upload_credentials_role.arn,
       STORAGE_CREDENTIALS_ROLE_ARN = aws_iam_role.storage_credentials_role.arn,
-      UPLOAD_BUCKET                = aws_s3_bucket.uploads_s3_bucket.bucket,
       DEFAULT_STORAGE_BUCKET       = data.terraform_remote_state.platform_infrastructure.outputs.storage_bucket_id,
       UPLOAD_LAMBDA_ARN            = aws_lambda_function.upload_lambda.arn,
       UPLOAD_TRIGGER_QUEUE_URL     = aws_sqs_queue.upload_trigger_queue.url,
@@ -109,40 +106,6 @@ resource "aws_lambda_function" "archive_lambda" {
       REGION              = var.aws_region
       RDS_PROXY_ENDPOINT  = data.terraform_remote_state.pennsieve_postgres.outputs.rds_proxy_endpoint,
       LOG_LEVEL           = "info",
-    }
-  }
-}
-
-
-### MOVE TRIGGER
-resource "aws_lambda_function" "fargate_trigger_lambda" {
-  description                    = "Lambda Function which triggers FARGATE to move files to final destination."
-  function_name                  = "${var.environment_name}-${var.service_name}-fargate-trigger-lambda-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
-  reserved_concurrent_executions = 1 // don't allow concurrent lambda's
-  handler                        = "bootstrap"
-  runtime                        = "provided.al2023"
-  architectures                  = ["arm64"]
-  role                           = aws_iam_role.move_trigger_lambda_role.arn
-  timeout                        = 300
-  memory_size                    = 128
-  s3_bucket                      = var.lambda_bucket
-  s3_key                         = "${var.service_name}/trigger/upload-v2-move-trigger-${var.image_tag}.zip"
-
-  vpc_config {
-    subnet_ids         = tolist(data.terraform_remote_state.vpc.outputs.private_subnet_ids)
-    security_group_ids = [data.terraform_remote_state.platform_infrastructure.outputs.upload_v2_security_group_id]
-  }
-
-  environment {
-    variables = {
-      ENV                = var.environment_name
-      TASK_DEF_ARN       = aws_ecs_task_definition.ecs_task_definition.arn,
-      CLUSTER_ARN        = data.terraform_remote_state.fargate.outputs.ecs_cluster_arn,
-      SUBNET_IDS         = join(",", data.terraform_remote_state.vpc.outputs.private_subnet_ids),
-      SECURITY_GROUP     = data.terraform_remote_state.platform_infrastructure.outputs.upload_v2_fargate_security_group_id,
-      REGION             = var.aws_region,
-      RDS_PROXY_ENDPOINT = data.terraform_remote_state.pennsieve_postgres.outputs.rds_proxy_endpoint,
-      LOG_LEVEL          = "info",
     }
   }
 }

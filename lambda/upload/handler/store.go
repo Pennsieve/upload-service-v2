@@ -49,7 +49,6 @@ type UploadHandlerStore struct {
 	changelogClient    Changelogger
 	sqsClient          *sqs.Client
 	deleteQueueURL     string
-	SNSTopic           string
 	FileFinalizedTopic string
 	fileTableName      string
 	tableName          string
@@ -67,7 +66,7 @@ type storageUpdateParams struct {
 
 // NewUploadHandlerStore returns a UploadHandlerStore object which implements the Queries
 func NewUploadHandlerStore(db *sql.DB, dy *dynamodb.Client, sns domain.SnsAPI,
-	s3 domain.S3API, fileTableName string, tableName string, snsTopic string,
+	s3 domain.S3API, fileTableName string, tableName string,
 	fileFinalizedTopic string,
 	pc domain.PusherAPI, changelogger Changelogger,
 	sqsClient *sqs.Client, deleteQueueURL string) *UploadHandlerStore {
@@ -76,7 +75,6 @@ func NewUploadHandlerStore(db *sql.DB, dy *dynamodb.Client, sns domain.SnsAPI,
 		dynamodb:           dy,
 		pusherClient:       pc,
 		SNSClient:          sns,
-		SNSTopic:           snsTopic,
 		FileFinalizedTopic: fileFinalizedTopic,
 		S3Client:           s3,
 		changelogClient:    changelogger,
@@ -164,9 +162,9 @@ func (s *UploadHandlerStore) dropAlreadyImported(ctx context.Context, files []up
 // ImportFiles creates rows for uploaded files in Packages and Files tables as a transaction
 // All files belong to a single manifest, and therefor single dataset in a single organization.
 //
-// When directToStorage is true, the files already landed at final storage (the
-// agent uploaded straight to the storage bucket), so SNS publish is skipped —
-// there's nothing for the Fargate move task to do.
+// directToStorage is true for files the client uploaded straight to the storage
+// bucket; it sets their manifest status (see below). The legacy uploads-bucket
+// path and its Fargate move task have been removed.
 func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, orgId int, user pgdb.User,
 	files []uploadFile.UploadFile, manifest *dydb.ManifestTable, directToStorage bool, onConflict string) error {
 
@@ -360,18 +358,9 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 		log.Debug(fmt.Sprintf("Package %d storage incremented by %d", p, v))
 	}
 
-	// 5. Notify SNS that files were imported — triggers the Fargate move task.
-	// Skip for direct-to-storage: files are already at final location.
-	if !directToStorage {
-		err = s.PublishToSNS(result.files)
-		if err != nil {
-			contextLogger.Error("Error with notifying SNS that records are imported.", err)
-		}
-	}
-
-	// 5b. Fan-out FileFinalized events to downstream consumers (scan-service, etc.).
-	// Runs for both direct-to-storage and Fargate-moved files. Failure here is logged
-	// but does not fail ImportFiles — the file is already committed in Postgres.
+	// 5. Fan-out FileFinalized events to downstream consumers (scan-service, etc.).
+	// Failure here is logged but does not fail ImportFiles — the file is
+	// already committed in Postgres.
 	if err := s.PublishFileFinalized(ctx, result.files, manifest); err != nil {
 		contextLogger.Error("Error publishing FileFinalized events.", err)
 	}

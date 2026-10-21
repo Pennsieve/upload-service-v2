@@ -92,7 +92,7 @@ func (s *UploadHandlerStore) getComplianceTier(ctx context.Context, orgID int) s
 
 // PublishFileFinalized emits one FileFinalized event per committed file
 // to the FileFinalized SNS topic. Publishes are batched (PublishBatch,
-// 10 entries/request) mirroring the existing PublishToSNS pattern.
+// 10 entries/request).
 //
 // Errors are logged and returned but ImportFiles callers should not
 // fail the request on a publish error — the file is already durable

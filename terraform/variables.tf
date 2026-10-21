@@ -21,32 +21,8 @@ variable "user_pool_2_client_id" {
 }
 
 // Fargate Task
-variable "container_memory" {
-  default = "2048"
-}
-
-variable "container_cpu" {
-  default = "0"
-}
-
-variable "image_url" {
-  default = "pennsieve/upload_move_files"
-}
-
-variable "task_memory" {
-  default = "2048"
-}
-
-variable "task_cpu" {
-  default = "512"
-}
-
 variable "image_tag" {
   default = "latest"
-}
-
-variable "tier" {
-  default = "upload-move"
 }
 
 variable "send_logs_to_datadog" {
@@ -60,26 +36,16 @@ variable "lambda_bucket" {
   default = "pennsieve-cc-lambda-functions-use1"
 }
 
-variable "file_move_timeout" {
-  default = "60"
-}
-
 variable "api_domain_name" {
 }
 
-# Legacy (pre-direct-to-storage) writes to the uploads bucket come through two
-# routes, each with its own switch. false detaches that route's uploads-bucket
-# policy, so its writes fail with AccessDenied; true re-attaches it. The roles,
-# the policies and the import/move pipeline stay in place either way.
-
-# POST /manifest/upload-credentials (upload_credentials_role): workflow data
-# targets before data-target-pennsieve moved to direct-to-storage uploads.
+# No longer used: the legacy upload routes these switched are gone. Kept so
+# that stacks still passing them (prod, dev) keep planning; remove together
+# with those arguments.
 variable "legacy_upload_credentials_enabled" {
   default = true
 }
 
-# The Cognito identity pool's cognito_authenticated role: pennsieve-agent older
-# than v2.0.0 and anything built on it (e.g. processor-post-agent).
 variable "legacy_cognito_upload_enabled" {
   default = true
 }

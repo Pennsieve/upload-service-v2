@@ -18,7 +18,6 @@ locals {
     service         = aws_lambda_function.service_lambda.function_name
     upload          = aws_lambda_function.upload_lambda.function_name
     archive         = aws_lambda_function.archive_lambda.function_name
-    fargate_trigger = aws_lambda_function.fargate_trigger_lambda.function_name
     reconcile       = aws_lambda_function.reconcile_lambda.function_name
     archive_sweeper = aws_lambda_function.archive_sweeper_lambda.function_name
   }
@@ -26,8 +25,6 @@ locals {
   dash_queues = {
     upload_trigger     = aws_sqs_queue.upload_trigger_queue.name
     upload_trigger_dlq = aws_sqs_queue.upload_trigger_deadletter_queue.name
-    imported_file      = aws_sqs_queue.imported_file_queue.name
-    imported_file_dlq  = aws_sqs_queue.imported_file_deadletter_queue.name
   }
 }
 
@@ -57,7 +54,6 @@ resource "aws_cloudwatch_dashboard" "upload_service_overview" {
             ["AWS/Lambda", "Errors", "FunctionName", local.dash_lambda_functions.service, { label = "service" }],
             [".", ".", ".", local.dash_lambda_functions.upload, { label = "upload" }],
             [".", ".", ".", local.dash_lambda_functions.archive, { label = "archive" }],
-            [".", ".", ".", local.dash_lambda_functions.fargate_trigger, { label = "fargate-trigger" }],
             [".", ".", ".", local.dash_lambda_functions.reconcile, { label = "reconcile" }],
             [".", ".", ".", local.dash_lambda_functions.archive_sweeper, { label = "archive-sweeper" }],
           ]
@@ -74,7 +70,6 @@ resource "aws_cloudwatch_dashboard" "upload_service_overview" {
           region = local.dash_region
           metrics = [
             ["AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", local.dash_queues.upload_trigger_dlq, { label = "upload-trigger-dlq" }],
-            [".", ".", ".", local.dash_queues.imported_file_dlq, { label = "imported-file-dlq" }],
           ]
         }
       },
@@ -215,9 +210,7 @@ resource "aws_cloudwatch_dashboard" "upload_service_overview" {
           region = local.dash_region
           metrics = [
             ["AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", local.dash_queues.upload_trigger, { label = "upload-trigger" }],
-            [".", ".", ".", local.dash_queues.imported_file, { label = "imported-file" }],
             [".", ".", ".", local.dash_queues.upload_trigger_dlq, { label = "upload-trigger-DLQ" }],
-            [".", ".", ".", local.dash_queues.imported_file_dlq, { label = "imported-file-DLQ" }],
           ]
         }
       },
@@ -383,41 +376,6 @@ resource "aws_cloudwatch_dashboard" "upload_service_overview" {
         }
       },
 
-      # ========= Row 8: Fargate move task =========
-      {
-        type       = "text"
-        x          = 0, y = 42, width = 24, height = 1
-        properties = { markdown = "## Fargate move task (legacy upload-bucket path)" }
-      },
-      {
-        type = "metric"
-        x    = 0, y = 43, width = 12, height = 5
-        properties = {
-          title  = "fargate-trigger invocations + errors"
-          view   = "timeSeries"
-          stat   = "Sum"
-          period = 300
-          region = local.dash_region
-          metrics = [
-            ["AWS/Lambda", "Invocations", "FunctionName", local.dash_lambda_functions.fargate_trigger, { label = "invocations" }],
-            [".", "Errors", ".", ".", { label = "errors" }],
-          ]
-        }
-      },
-      {
-        type = "metric"
-        x    = 12, y = 43, width = 12, height = 5
-        properties = {
-          title  = "fargate-trigger duration"
-          view   = "timeSeries"
-          region = local.dash_region
-          metrics = [
-            ["AWS/Lambda", "Duration", "FunctionName", local.dash_lambda_functions.fargate_trigger, { stat = "p50", label = "p50" }],
-            ["...", { stat = "p99", label = "p99" }],
-          ]
-          yAxis = { left = { label = "ms", showUnits = false } }
-        }
-      },
     ]
   })
 }

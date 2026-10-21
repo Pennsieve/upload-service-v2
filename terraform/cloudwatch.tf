@@ -19,14 +19,6 @@ resource "aws_cloudwatch_metric_alarm" "upload_sqs_dlq_cloudwatch_metric_alarm" 
   }
 }
 
-// CREATE FARGATE TASK CLOUDWATCH LOG GROUP
-resource "aws_cloudwatch_log_group" "fargate_cloudwatch_log_group" {
-  name              = "/aws/fargate/${var.environment_name}-${var.service_name}-${var.tier}-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
-  retention_in_days = 14
-
-  tags = local.common_tags
-}
-
 // Create log group for upload lambda.
 resource "aws_cloudwatch_log_group" "upload_lambda_loggroup" {
   name              = "/aws/lambda/${aws_lambda_function.upload_lambda.function_name}"
