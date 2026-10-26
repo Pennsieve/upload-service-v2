@@ -100,6 +100,19 @@ func ManifestHandler(request events.APIGatewayV2HTTPRequest) (*events.APIGateway
 				apiResponse, err = postFinalizeFilesRoute(request, claims)
 			}
 		}
+	case "/manifest/run-results/import":
+		// A workflow run's results into the dataset (run_results_import.go);
+		// called with the run's callback token.
+		switch request.RequestContext.HTTP.Method {
+		case "POST":
+			if authorized = authorizer.HasRole(*claims, permissions.CreateDeleteFiles); authorized {
+				apiResponse, err = postRunResultsImportRoute(request, claims)
+			}
+		case "GET":
+			if authorized = authorizer.HasRole(*claims, permissions.ViewFiles); authorized {
+				apiResponse, err = getRunResultsImportRoute(request, claims)
+			}
+		}
 	case "/manifest/archive":
 		switch request.RequestContext.HTTP.Method {
 		case "GET":

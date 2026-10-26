@@ -329,6 +329,32 @@ data "aws_iam_policy_document" "upload_service_v2_iam_policy_document" {
     ]
   }
 
+  // Run-results imports (POST /manifest/run-results/import): check the run's
+  // callback token, find its compute node and account, and queue the copies.
+  statement {
+    sid       = "RunImportCallbackValidator"
+    effect    = "Allow"
+    actions   = ["lambda:InvokeFunction"]
+    resources = [data.terraform_remote_state.workflow_service.outputs.callback_validator_lambda_arn]
+  }
+
+  statement {
+    sid     = "RunImportComputeNodes"
+    effect  = "Allow"
+    actions = ["dynamodb:GetItem"]
+    resources = [
+      data.terraform_remote_state.account_service.outputs.compute_nodes_table_arn,
+      data.terraform_remote_state.account_service.outputs.accounts_table_arn,
+    ]
+  }
+
+  statement {
+    sid       = "RunImportEnqueue"
+    effect    = "Allow"
+    actions   = ["sqs:SendMessage", "sqs:SendMessageBatch"]
+    resources = [aws_sqs_queue.run_results_import_queue.arn]
+  }
+
 }
 
 ##############################
@@ -348,7 +374,11 @@ resource "aws_iam_role" "storage_credentials_role" {
       {
         Effect = "Allow"
         Principal = {
-          AWS = aws_iam_role.upload_service_v2_lambda_role.arn
+          AWS = [
+            aws_iam_role.upload_service_v2_lambda_role.arn,
+            # Writes run-results imports' copies (lambda/runimport).
+            aws_iam_role.run_import_lambda_role.arn,
+          ]
         }
         Action = "sts:AssumeRole"
       }
@@ -608,5 +638,86 @@ data "aws_iam_policy_document" "archive_sweeper_policy_document" {
     effect    = "Allow"
     actions   = ["lambda:InvokeFunction"]
     resources = [aws_lambda_function.archive_lambda.arn]
+  }
+}
+
+##############################
+# RUN-IMPORT LAMBDA          #
+##############################
+# Copies a workflow run's staged results into dataset storage
+# (lambda/runimport). Reads through compute accounts' roles, which trust the
+# Pennsieve account (each session limited to one run target's results
+# prefix); writes through the storage credentials role (each session limited
+# to one manifest's prefix).
+
+resource "aws_iam_role" "run_import_lambda_role" {
+  name = "${var.environment_name}-${var.service_name}-run-import-lambda-role-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "lambda.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+}
+
+resource "aws_iam_role_policy" "run_import_lambda_policy" {
+  name   = "${var.environment_name}-${var.service_name}-run-import-lambda-policy-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
+  role   = aws_iam_role.run_import_lambda_role.id
+  policy = data.aws_iam_policy_document.run_import_lambda_policy_document.json
+}
+
+data "aws_iam_policy_document" "run_import_lambda_policy_document" {
+  statement {
+    sid       = "Logs"
+    actions   = ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"]
+    resources = ["*"]
+  }
+
+  statement {
+    sid = "ConsumeImportQueue"
+    actions = [
+      "sqs:ReceiveMessage",
+      "sqs:DeleteMessage",
+      "sqs:GetQueueAttributes",
+    ]
+    resources = [aws_sqs_queue.run_results_import_queue.arn]
+  }
+
+  statement {
+    sid       = "HandToUploadLambda"
+    actions   = ["sqs:SendMessage"]
+    resources = [aws_sqs_queue.upload_trigger_queue.arn]
+  }
+
+  statement {
+    sid       = "ManifestFileRows"
+    actions   = ["dynamodb:GetItem", "dynamodb:UpdateItem"]
+    resources = [aws_dynamodb_table.manifest_files_dynamo_table.arn]
+  }
+
+  statement {
+    sid     = "ReadRunResults"
+    actions = ["sts:AssumeRole"]
+    resources = [
+      "arn:aws:iam::*:role/Pennsieve-Compute-*",
+      "arn:aws:iam::*:role/ROLE-*",
+    ]
+  }
+
+  statement {
+    sid       = "WriteStorage"
+    actions   = ["sts:AssumeRole"]
+    resources = [aws_iam_role.storage_credentials_role.arn]
+  }
+
+  // The upload lambda records the object's SHA-256; storage buckets may use
+  // KMS keys in this account.
+  statement {
+    sid       = "StorageKms"
+    actions   = ["kms:GenerateDataKey", "kms:Decrypt"]
+    resources = ["arn:aws:kms:*:${data.terraform_remote_state.account.outputs.aws_account_id}:key/*"]
   }
 }

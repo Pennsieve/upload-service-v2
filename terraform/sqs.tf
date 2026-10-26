@@ -70,3 +70,34 @@ resource "aws_sqs_queue_policy" "upload_trigger_sqs_policy" {
 POLICY
 }
 
+
+# Run results imports (lambda/runimport): one message per file of a
+# workflow run's results to copy into a dataset, queued by the service
+# lambda's POST /manifest/run-results/import. The visibility timeout covers
+# the copy lambda's 15 minutes; after maxReceiveCount the lambda has marked
+# the file Failed itself, so the dead-letter queue is for inspection only.
+resource "aws_sqs_queue" "run_results_import_queue" {
+  name                       = "${var.environment_name}-run-results-import-queue-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
+  max_message_size           = 262144
+  message_retention_seconds  = 345600 // 4 days
+  visibility_timeout_seconds = 960
+  redrive_policy             = "{\"deadLetterTargetArn\":\"${aws_sqs_queue.run_results_import_deadletter_queue.arn}\",\"maxReceiveCount\":3}"
+}
+
+resource "aws_sqs_queue" "run_results_import_deadletter_queue" {
+  name                      = "${var.environment_name}-run-results-import-deadletter-queue-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
+  max_message_size          = 262144
+  message_retention_seconds = 604800 // 1 week
+}
+
+resource "aws_lambda_event_source_mapping" "run_results_import_source_mapping" {
+  event_source_arn = aws_sqs_queue.run_results_import_queue.arn
+  function_name    = aws_lambda_function.run_import_lambda.arn
+  # One copy per invocation: a copy can take minutes, and a retry repeats
+  # only its own file.
+  batch_size              = 1
+  function_response_types = ["ReportBatchItemFailures"]
+  scaling_config {
+    maximum_concurrency = 20
+  }
+}

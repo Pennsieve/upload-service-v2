@@ -73,6 +73,13 @@ resource "aws_lambda_function" "service_lambda" {
       UPLOAD_LAMBDA_ARN            = aws_lambda_function.upload_lambda.arn,
       UPLOAD_TRIGGER_QUEUE_URL     = aws_sqs_queue.upload_trigger_queue.url,
       LOG_LEVEL                    = "info",
+      # Run-results imports: check a run's callback token with
+      # workflow-service, find its node and account in account-service's
+      # tables, and queue the copies.
+      CALLBACK_VALIDATOR_FUNCTION  = data.terraform_remote_state.workflow_service.outputs.callback_validator_lambda_arn,
+      COMPUTE_NODES_TABLE          = data.terraform_remote_state.account_service.outputs.compute_nodes_table_name,
+      ACCOUNTS_TABLE               = data.terraform_remote_state.account_service.outputs.accounts_table_name,
+      RUN_RESULTS_IMPORT_QUEUE_URL = aws_sqs_queue.run_results_import_queue.url,
     }
   }
 }
@@ -196,4 +203,37 @@ resource "aws_lambda_permission" "archive_sweeper_allow_events" {
   function_name = aws_lambda_function.archive_sweeper_lambda.function_name
   principal     = "events.amazonaws.com"
   source_arn    = aws_cloudwatch_event_rule.archive_sweeper_schedule.arn
+}
+
+### RUN-IMPORT LAMBDA
+#
+# Copies a workflow run's staged results into dataset storage, one file per
+# message on run_results_import_queue (see pkg/runresults): reads through the
+# compute account's role (limited to the run target's prefix), writes through
+# the storage credentials role (limited to the manifest's prefix), then hands
+# the file to the upload lambda through upload_trigger_queue. Outside the VPC:
+# it needs neither RDS nor the private subnets, only S3, STS, SQS and DynamoDB.
+resource "aws_lambda_function" "run_import_lambda" {
+  description   = "Copies workflow run results into dataset storage (run-results imports) and hands them to the upload lambda."
+  function_name = "${var.environment_name}-${var.service_name}-run-import-lambda-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
+  handler       = "bootstrap"
+  runtime       = "provided.al2023"
+  architectures = ["arm64"]
+  role          = aws_iam_role.run_import_lambda_role.arn
+  timeout       = 900
+  # Memory buys network throughput; a copy streams through the lambda.
+  memory_size = 1024
+  s3_bucket   = var.lambda_bucket
+  s3_key      = "${var.service_name}/runimport/upload-v2-runimport-${var.image_tag}.zip"
+
+  environment {
+    variables = {
+      ENV                          = var.environment_name
+      MANIFEST_FILE_TABLE          = aws_dynamodb_table.manifest_files_dynamo_table.name
+      STORAGE_CREDENTIALS_ROLE_ARN = aws_iam_role.storage_credentials_role.arn
+      UPLOAD_TRIGGER_QUEUE_URL     = aws_sqs_queue.upload_trigger_queue.url
+      REGION                       = var.aws_region
+      LOG_LEVEL                    = "info"
+    }
+  }
 }
