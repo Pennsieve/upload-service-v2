@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"regexp"
 	"time"
 
@@ -33,9 +34,9 @@ import (
 // Importing a workflow run's results into a dataset (a "Pennsieve Dataset"
 // data target; see pkg/runresults). The compute node's status-updater calls
 // POST /manifest/run-results/import with the run's callback token, in pages
-// of up to maxRunImportObjects staged files, then polls
-// GET /manifest/run-results/import until every file is in the dataset or
-// one failed.
+// of up to maxRunImportObjects staged files; the target is done once every
+// page is accepted, and the copies run on. GET /manifest/run-results/import
+// reports how far they are (for the run's page).
 
 // maxRunImportObjects bounds one request: registering and queueing this
 // many files stays well inside API Gateway's 29s.
@@ -53,12 +54,13 @@ type runResultsObject struct {
 	Size int64  `json:"size"`
 }
 
+// runResultsImportRequest names the run's target and a page of its staged
+// files. Where they go (the dataset, its folder, overwriting or not) is the
+// target's, from the run; nothing else in the request decides it.
 type runResultsImportRequest struct {
-	RunId        string             `json:"runId"`
-	TargetId     string             `json:"targetId"`
-	TargetFolder string             `json:"targetFolder,omitempty"`
-	OnConflict   string             `json:"onConflict,omitempty"`
-	Objects      []runResultsObject `json:"objects"`
+	RunId    string             `json:"runId"`
+	TargetId string             `json:"targetId"`
+	Objects  []runResultsObject `json:"objects"`
 }
 
 type runResultsImportResponse struct {
@@ -77,9 +79,14 @@ func runImportUploadId(manifestId, key string) string {
 }
 
 // planRunImport turns staged files into the manifest's file rows and the
-// copy jobs that fill them. src and dest name the run's bucket and the
-// manifest's storage; the files must be below the target's prefix.
-func planRunImport(req runResultsImportRequest, manifestId string, src runresults.Results, dest storage.Resolution, destRegion string) ([]manifestFile.FileDTO, []runresults.Job, error) {
+// copy jobs that fill them, placed as target says. src and dest name the
+// run's bucket and the manifest's storage; the files must be below the
+// target's prefix, and no larger than the copies take.
+func planRunImport(req runResultsImportRequest, target runresults.DatasetTarget, manifestId string, src runresults.Results, dest storage.Resolution, destRegion string) ([]manifestFile.FileDTO, []runresults.Job, error) {
+	onConflict := onConflictKeepBoth
+	if target.OverwriteFiles {
+		onConflict = onConflictReplace
+	}
 	prefix := runresults.Prefix(req.RunId, req.TargetId)
 	keyPrefix := dest.KeyPrefix(manifestId)
 	files := make([]manifestFile.FileDTO, 0, len(req.Objects))
@@ -89,11 +96,15 @@ func planRunImport(req runResultsImportRequest, manifestId string, src runresult
 		if o.Size < 0 {
 			return nil, nil, fmt.Errorf("objects[%d].size must be non-negative", i)
 		}
+		// Checked again against the stored size when the file is copied.
+		if o.Size > runresults.MaxFileBytes {
+			return nil, nil, fmt.Errorf("objects[%d]: %s is %d bytes; run imports copy files up to %d GiB", i, path.Base(o.Key), o.Size, int64(runresults.MaxFileBytes)>>30)
+		}
 		if seen[o.Key] {
 			return nil, nil, fmt.Errorf("objects[%d]: %q is listed twice", i, o.Key)
 		}
 		seen[o.Key] = true
-		folder, name, err := runresults.FilePlacement(prefix, o.Key, req.TargetFolder)
+		folder, name, err := runresults.FilePlacement(prefix, o.Key, target.TargetFolder)
 		if err != nil {
 			return nil, nil, fmt.Errorf("objects[%d]: %w", i, err)
 		}
@@ -109,10 +120,10 @@ func planRunImport(req runResultsImportRequest, manifestId string, src runresult
 			ManifestId:   manifestId,
 			UploadId:     uploadId,
 			RunId:        req.RunId,
-			OnConflict:   req.OnConflict,
+			TargetId:     req.TargetId,
+			OnConflict:   onConflict,
 			OrgIntId:     dest.OrganizationId,
 			DatasetIntId: dest.DatasetId,
-			Size:         o.Size,
 			Source: runresults.Source{
 				Bucket:     src.Bucket,
 				Key:        o.Key,
@@ -148,9 +159,6 @@ func checkRunImportRequest(req runResultsImportRequest, authorization string) (t
 	if len(req.Objects) == 0 || len(req.Objects) > maxRunImportObjects {
 		return "", fmt.Errorf("objects must list 1 to %d files", maxRunImportObjects)
 	}
-	if !validOnConflict(req.OnConflict) {
-		return "", errors.New("onConflict must be one of: keepBoth, replace")
-	}
 	return token, nil
 }
 
@@ -165,8 +173,8 @@ func postRunResultsImportRoute(request events.APIGatewayV2HTTPRequest, claims *a
 	if err != nil {
 		return errResp(400, err.Error())
 	}
-	if req.OnConflict == "" {
-		req.OnConflict = onConflictKeepBoth
+	if claims.DatasetClaim == nil || claims.OrgClaim == nil || claims.UserClaim == nil {
+		return errResp(403, "Run imports need a dataset")
 	}
 	queueURL := os.Getenv("RUN_RESULTS_IMPORT_QUEUE_URL")
 	defaultStorageBucket := os.Getenv("DEFAULT_STORAGE_BUCKET")
@@ -188,6 +196,12 @@ func postRunResultsImportRoute(request events.APIGatewayV2HTTPRequest, claims *a
 		logger.WithError(err).Error("run imports: checking the callback token")
 		return errResp(500, "Could not check the run")
 	}
+	// Only into one of the run's own dataset targets, where it says: the
+	// token alone would reach every dataset the run writes to.
+	target, err := run.ImportTarget(req.TargetId, claims.DatasetClaim.NodeId)
+	if err != nil {
+		return errResp(403, "targetId is not one of the run's dataset targets for this dataset")
+	}
 	locator := &runresults.Locator{
 		DB:            store.dynamodb,
 		NodesTable:    os.Getenv("COMPUTE_NODES_TABLE"),
@@ -201,19 +215,17 @@ func postRunResultsImportRoute(request events.APIGatewayV2HTTPRequest, claims *a
 	}
 
 	manifestId := runImportManifestId(req.RunId, req.TargetId, claims.DatasetClaim.NodeId)
-	if _, err := store.dy.GetManifestById(ctx, store.tableName, manifestId); err != nil {
-		if err := store.dy.CreateManifest(ctx, store.tableName, dydb.ManifestTable{
-			ManifestId:     manifestId,
-			DatasetId:      claims.DatasetClaim.IntId,
-			DatasetNodeId:  claims.DatasetClaim.NodeId,
-			OrganizationId: claims.OrgClaim.IntId,
-			UserId:         claims.UserClaim.Id,
-			Status:         manifest.Initiated.String(),
-			DateCreated:    time.Now().Unix(),
-		}); err != nil {
-			logger.WithError(err).Error("run imports: creating the manifest")
-			return errResp(500, "Could not create the manifest")
-		}
+	if err := ensureRunImportManifest(ctx, store.dynamodb, store.tableName, dydb.ManifestTable{
+		ManifestId:     manifestId,
+		DatasetId:      claims.DatasetClaim.IntId,
+		DatasetNodeId:  claims.DatasetClaim.NodeId,
+		OrganizationId: claims.OrgClaim.IntId,
+		UserId:         claims.UserClaim.Id,
+		Status:         manifest.Initiated.String(),
+		DateCreated:    time.Now().Unix(),
+	}); err != nil {
+		logger.WithError(err).Error("run imports: creating the manifest")
+		return errResp(500, "Could not create the manifest")
 	}
 
 	pgdb, err := pgQueries.ConnectRDS()
@@ -233,14 +245,21 @@ func postRunResultsImportRoute(request events.APIGatewayV2HTTPRequest, claims *a
 		return errResp(500, "Failed to determine storage bucket region")
 	}
 
-	files, jobs, err := planRunImport(req, manifestId, src, *dest, destRegion)
+	files, jobs, err := planRunImport(req, target, manifestId, src, *dest, destRegion)
 	if err != nil {
 		return errResp(400, err.Error())
 	}
 	upload.PackageTypeResolver(files)
-	if _, err := store.dy.SyncFiles(manifestId, files, nil, store.tableName, store.fileTableName); err != nil {
+	synced, err := store.dy.SyncFiles(manifestId, files, nil, store.tableName, store.fileTableName)
+	if err != nil {
 		logger.WithError(err).Error("run imports: registering files")
 		return errResp(500, "Could not register the files")
+	}
+	// A file not registered would be copied and then dropped (no row), and
+	// the import would look complete without it: retry the page instead.
+	if len(synced.FailedFiles) > 0 {
+		logger.Errorf("run imports: %d of %d files not registered", len(synced.FailedFiles), len(files))
+		return errResp(503, "Could not register every file; retry")
 	}
 	if failed := enqueueRunImportJobs(ctx, store.sqsClient, queueURL, jobs); failed > 0 {
 		logger.Errorf("run imports: %d of %d copies not queued", failed, len(jobs))
@@ -328,16 +347,21 @@ func countRunImport(manifestId string, rows []runImportFileRow) runImportStatus 
 	return s
 }
 
-// getRunResultsImportRoute reports a run target's import (manifest_id).
+// getRunResultsImportRoute reports a run target's import into the dataset
+// (run_id, target_id): only run-import manifests, found by their stable id.
 func getRunResultsImportRoute(request events.APIGatewayV2HTTPRequest, claims *authorizer.Claims) (*events.APIGatewayV2HTTPResponse, error) {
-	manifestId := request.QueryStringParameters["manifest_id"]
-	if !isValidUUID(manifestId) {
-		return errResp(400, "manifest_id must be a UUID")
+	if claims.DatasetClaim == nil {
+		return errResp(403, "Run imports need a dataset")
 	}
+	runId, targetId := request.QueryStringParameters["run_id"], request.QueryStringParameters["target_id"]
+	if runId == "" || !runTargetIdRE.MatchString(targetId) {
+		return errResp(400, "run_id and target_id are required")
+	}
+	manifestId := runImportManifestId(runId, targetId, claims.DatasetClaim.NodeId)
 	ctx := context.Background()
 	m, err := store.dy.GetManifestById(ctx, store.tableName, manifestId)
 	if err != nil {
-		return errResp(404, "Manifest not found")
+		return errResp(404, "No import of this run target into this dataset")
 	}
 	if m.DatasetNodeId != claims.DatasetClaim.NodeId {
 		return errResp(403, "Manifest does not belong to this dataset")
@@ -372,4 +396,23 @@ func getRunResultsImportRoute(request events.APIGatewayV2HTTPRequest, claims *au
 	}
 	body, _ := json.Marshal(countRunImport(manifestId, rows))
 	return &events.APIGatewayV2HTTPResponse{StatusCode: 200, Body: string(body)}, nil
+}
+
+// ensureRunImportManifest makes a run target's manifest if there's none
+// yet: a conditional put, so a retry or a later page never replaces it.
+func ensureRunImportManifest(ctx context.Context, db *dynamodb.Client, table string, m dydb.ManifestTable) error {
+	item, err := attributevalue.MarshalMap(m)
+	if err != nil {
+		return err
+	}
+	_, err = db.PutItem(ctx, &dynamodb.PutItemInput{
+		TableName:           aws.String(table),
+		Item:                item,
+		ConditionExpression: aws.String("attribute_not_exists(ManifestId)"),
+	})
+	var exists *dyTypes.ConditionalCheckFailedException
+	if errors.As(err, &exists) {
+		return nil
+	}
+	return err
 }

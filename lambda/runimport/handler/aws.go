@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -118,10 +119,20 @@ func InitializeClients() {
 		FileTableName:         os.Getenv("MANIFEST_FILE_TABLE"),
 		Queue:                 sqs.NewFromConfig(cfg),
 		UploadTriggerQueueURL: os.Getenv("UPLOAD_TRIGGER_QUEUE_URL"),
+		MaxAttempts:           maxAttemptsFromEnv(),
 	}
 }
 
 // Handle is the lambda's entry point (an SQS event source).
 func Handle(ctx context.Context, ev events.SQSEvent) (events.SQSEventResponse, error) {
 	return copier.Handle(ctx, ev)
+}
+
+// maxAttemptsFromEnv is the import queue's maxReceiveCount (MAX_ATTEMPTS,
+// set by terraform from the same value), 3 by default.
+func maxAttemptsFromEnv() int {
+	if n, err := strconv.Atoi(os.Getenv("MAX_ATTEMPTS")); err == nil && n > 0 {
+		return n
+	}
+	return 3
 }

@@ -36,3 +36,10 @@ echo "*******************************"
 echo ""
 cd ../../pkg/runresults; \
   go test -v ./... ;
+echo ""
+echo "*********************************"
+echo "*   Testing pkg/uploadtrigger   *"
+echo "*********************************"
+echo ""
+cd ../../pkg/uploadtrigger; \
+  go test -v ./... ;

@@ -13,6 +13,8 @@ import (
 	"net/url"
 	"strconv"
 
+	"time"
+
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
@@ -20,23 +22,15 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	s3Types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
-	sqsTypes "github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	"github.com/pennsieve/pennsieve-upload-service-v2/pkg/runresults"
+	"github.com/pennsieve/pennsieve-upload-service-v2/pkg/uploadtrigger"
 	log "github.com/sirupsen/logrus"
 )
 
-// maxAttempts is how often a copy is tried (the queue's maxReceiveCount):
-// the last attempt to fail marks the file Failed, so the run's import ends
-// instead of waiting on a message parked in the dead-letter queue.
-const maxAttempts = 3
-
-// onConflictAttr is the upload trigger queue's message attribute for the
-// conflict strategy (service/handler.OnConflictAttrName).
-const onConflictAttr = "OnConflict"
-
-// Reader opens a staged result, through the compute account's role.
+// Reader opens a staged file, through the compute account's role, and
+// says how large it is (as stored, not as the job says).
 type Reader interface {
-	Open(ctx context.Context, src runresults.Source) (io.ReadCloser, error)
+	Open(ctx context.Context, src runresults.Source) (body io.ReadCloser, size int64, err error)
 }
 
 // Writer stores a file in dataset storage, through the storage credentials
@@ -65,13 +59,36 @@ type Copier struct {
 	Queue         Queue
 	// UploadTriggerQueueURL is the upload lambda's queue.
 	UploadTriggerQueueURL string
+	// MaxAttempts is how often a copy is tried (the import queue's
+	// maxReceiveCount): the last attempt to fail marks the file Failed, so
+	// the import ends instead of a message waiting in the dead-letter queue.
+	MaxAttempts int
 }
 
-// errPermanent is a failure a retry won't fix: the file is marked Failed at
-// once.
-type errPermanent struct{ msg string }
+// copyMargin is how long before the lambda's deadline a copy gives up, so
+// there's time left to mark the file Failed.
+const copyMargin = time.Minute
 
-func (e errPermanent) Error() string { return e.msg }
+// copyError is a failed copy: what the file's row says (Message, which
+// dataset viewers see: no account ids, ARNs or request ids), and the
+// detail, which is only logged. A permanent one won't be fixed by a retry.
+type copyError struct {
+	message   string
+	permanent bool
+	err       error
+}
+
+func (e copyError) Error() string {
+	if e.err != nil {
+		return e.message + ": " + e.err.Error()
+	}
+	return e.message
+}
+
+func (e copyError) Unwrap() error { return e.err }
+
+func permanent(message string, err error) copyError { return copyError{message, true, err} }
+func transient(message string, err error) copyError { return copyError{message, false, err} }
 
 // Handle copies each message's file; a message whose copy may succeed on a
 // retry is returned as a batch item failure.
@@ -79,8 +96,14 @@ func (c *Copier) Handle(ctx context.Context, ev events.SQSEvent) (events.SQSEven
 	var resp events.SQSEventResponse
 	for _, msg := range ev.Records {
 		var job runresults.Job
-		if err := json.Unmarshal([]byte(msg.Body), &job); err != nil || job.ManifestId == "" || job.UploadId == "" {
+		if err := json.Unmarshal([]byte(msg.Body), &job); err != nil {
 			log.WithField("messageId", msg.MessageId).Error("run import: unreadable job, dropped")
+			continue
+		}
+		// Only jobs as the service lambda queues them: a message can't widen
+		// what this lambda reads or writes.
+		if err := job.Check(); err != nil {
+			log.WithField("messageId", msg.MessageId).WithError(err).Error("run import: unexpected job, dropped")
 			continue
 		}
 		attempt, _ := strconv.Atoi(msg.Attributes["ApproximateReceiveCount"])
@@ -108,15 +131,24 @@ func (c *Copier) copyOne(ctx context.Context, job runresults.Job, attempt int) (
 		return false
 	}
 
-	err = c.copyFile(ctx, job)
+	copyCtx, cancel := withCopyDeadline(ctx)
+	defer cancel()
+	err = c.copyFile(copyCtx, job)
 	if err == nil {
 		logger.Info("run import: copied")
 		return false
 	}
-	var perm errPermanent
-	if errors.As(err, &perm) || attempt >= maxAttempts {
+	var ce copyError
+	if !errors.As(err, &ce) {
+		ce = transient("the file could not be copied", err)
+	}
+	if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
+		// Out of the lambda's time: a retry would run out again.
+		ce = permanent("the file could not be copied in time", err)
+	}
+	if ce.permanent || attempt >= c.MaxAttempts {
 		logger.WithError(err).Error("run import: copy failed")
-		if markErr := c.markFailed(ctx, job, err.Error()); markErr != nil {
+		if markErr := c.markFailed(ctx, job, ce.message); markErr != nil {
 			logger.WithError(markErr).Error("run import: marking the file failed")
 			return true
 		}
@@ -126,53 +158,51 @@ func (c *Copier) copyOne(ctx context.Context, job runresults.Job, attempt int) (
 	return true
 }
 
-func (c *Copier) copyFile(ctx context.Context, job runresults.Job) error {
-	if job.Size > runresults.MaxFileBytes {
-		return errPermanent{fmt.Sprintf("%s (%d bytes; the limit is %d)", runresults.ErrTooLarge, job.Size, int64(runresults.MaxFileBytes))}
+// withCopyDeadline gives a copy until copyMargin before the lambda's own
+// deadline, when there is one.
+func withCopyDeadline(ctx context.Context) (context.Context, context.CancelFunc) {
+	if deadline, ok := ctx.Deadline(); ok {
+		return context.WithDeadline(ctx, deadline.Add(-copyMargin))
 	}
-	body, err := c.Reader.Open(ctx, job.Source)
+	return context.WithCancel(ctx)
+}
+
+func (c *Copier) copyFile(ctx context.Context, job runresults.Job) error {
+	body, size, err := c.Reader.Open(ctx, job.Source)
 	if err != nil {
 		var noKey *s3Types.NoSuchKey
 		if errors.As(err, &noKey) {
-			return errPermanent{"the staged file is gone (results are kept 7 days)"}
+			return permanent("the staged file is gone (staged files are kept 7 days)", err)
 		}
-		return fmt.Errorf("reading the staged file: %w", err)
+		return transient("the staged file could not be read", err)
 	}
 	defer body.Close()
-	tagging := url.Values{"OrgId": {strconv.FormatInt(job.OrgIntId, 10)}, "DatasetId": {strconv.FormatInt(job.DatasetIntId, 10)}}.Encode()
-	if err := c.Writer.Put(ctx, job.Dest, body, job.Size, tagging); err != nil {
-		return fmt.Errorf("storing the file: %w", err)
+	if size > runresults.MaxFileBytes {
+		return permanent(fmt.Sprintf("%s (%d GiB at most)", runresults.ErrTooLarge, int64(runresults.MaxFileBytes)>>30), nil)
 	}
-	return c.handToUpload(ctx, job)
+	tagging := url.Values{"OrgId": {strconv.FormatInt(job.OrgIntId, 10)}, "DatasetId": {strconv.FormatInt(job.DatasetIntId, 10)}}.Encode()
+	if err := c.Writer.Put(ctx, job.Dest, body, size, tagging); err != nil {
+		return transient("the file could not be stored", err)
+	}
+	if err := c.handToUpload(ctx, job, size); err != nil {
+		return transient("the file could not be handed to the upload pipeline", err)
+	}
+	return nil
 }
 
 // handToUpload queues the stored file for the upload lambda, as finalize
-// does for a client's upload: a synthesized S3 "object created" event.
-func (c *Copier) handToUpload(ctx context.Context, job runresults.Job) error {
-	ev := events.S3Event{Records: []events.S3EventRecord{{
-		EventSource: "aws:s3",
-		EventName:   "ObjectCreated:Put",
-		S3: events.S3Entity{
-			Bucket: events.S3Bucket{Name: job.Dest.Bucket},
-			Object: events.S3Object{Key: job.Dest.Key, Size: job.Size},
-		},
-	}}}
-	body, _ := json.Marshal(ev)
+// does for a client's upload.
+func (c *Copier) handToUpload(ctx context.Context, job runresults.Job, size int64) error {
 	onConflict := job.OnConflict
 	if onConflict == "" {
 		onConflict = "keepBoth"
 	}
 	_, err := c.Queue.SendMessage(ctx, &sqs.SendMessageInput{
-		QueueUrl:    aws.String(c.UploadTriggerQueueURL),
-		MessageBody: aws.String(string(body)),
-		MessageAttributes: map[string]sqsTypes.MessageAttributeValue{
-			onConflictAttr: {DataType: aws.String("String"), StringValue: aws.String(onConflict)},
-		},
+		QueueUrl:          aws.String(c.UploadTriggerQueueURL),
+		MessageBody:       aws.String(uploadtrigger.Body(job.Dest.Bucket, job.Dest.Key, size)),
+		MessageAttributes: uploadtrigger.Attributes(onConflict),
 	})
-	if err != nil {
-		return fmt.Errorf("handing the file to the upload lambda: %w", err)
-	}
-	return nil
+	return err
 }
 
 func (c *Copier) key(job runresults.Job) map[string]dyTypes.AttributeValue {
@@ -223,11 +253,11 @@ func (c *Copier) markFailed(ctx context.Context, job runresults.Job, msg string)
 // role, limited to the target's prefix.
 type s3Reader struct{ sessions *sessions }
 
-func (r s3Reader) Open(ctx context.Context, src runresults.Source) (io.ReadCloser, error) {
+func (r s3Reader) Open(ctx context.Context, src runresults.Source) (io.ReadCloser, int64, error) {
 	client := r.sessions.client(src.Region, src.RoleArn, src.ExternalId, runresults.ReadSessionPolicy(src.Bucket, src.ReadPrefix))
 	out, err := client.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(src.Bucket), Key: aws.String(src.Key)})
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	return out.Body, nil
+	return out.Body, aws.ToInt64(out.ContentLength), nil
 }

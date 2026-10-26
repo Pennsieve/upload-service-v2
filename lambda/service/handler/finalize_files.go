@@ -21,6 +21,7 @@ import (
 	pgQueries "github.com/pennsieve/pennsieve-go-core/pkg/queries/pgdb"
 	dyQueriesNs "github.com/pennsieve/pennsieve-go-core/pkg/queries/dydb"
 	"github.com/pennsieve/pennsieve-upload-service-v2/pkg/bucketregion"
+	"github.com/pennsieve/pennsieve-upload-service-v2/pkg/uploadtrigger"
 	"github.com/pennsieve/pennsieve-upload-service-v2/service/pkg/storage"
 	log "github.com/sirupsen/logrus"
 )
@@ -377,7 +378,7 @@ func fetchManifestFileStatuses(
 // constant. Missing attribute on the consumer side is treated as keepBoth
 // for backward compatibility with messages enqueued before this flag
 // existed.
-const OnConflictAttrName = "OnConflict"
+const OnConflictAttrName = uploadtrigger.OnConflictAttrName
 
 func enqueueToUploadQueue(
 	ctx context.Context,
@@ -413,28 +414,14 @@ func enqueueToUploadQueue(
 			idToUpload := make(map[string]string, len(batch))
 			for i, f := range batch {
 				key := fmt.Sprintf("%s/%s", keyPrefix, f.UploadID)
-				s3Ev := events.S3Event{Records: []events.S3EventRecord{{
-					EventSource: "aws:s3",
-					EventName:   "ObjectCreated:Put",
-					S3: events.S3Entity{
-						Bucket: events.S3Bucket{Name: bucket},
-						Object: events.S3Object{Key: key, Size: f.Size},
-					},
-				}}}
-				body, _ := json.Marshal(s3Ev)
 				// SQS batch entry Id must match ^[a-zA-Z0-9_-]{1,80}$; use
 				// position so we can map failures back to uploadIds below.
 				id := fmt.Sprintf("b%d", i)
 				idToUpload[id] = f.UploadID
 				entries = append(entries, sqsTypes.SendMessageBatchRequestEntry{
-					Id:          aws.String(id),
-					MessageBody: aws.String(string(body)),
-					MessageAttributes: map[string]sqsTypes.MessageAttributeValue{
-						OnConflictAttrName: {
-							DataType:    aws.String("String"),
-							StringValue: aws.String(onConflict),
-						},
-					},
+					Id:                aws.String(id),
+					MessageBody:       aws.String(uploadtrigger.Body(bucket, key, f.Size)),
+					MessageAttributes: uploadtrigger.Attributes(onConflict),
 				})
 			}
 

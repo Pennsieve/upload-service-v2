@@ -407,12 +407,14 @@ paths:
       summary: Import a workflow run's results into the dataset
       description: |
         Called by a compute node for a run's "Pennsieve Dataset" data target,
-        with the run's callback token. Registers a page of the run target's
-        staged files (results/{runId}/{targetId}/ in the node's bucket) on the
-        target's manifest and queues their copies into the dataset's storage;
-        the upload lambda then creates their packages. Idempotent: the same
-        run, target and dataset always use the same manifest and upload ids.
-        Max 1000 files per call.
+        with the run's callback token. The target must be one of the run's
+        dataset targets, writing to dataset_id (one of the run's datasets);
+        the folder and conflict handling are the target's, from the run.
+        Registers a page of the target's staged files (imports/{runId}/{targetId}/
+        in the node's bucket) on its manifest and queues their copies into the
+        dataset's storage; the upload lambda then creates their packages.
+        Idempotent: the same run, target and dataset always use the same
+        manifest and upload ids. Max 1000 files per call, each up to 40 GiB.
       x-amazon-apigateway-integration:
         $ref: '#/components/x-amazon-apigateway-integrations/manifest-service-finalize'
       operationId: importRunResults
@@ -426,7 +428,7 @@ paths:
           schema:
             type: string
           required: true
-          description: dataset node id
+          description: the dataset the target writes to (one of the run's datasets)
       requestBody:
         required: true
         content:
@@ -439,11 +441,7 @@ paths:
                   type: string
                 targetId:
                   type: string
-                targetFolder:
-                  type: string
-                onConflict:
-                  type: string
-                  enum: [keepBoth, replace]
+                  description: the data target's node id in the run
                 objects:
                   type: array
                   maxItems: 1000
@@ -474,8 +472,9 @@ paths:
     get:
       summary: How far a run's results import is
       description: |
-        The run target's files by state: imported (in the dataset), failed
-        (with the first failures' reasons) and in progress.
+        A run target's import into the dataset: its files by state, imported
+        (in the dataset), failed (with the first failures' reasons) and in
+        progress. For the run's page; the run itself doesn't wait for it.
       x-amazon-apigateway-integration:
         $ref: '#/components/x-amazon-apigateway-integrations/manifest-service'
       operationId: getRunResultsImport
@@ -491,11 +490,17 @@ paths:
           required: true
           description: dataset node id
         - in: query
-          name: manifest_id
+          name: run_id
           schema:
             type: string
           required: true
-          description: the import's manifest (from the POST)
+          description: the run
+        - in: query
+          name: target_id
+          schema:
+            type: string
+          required: true
+          description: the data target's node id in the run
       responses:
         '200':
           description: The import's progress

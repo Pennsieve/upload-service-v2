@@ -712,12 +712,4 @@ data "aws_iam_policy_document" "run_import_lambda_policy_document" {
     actions   = ["sts:AssumeRole"]
     resources = [aws_iam_role.storage_credentials_role.arn]
   }
-
-  // The upload lambda records the object's SHA-256; storage buckets may use
-  // KMS keys in this account.
-  statement {
-    sid       = "StorageKms"
-    actions   = ["kms:GenerateDataKey", "kms:Decrypt"]
-    resources = ["arn:aws:kms:*:${data.terraform_remote_state.account.outputs.aws_account_id}:key/*"]
-  }
 }

@@ -1,14 +1,15 @@
 // Package runresults imports a workflow run's results into a dataset.
 //
 // A run's "Pennsieve Dataset" data target copies its input to
-// s3://workflow-logs-<account>-<env>-<node>/results/<runId>/<targetId>/ in
+// s3://workflow-logs-<account>-<env>-<node>/imports/<runId>/<targetId>/ in
 // the compute account (compute-node-aws-provisioner-v2's stage-results),
 // then asks upload-service to import those files with the run's callback
 // token. As in download-service's run archives, the token is checked by
 // workflow-service's callback-validator Lambda, which names the run's
-// compute node; the bucket and the role that reads it follow from the node
-// and its account (account-service's tables). Nothing about where to read
-// comes from the request, only which files below the run's prefix.
+// compute node and its dataset targets; the bucket and the role that reads
+// it follow from the node and its account (account-service's tables), and
+// the dataset and folder from the target. Nothing about where to read or
+// write comes from the request, only which files below the target's prefix.
 //
 // The service lambda registers the files on a manifest and queues a Job per
 // file; the run-import lambda copies each one into the dataset's storage
@@ -22,6 +23,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -42,6 +44,39 @@ type Run struct {
 	UserNodeId    string // the run's creator
 	OrgNodeId     string // empty for a personal run
 	ComputeNodeId string
+	// DatasetTargets are the run's data targets that write to a dataset.
+	DatasetTargets []DatasetTarget
+}
+
+// DatasetTarget is one of a run's data targets that writes to a dataset, as
+// the run says (workflow-service's RunDatasetTarget).
+type DatasetTarget struct {
+	NodeId         string `json:"nodeId"`
+	TargetType     string `json:"targetType"`
+	DatasetNodeId  string `json:"datasetNodeId"`
+	TargetFolder   string `json:"targetFolder,omitempty"`
+	OverwriteFiles bool   `json:"overwriteFiles,omitempty"`
+}
+
+// TargetTypePennsieveDataset is the target type that imports into a dataset.
+const TargetTypePennsieveDataset = "Pennsieve Dataset"
+
+// ErrNotATarget means the request names no dataset import of the run's.
+var ErrNotATarget = errors.New("not one of the run's dataset targets")
+
+// ImportTarget is the run's dataset target targetId when it imports into
+// datasetNodeId.
+func (r Run) ImportTarget(targetId, datasetNodeId string) (DatasetTarget, error) {
+	for _, t := range r.DatasetTargets {
+		if t.NodeId != targetId {
+			continue
+		}
+		if t.TargetType != TargetTypePennsieveDataset || t.DatasetNodeId != datasetNodeId {
+			return DatasetTarget{}, ErrNotATarget
+		}
+		return t, nil
+	}
+	return DatasetTarget{}, ErrNotATarget
 }
 
 // Token reads a callback token, "Callback <service>:<runId>:<token>".
@@ -75,11 +110,12 @@ type validateRequest struct {
 }
 
 type validateResponse struct {
-	IsAuthorized       bool   `json:"isAuthorized"`
-	UserNodeId         string `json:"userNodeId,omitempty"`
-	OrganizationNodeId string `json:"organizationNodeId,omitempty"`
-	ComputeNodeId      string `json:"computeNodeId,omitempty"`
-	Error              string `json:"error,omitempty"`
+	IsAuthorized       bool            `json:"isAuthorized"`
+	UserNodeId         string          `json:"userNodeId,omitempty"`
+	OrganizationNodeId string          `json:"organizationNodeId,omitempty"`
+	ComputeNodeId      string          `json:"computeNodeId,omitempty"`
+	DatasetTargets     []DatasetTarget `json:"datasetTargets,omitempty"`
+	Error              string          `json:"error,omitempty"`
 }
 
 // Validate returns the run a callback token is valid for, or ErrUnauthorized.
@@ -109,8 +145,13 @@ func (v *Validator) Validate(ctx context.Context, runId, token string) (Run, err
 	if resp.UserNodeId == "" || resp.ComputeNodeId == "" {
 		return Run{}, fmt.Errorf("callback validator returned no user or compute node for run %s", runId)
 	}
-	return Run{Id: runId, UserNodeId: resp.UserNodeId, OrgNodeId: resp.OrganizationNodeId, ComputeNodeId: resp.ComputeNodeId}, nil
+	return Run{Id: runId, UserNodeId: resp.UserNodeId, OrgNodeId: resp.OrganizationNodeId, ComputeNodeId: resp.ComputeNodeId, DatasetTargets: resp.DatasetTargets}, nil
 }
+
+// computeRoleRE matches the compute-account roles a run's files are read
+// with (account-service's: Pennsieve-Compute-* from the CloudFormation
+// template, ROLE-* for older accounts).
+var computeRoleRE = regexp.MustCompile(`^arn:aws:iam::\d{12}:role/(Pennsieve-Compute-|ROLE-)[A-Za-z0-9+=,.@_-]+$`)
 
 // Results is where a run's results are and how to read them.
 type Results struct {
@@ -122,10 +163,11 @@ type Results struct {
 	Region     string
 }
 
-// Prefix is the key prefix of one data target's results in the run's
-// node bucket: results/<runId>/<targetId>/.
+// Prefix is the key prefix of one data target's staged files in the run's
+// node bucket: imports/<runId>/<targetId>/, apart from a download target's
+// results/<runId>/.
 func Prefix(runId, targetId string) string {
-	return "results/" + runId + "/" + targetId + "/"
+	return "imports/" + runId + "/" + targetId + "/"
 }
 
 // DynamoAPI is the subset of the DynamoDB client used.

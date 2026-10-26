@@ -11,7 +11,7 @@ import (
 const testRun = "2cc3b55f-185a-48f9-b9f9-fb4b4ba40815"
 
 func importRequest(keys ...string) runResultsImportRequest {
-	req := runResultsImportRequest{RunId: testRun, TargetId: "dataset-llm", TargetFolder: "e2e-results"}
+	req := runResultsImportRequest{RunId: testRun, TargetId: "dataset-llm"}
 	for _, k := range keys {
 		req.Objects = append(req.Objects, runResultsObject{Key: k, Size: 10})
 	}
@@ -35,7 +35,6 @@ func TestCheckRunImportRequest(t *testing.T) {
 			r.Objects = make([]runResultsObject, maxRunImportObjects+1)
 			return auth
 		},
-		"an unknown conflict": func(r *runResultsImportRequest) string { r.OnConflict = "merge"; return auth },
 	}
 	for name, change := range bad {
 		r := req
@@ -50,10 +49,11 @@ func TestPlanRunImport(t *testing.T) {
 	prefix := runresults.Prefix(testRun, "dataset-llm")
 	req := importRequest(prefix+"llm-result.json", prefix+"copies/signals/a.csv")
 	manifestId := runImportManifestId(testRun, "dataset-llm", "N:dataset:1")
-	src := runresults.Results{Bucket: "workflow-logs-1-dev-n", RoleArn: "arn:aws:iam::1:role/R", ExternalId: "ext", Region: "us-east-1"}
+	src := runresults.Results{Bucket: "workflow-logs-537996532276-dev-n", RoleArn: "arn:aws:iam::537996532276:role/Pennsieve-Compute-Runtime", ExternalId: "ext", Region: "us-east-1"}
 	dest := storage.Resolution{OrganizationId: 7, DatasetId: 9, StorageBucket: "pennsieve-dev-storage-use1"}
+	target := runresults.DatasetTarget{NodeId: "dataset-llm", TargetType: runresults.TargetTypePennsieveDataset, DatasetNodeId: "N:dataset:1", TargetFolder: "e2e-results", OverwriteFiles: true}
 
-	files, jobs, err := planRunImport(req, manifestId, src, dest, "us-east-1")
+	files, jobs, err := planRunImport(req, target, manifestId, src, dest, "us-east-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,23 +71,45 @@ func TestPlanRunImport(t *testing.T) {
 	if j.Source.ReadPrefix != prefix || j.Source.RoleArn != src.RoleArn || j.Source.ExternalId != "ext" || j.OrgIntId != 7 || j.DatasetIntId != 9 {
 		t.Errorf("job: %+v", j)
 	}
+	if j.OnConflict != "replace" || j.TargetId != "dataset-llm" {
+		t.Errorf("the target's overwrite and id: %+v", j)
+	}
 	// The same page again plans the same rows: retries are idempotent.
-	again, _, _ := planRunImport(req, manifestId, src, dest, "us-east-1")
+	again, _, _ := planRunImport(req, target, manifestId, src, dest, "us-east-1")
 	if again[0].UploadID != files[0].UploadID {
 		t.Error("upload ids differ between attempts")
 	}
 
 	for name, key := range map[string]string{
-		"another run's file": "results/other/dataset-llm/a.json",
+		"another run's file": "imports/other/dataset-llm/a.json",
 		"another target's":   runresults.Prefix(testRun, "download") + "a.json",
 		"a path escape":      prefix + "../../x",
 	} {
-		if _, _, err := planRunImport(importRequest(key), manifestId, src, dest, "us-east-1"); err == nil {
+		if _, _, err := planRunImport(importRequest(key), target, manifestId, src, dest, "us-east-1"); err == nil {
 			t.Errorf("%s accepted", name)
 		}
 	}
-	if _, _, err := planRunImport(importRequest(prefix+"a", prefix+"a"), manifestId, src, dest, "us-east-1"); err == nil || !strings.Contains(err.Error(), "twice") {
+	if _, _, err := planRunImport(importRequest(prefix+"a", prefix+"a"), target, manifestId, src, dest, "us-east-1"); err == nil || !strings.Contains(err.Error(), "twice") {
 		t.Errorf("a duplicate key: %v", err)
+	}
+	// Too large for the copies: refused while the run can still say so.
+	big := importRequest(prefix + "big.bin")
+	big.Objects[0].Size = runresults.MaxFileBytes + 1
+	if _, _, err := planRunImport(big, target, manifestId, src, dest, "us-east-1"); err == nil || !strings.Contains(err.Error(), "big.bin") {
+		t.Errorf("a file too large: %v", err)
+	}
+	// Placed as the target says, not the request.
+	keep := target
+	keep.OverwriteFiles = false
+	_, kept, _ := planRunImport(req, keep, manifestId, src, dest, "us-east-1")
+	if kept[0].OnConflict != "keepBoth" {
+		t.Errorf("onConflict %q", kept[0].OnConflict)
+	}
+	// Every planned job passes the copy lambda's own check.
+	for _, j := range jobs {
+		if err := j.Check(); err != nil {
+			t.Errorf("planned job fails the copy's check: %v", err)
+		}
 	}
 }
 

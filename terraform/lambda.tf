@@ -221,8 +221,9 @@ resource "aws_lambda_function" "run_import_lambda" {
   architectures = ["arm64"]
   role          = aws_iam_role.run_import_lambda_role.arn
   timeout       = 900
-  # Memory buys network throughput; a copy streams through the lambda.
-  memory_size = 1024
+  # Memory buys CPU and network throughput (1769 MB is a full vCPU); a copy
+  # streams through the lambda.
+  memory_size = 1769
   s3_bucket   = var.lambda_bucket
   s3_key      = "${var.service_name}/runimport/upload-v2-runimport-${var.image_tag}.zip"
 
@@ -232,6 +233,7 @@ resource "aws_lambda_function" "run_import_lambda" {
       MANIFEST_FILE_TABLE          = aws_dynamodb_table.manifest_files_dynamo_table.name
       STORAGE_CREDENTIALS_ROLE_ARN = aws_iam_role.storage_credentials_role.arn
       UPLOAD_TRIGGER_QUEUE_URL     = aws_sqs_queue.upload_trigger_queue.url
+      MAX_ATTEMPTS                 = local.run_import_max_attempts
       REGION                       = var.aws_region
       LOG_LEVEL                    = "info"
     }
