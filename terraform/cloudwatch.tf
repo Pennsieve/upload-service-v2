@@ -19,6 +19,28 @@ resource "aws_cloudwatch_metric_alarm" "upload_sqs_dlq_cloudwatch_metric_alarm" 
   }
 }
 
+# Run-results imports' dead-letter queue: a copy the run-import lambda
+# couldn't mark Failed (its file stays in progress), for an operator.
+resource "aws_cloudwatch_metric_alarm" "run_results_import_dlq_alarm" {
+  alarm_name                = "${var.environment_name}-run-results-import-deadletter-queue-alarm-${data.terraform_remote_state.region.outputs.aws_region_shortname}"
+  comparison_operator       = "GreaterThanOrEqualToThreshold"
+  evaluation_periods        = "1"
+  metric_name               = "ApproximateNumberOfMessagesVisible"
+  namespace                 = "AWS/SQS"
+  period                    = "60"
+  statistic                 = "Average"
+  threshold                 = "1"
+  alarm_description         = "Run-results import copies in the dead-letter queue"
+  insufficient_data_actions = []
+  alarm_actions             = [data.terraform_remote_state.account.outputs.data_management_victor_ops_sns_topic_id]
+  ok_actions                = [data.terraform_remote_state.account.outputs.data_management_victor_ops_sns_topic_id]
+  treat_missing_data        = "ignore"
+
+  dimensions = {
+    QueueName = aws_sqs_queue.run_results_import_deadletter_queue.name
+  }
+}
+
 // Create log group for upload lambda.
 resource "aws_cloudwatch_log_group" "upload_lambda_loggroup" {
   name              = "/aws/lambda/${aws_lambda_function.upload_lambda.function_name}"

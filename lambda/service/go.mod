@@ -10,6 +10,10 @@ toolchain go1.26.9
 
 replace github.com/pennsieve/pennsieve-upload-service-v2/pkg/bucketregion => ../../pkg/bucketregion
 
+replace github.com/pennsieve/pennsieve-upload-service-v2/pkg/runresults => ../../pkg/runresults
+
+replace github.com/pennsieve/pennsieve-upload-service-v2/pkg/uploadtrigger => ../../pkg/uploadtrigger
+
 require (
 	github.com/aws/aws-lambda-go v1.46.0
 	github.com/aws/aws-sdk-go-v2 v1.47.3
@@ -19,6 +23,8 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/pennsieve/pennsieve-go-core v1.20.0
 	github.com/pennsieve/pennsieve-upload-service-v2/pkg/bucketregion v0.0.0-00010101000000-000000000000
+	github.com/pennsieve/pennsieve-upload-service-v2/pkg/runresults v0.0.0-00010101000000-000000000000
+	github.com/pennsieve/pennsieve-upload-service-v2/pkg/uploadtrigger v0.0.0-00010101000000-000000000000
 	github.com/sirupsen/logrus v1.10.2
 	github.com/valyala/fastjson v1.6.4
 )

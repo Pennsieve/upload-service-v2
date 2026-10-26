@@ -402,6 +402,137 @@ paths:
         '5XX':
           $ref: '#/components/responses/Error'
 
+  /manifest/run-results/import:
+    post:
+      summary: Import a workflow run's results into the dataset
+      description: |
+        Called by a compute node for a run's "Pennsieve Dataset" data target,
+        with the run's callback token. The target must be one of the run's
+        dataset targets, writing to dataset_id (one of the run's datasets);
+        the folder and conflict handling are the target's, from the run.
+        Registers a page of the target's staged files (imports/{runId}/{targetId}/
+        in the node's bucket) on its manifest and queues their copies into the
+        dataset's storage; the upload lambda then creates their packages.
+        Idempotent: the same run, target and dataset always use the same
+        manifest and upload ids. Max 1000 files per call, each up to 40 GiB.
+      x-amazon-apigateway-integration:
+        $ref: '#/components/x-amazon-apigateway-integrations/manifest-service-finalize'
+      operationId: importRunResults
+      security:
+        - token_dataset_auth: [ ]
+      tags:
+        - Upload
+      parameters:
+        - in: query
+          name: dataset_id
+          schema:
+            type: string
+          required: true
+          description: the dataset the target writes to (one of the run's datasets)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [runId, targetId, objects]
+              properties:
+                runId:
+                  type: string
+                targetId:
+                  type: string
+                  description: the data target's node id in the run
+                objects:
+                  type: array
+                  maxItems: 1000
+                  items:
+                    type: object
+                    required: [key, size]
+                    properties:
+                      key:
+                        type: string
+                      size:
+                        type: integer
+      responses:
+        '200':
+          description: The files are registered and their copies queued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  manifestNodeId:
+                    type: string
+                  queued:
+                    type: integer
+        '4XX':
+          $ref: '#/components/responses/Unauthorized'
+        '5XX':
+          $ref: '#/components/responses/Error'
+    get:
+      summary: How far a run's results import is
+      description: |
+        A run target's import into the dataset: its files by state, imported
+        (in the dataset), failed (with the first failures' reasons) and in
+        progress. For the run's page; the run itself doesn't wait for it.
+      x-amazon-apigateway-integration:
+        $ref: '#/components/x-amazon-apigateway-integrations/manifest-service'
+      operationId: getRunResultsImport
+      security:
+        - token_dataset_auth: [ ]
+      tags:
+        - Status
+      parameters:
+        - in: query
+          name: dataset_id
+          schema:
+            type: string
+          required: true
+          description: dataset node id
+        - in: query
+          name: run_id
+          schema:
+            type: string
+          required: true
+          description: the run
+        - in: query
+          name: target_id
+          schema:
+            type: string
+          required: true
+          description: the data target's node id in the run
+      responses:
+        '200':
+          description: The import's progress
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  manifestNodeId:
+                    type: string
+                  total:
+                    type: integer
+                  imported:
+                    type: integer
+                  failed:
+                    type: integer
+                  inProgress:
+                    type: integer
+                  failures:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        path:
+                          type: string
+                        message:
+                          type: string
+        '4XX':
+          $ref: '#/components/responses/Unauthorized'
+        '5XX':
+          $ref: '#/components/responses/Error'
+
   /manifest/archive:
     post:
       x-amazon-apigateway-integration:

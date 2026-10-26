@@ -22,3 +22,24 @@ echo "******************************"
 echo ""
 cd ../../lambda/archiver; \
   go test -v ./... ;
+echo ""
+echo "*********************************"
+echo "*   Testing Run Import Lambda   *"
+echo "*********************************"
+echo ""
+cd ../../lambda/runimport; \
+  go test -v ./... ;
+echo ""
+echo "*******************************"
+echo "*   Testing pkg/runresults    *"
+echo "*******************************"
+echo ""
+cd ../../pkg/runresults; \
+  go test -v ./... ;
+echo ""
+echo "*********************************"
+echo "*   Testing pkg/uploadtrigger   *"
+echo "*********************************"
+echo ""
+cd ../../pkg/uploadtrigger; \
+  go test -v ./... ;

@@ -9,6 +9,7 @@ UPLOADHANDLER_PACKAGE_NAME ?= "upload-v2-handler-${VERSION}.zip"
 ARCHIVER_PACKAGE_NAME ?= "manifest-archiver-${VERSION}.zip"
 RECONCILE_PACKAGE_NAME ?= "upload-v2-reconcile-${VERSION}.zip"
 ARCHIVE_SWEEPER_PACKAGE_NAME ?= "upload-v2-archive-sweeper-${VERSION}.zip"
+RUNIMPORT_PACKAGE_NAME ?= "upload-v2-runimport-${VERSION}.zip"
 PACKAGE_NAME  ?= "${SERVICE_NAME}-${VERSION}.zip"
 
 .DEFAULT: help
@@ -98,6 +99,15 @@ package:
   		env GOOS=linux GOARCH=arm64 go build -tags lambda.norpc -o $(WORKING_DIR)/lambda/bin/archive-sweeper/bootstrap; \
 		cd $(WORKING_DIR)/lambda/bin/archive-sweeper/ ; \
 			zip -r $(WORKING_DIR)/lambda/bin/archive-sweeper/$(ARCHIVE_SWEEPER_PACKAGE_NAME) .
+	@echo ""
+	@echo "***********************"
+	@echo "*   Building Run Import lambda   *"
+	@echo "***********************"
+	@echo ""
+	cd $(WORKING_DIR)/lambda/runimport; \
+  		env GOOS=linux GOARCH=arm64 go build -tags lambda.norpc -o $(WORKING_DIR)/lambda/bin/runimport/bootstrap; \
+		cd $(WORKING_DIR)/lambda/bin/runimport/ ; \
+			zip -r $(WORKING_DIR)/lambda/bin/runimport/$(RUNIMPORT_PACKAGE_NAME) .
 
 publish:
 	@make package
@@ -136,3 +146,10 @@ publish:
 	@echo ""
 	aws s3 cp $(WORKING_DIR)/lambda/bin/archive-sweeper/$(ARCHIVE_SWEEPER_PACKAGE_NAME) s3://$(LAMBDA_BUCKET)/upload-service-v2/archive-sweeper/
 	rm -rf $(WORKING_DIR)/lambda/bin/archive-sweeper/$(ARCHIVE_SWEEPER_PACKAGE_NAME)
+	@echo ""
+	@echo "*************************************"
+	@echo "*   Publishing Run Import lambda    *"
+	@echo "*************************************"
+	@echo ""
+	aws s3 cp $(WORKING_DIR)/lambda/bin/runimport/$(RUNIMPORT_PACKAGE_NAME) s3://$(LAMBDA_BUCKET)/upload-service-v2/runimport/
+	rm -rf $(WORKING_DIR)/lambda/bin/runimport/$(RUNIMPORT_PACKAGE_NAME)
