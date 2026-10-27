@@ -34,6 +34,9 @@ resource "aws_lambda_function" "upload_lambda" {
       REGION               = var.aws_region,
       RDS_PROXY_ENDPOINT   = data.terraform_remote_state.pennsieve_postgres.outputs.rds_proxy_endpoint,
       LOG_LEVEL            = "info",
+      // Live updates: the Event API's publish host where realtime is on
+      // (realtime.tf); empty keeps Pusher.
+      REALTIME_EVENTS_ENDPOINT = local.realtime_events_enabled ? data.terraform_remote_state.realtime[0].outputs.http_endpoint : "",
     }
   }
 }
