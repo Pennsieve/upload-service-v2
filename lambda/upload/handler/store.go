@@ -25,7 +25,6 @@ import (
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/packageInfo"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/packageInfo/conflictStrategy"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/packageInfo/packageState"
-	"github.com/pennsieve/pennsieve-go-core/pkg/models/packageInfo/packageType"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/pgdb"
 	ps "github.com/pennsieve/pennsieve-go-core/pkg/models/pusher"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/uploadFile"
@@ -882,18 +881,14 @@ func getPackageParams(datasetId int, ownerId int, uploadFiles []uploadFile.Uploa
 			DataType: "string",
 		})
 
-		// Select Package State
-		// UPLOADED if there is a workflow associated with the package type
-		// READY is there is no workflow associated with the package type
-		setPackageState := packageState.Uploaded
-		if !packageType.FileTypeToInfoDict[file.FileType].HasWorkflow {
-			setPackageState = packageState.Ready
-		}
-
+		// Every uploaded package is READY. No processor picks packages up from UPLOADED
+		// any more, so a package left there would read as "Unprocessed" forever. When
+		// automated processors exist for a file type they will be triggered some other
+		// way; packageType's HasWorkflow flag is deliberately not consulted here.
 		pkgParam := pgdb.PackageParams{
 			Name:         packageName,
 			PackageType:  file.Type,
-			PackageState: setPackageState,
+			PackageState: packageState.Ready,
 			NodeId:       packageId,
 			ParentId:     parentId,
 			DatasetId:    datasetId,
