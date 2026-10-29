@@ -11,10 +11,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Every uploaded package starts READY, whatever its type. Nothing picks packages up
-// from UPLOADED any more, so types that used to wait for a processor (images,
-// timeseries, MRI, slides, video) would otherwise rest as "Unprocessed" forever.
-func TestGetPackageParamsAlwaysReady(t *testing.T) {
+// Every uploaded package starts UPLOADED (waiting for its virus scan), whatever its
+// type: READY means cleared by scan-service, not processed. Types that used to be
+// READY straight away (text, ...) and types go-core flags HasWorkflow (images,
+// timeseries, MRI, slides, video) are treated alike.
+func TestGetPackageParamsAlwaysUploaded(t *testing.T) {
 	files := []uploadFile.UploadFile{
 		{UploadId: "11111111-1111-1111-1111-111111111111", Name: "plot.png", FileType: fileType.PNG, Type: packageType.Image},
 		{UploadId: "22222222-2222-2222-2222-222222222222", Name: "photo.jpg", FileType: fileType.JPEG, Type: packageType.Image},
@@ -30,6 +31,6 @@ func TestGetPackageParamsAlwaysReady(t *testing.T) {
 	require.Len(t, params, len(files))
 
 	for _, p := range params {
-		assert.Equal(t, packageState.Ready, p.PackageState, "%s (%s)", p.Name, p.PackageType)
+		assert.Equal(t, packageState.Uploaded, p.PackageState, "%s (%s)", p.Name, p.PackageType)
 	}
 }

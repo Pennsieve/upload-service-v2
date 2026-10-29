@@ -881,14 +881,15 @@ func getPackageParams(datasetId int, ownerId int, uploadFiles []uploadFile.Uploa
 			DataType: "string",
 		})
 
-		// Every uploaded package is READY. No processor picks packages up from UPLOADED
-		// any more, so a package left there would read as "Unprocessed" forever. When
-		// automated processors exist for a file type they will be triggered some other
-		// way; packageType's HasWorkflow flag is deliberately not consulted here.
+		// Every uploaded package starts UPLOADED: waiting for its virus scan. READY means
+		// the file has been cleared by the scanner; scan-service moves the package on
+		// (clean/format_validated/unscanned -> READY, infected -> ERROR) after it
+		// records files.scan_status. Processing no longer decides state, so
+		// packageType's HasWorkflow flag is deliberately not consulted here.
 		pkgParam := pgdb.PackageParams{
 			Name:         packageName,
 			PackageType:  file.Type,
-			PackageState: packageState.Ready,
+			PackageState: packageState.Uploaded,
 			NodeId:       packageId,
 			ParentId:     parentId,
 			DatasetId:    datasetId,
