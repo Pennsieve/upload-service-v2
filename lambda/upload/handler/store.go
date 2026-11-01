@@ -25,7 +25,6 @@ import (
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/packageInfo"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/packageInfo/conflictStrategy"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/packageInfo/packageState"
-	"github.com/pennsieve/pennsieve-go-core/pkg/models/packageInfo/packageType"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/pgdb"
 	ps "github.com/pennsieve/pennsieve-go-core/pkg/models/pusher"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/uploadFile"
@@ -882,18 +881,15 @@ func getPackageParams(datasetId int, ownerId int, uploadFiles []uploadFile.Uploa
 			DataType: "string",
 		})
 
-		// Select Package State
-		// UPLOADED if there is a workflow associated with the package type
-		// READY is there is no workflow associated with the package type
-		setPackageState := packageState.Uploaded
-		if !packageType.FileTypeToInfoDict[file.FileType].HasWorkflow {
-			setPackageState = packageState.Ready
-		}
-
+		// Every uploaded package starts UPLOADED: waiting for its virus scan. READY means
+		// the file has been cleared by the scanner; scan-service moves the package on
+		// (clean/format_validated/unscanned -> READY, infected -> ERROR) after it
+		// records files.scan_status. Processing no longer decides state, so
+		// packageType's HasWorkflow flag is deliberately not consulted here.
 		pkgParam := pgdb.PackageParams{
 			Name:         packageName,
 			PackageType:  file.Type,
-			PackageState: setPackageState,
+			PackageState: packageState.Uploaded,
 			NodeId:       packageId,
 			ParentId:     parentId,
 			DatasetId:    datasetId,
