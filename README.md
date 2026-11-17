@@ -97,10 +97,14 @@ renamed with a " (N)" suffix. With `onConflict: "replace"` the new file takes ov
    - soft-deletes it: state becomes `DELETING` and its name is prefixed `__DELETED__<nodeId>_`, which frees the name;
    - inserts the new package with `replaces_package_id` pointing at the predecessor;
    - sets the predecessor's `replaced_by_package_id` to the new package.
+
+   Still in the same transaction, `packagedelete.RecordPendingJobs` writes one `PENDING` row per predecessor to the
+   workspace's `delete_jobs` table (`source = UPLOAD_REPLACE`, `user_node_id` = the uploader, `trace_id` = the manifest
+   id). If that insert fails, the whole import rolls back, including the `DELETING` flip.
 3. Only files can be replaced. Collections are rejected by go-core, and a database CHECK constraint forbids
    `replaces_package_id` / `replaced_by_package_id` on collections.
-4. After the transaction commits, the lambda sends one `DeletePackageJob` per replaced predecessor to the delete
-   queue (in SQS batches of 10, five in parallel). The delete queue is consumed by
+4. After the transaction commits, `packagedelete.EnqueueJobs` sends one `DeletePackageJob` per recorded job to the
+   delete queue (in SQS batches of 10, five in parallel). The message `id` is the `delete_jobs` row id. The delete queue is consumed by
    [process-jobs-service](https://github.com/Pennsieve/process-jobs-service), which does the actual cleanup.
 5. The notification for the new package carries `replaced_package_id` so the web app can drop the old row.
 6. The lambda emits an EMF metric record in the `UploadService/Replace` namespace with `ReplacementCount` and
@@ -109,11 +113,13 @@ renamed with a " (N)" suffix. With `onConflict: "replace"` the new file takes ov
 `replaces_package_id` and `replaced_by_package_id` are provenance only. They do not delete anything: the old package
 is deleted by the delete job.
 
-**Known weakness (current behavior).** The delete jobs are sent after the database commit. If sending fails, the error
-is logged and counted in `ReplacementPublishFailures`, but the import is not failed or retried, so the predecessor
-stays in state `DELETING` (renamed, not yet cleaned up) until something else deletes it. A planned change records a
-`PENDING` `delete_jobs` row for each predecessor in the import transaction, so a lost send becomes detectable and
-re-drivable; see go-core's `pkg/packagedelete/README.md` for the delete path and that contract.
+**If the send fails.** The error is logged and counted in `ReplacementPublishFailures`, but the import is not failed
+or retried. Because the `PENDING` row was committed with the flip, the predecessor is not stranded unnoticed: the
+aged `PENDING` row is what the delete-jobs monitor in process-jobs-service alarms on and what re-drive picks up. See
+go-core's `pkg/packagedelete/README.md` for the delete path and the producer contract.
+
+**Deploy order.** The `delete_jobs` migration (pennsieve-db-migrations) must be applied in an environment before this
+lambda is deployed there. Without the table the insert fails and every replace import rolls back.
 
 ## Duplicates, retries and recovery
 
