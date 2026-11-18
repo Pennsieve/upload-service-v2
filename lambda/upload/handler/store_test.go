@@ -2,6 +2,8 @@ package handler
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
 	"fmt"
 	"github.com/google/uuid"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/dydb"
@@ -238,6 +240,7 @@ func TestStoreWithPG(t *testing.T) {
 	store := NewUploadHandlerStore(pgdbClient, client, mSNS, mS3,
 		ManifestFileTableName, ManifestTableName, "", mPusher, mChangelogger, nil, "")
 	require.NoError(t, store.WithOrg(orgID))
+	ensureDeleteJobsTable(t, pgdbClient, orgID)
 
 	for scenario, fn := range map[string]func(
 		*testing.T, int, *UploadHandlerStore,
@@ -251,6 +254,7 @@ func TestStoreWithPG(t *testing.T) {
 		"dedupes a file repeated within one batch":        testImportFilesDuplicateInBatch,
 		"already imported file is a no-op on redelivery":  testImportFilesAlreadyImportedIsNoOp,
 		"redelivery with replace strategy does not fail":  testImportFilesRedeliveryWithReplace,
+		"replace records a PENDING delete job":            testImportFilesReplaceRecordsDeleteJob,
 	} {
 		t.Run(scenario, func(t *testing.T) {
 			t.Cleanup(func() {
@@ -259,6 +263,7 @@ func TestStoreWithPG(t *testing.T) {
 				testHelpers.Truncate(t, store.pgdb, orgID, "package_storage")
 				testHelpers.Truncate(t, store.pgdb, orgID, "organization_storage")
 				testHelpers.Truncate(t, store.pgdb, orgID, "dataset_storage")
+				testHelpers.Truncate(t, store.pgdb, orgID, "delete_jobs")
 				mChangelogger.Clear()
 				mPusher.Clear()
 				mSNS.Clear()
@@ -900,4 +905,139 @@ func testImportFilesWithLeadingSlash(t *testing.T, orgID int, store *UploadHandl
 		}
 	}
 
+}
+
+// ensureDeleteJobsTable creates the org's delete_jobs table if the seed
+// image predates pennsieve-db-migrations
+// V20261117092140__create_delete_jobs.sql. Same columns and CHECKs as the
+// migration, minus the updated_at trigger (only fires on UPDATE). Once the
+// seed image carries the migration this is a no-op.
+func ensureDeleteJobsTable(t *testing.T, db *sql.DB, orgID int) {
+	t.Helper()
+	_, err := db.Exec(fmt.Sprintf(`
+CREATE TABLE IF NOT EXISTS "%d".delete_jobs (
+  id                 UUID PRIMARY KEY,
+  package_id         INTEGER NOT NULL,
+  package_node_id    VARCHAR(255) NOT NULL,
+  dataset_id         INTEGER NOT NULL,
+  user_node_id       VARCHAR(255),
+  trace_id           VARCHAR(255),
+  source             VARCHAR(32) NOT NULL DEFAULT 'UNKNOWN'
+                     CHECK (source IN ('API_DELETE','UPLOAD_REPLACE','OTHER','UNKNOWN')),
+  state              VARCHAR(20) NOT NULL DEFAULT 'PENDING'
+                     CHECK (state IN ('PENDING','IN_PROGRESS','SUCCEEDED','PARTIAL','FAILED')),
+  attempts           INTEGER NOT NULL DEFAULT 0,
+  last_error         TEXT,
+  packages_total     INTEGER,
+  packages_deleted   INTEGER NOT NULL DEFAULT 0,
+  bytes_reclaimed    BIGINT  NOT NULL DEFAULT 0,
+  s3_objects_deleted INTEGER NOT NULL DEFAULT 0,
+  s3_objects_failed  INTEGER NOT NULL DEFAULT 0,
+  created_at         TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  started_at         TIMESTAMP,
+  finished_at        TIMESTAMP,
+  updated_at         TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+)`, orgID))
+	require.NoError(t, err)
+}
+
+// testImportFilesReplaceRecordsDeleteJob: uploading a new file over an
+// existing name with onConflict=replace sets the old package DELETING and,
+// in the same transaction, writes a PENDING UPLOAD_REPLACE delete_jobs row
+// for it. The DeletePackageJob sent after commit carries that row's id.
+func testImportFilesReplaceRecordsDeleteJob(t *testing.T, orgID int, store *UploadHandlerStore) {
+	fakeSQS := &fakeSQSBatch{}
+	store.sqsClient = fakeSQS
+	t.Cleanup(func() { store.sqsClient = nil })
+
+	datasetID := 1
+	user := pgdbmodels.User{
+		Id:           int64(1),
+		NodeId:       "N:user:99f02be5-009c-4ecd-9006-f016d48628bf",
+		Email:        uuid.NewString(),
+		FirstName:    uuid.NewString(),
+		LastName:     uuid.NewString(),
+		PreferredOrg: int64(orgID),
+	}
+	newManifest := func() *dydb.ManifestTable {
+		return &dydb.ManifestTable{
+			ManifestId:     uuid.NewString(),
+			DatasetId:      int64(datasetID),
+			DatasetNodeId:  uuid.NewString(),
+			OrganizationId: int64(orgID),
+			UserId:         user.Id,
+		}
+	}
+	newFile := func(manifestID string) uploadFile.UploadFile {
+		uploadID := uuid.NewString()
+		return uploadFile.UploadFile{
+			ManifestId: manifestID,
+			UploadId:   uploadID,
+			S3Bucket:   uuid.NewString(),
+			S3Key:      fmt.Sprintf("%s/%s", manifestID, uploadID),
+			Path:       "sub",
+			Name:       "a.csv",
+			Extension:  "csv",
+			FileType:   fileType.CSV,
+			Type:       packageType.CSV,
+			Size:       100,
+		}
+	}
+
+	firstManifest := newManifest()
+	first := newFile(firstManifest.ManifestId)
+	require.NoError(t, store.ImportFiles(context.Background(), datasetID, orgID, user,
+		[]uploadFile.UploadFile{first}, firstManifest, true, "replace"))
+	test.AssertRowCount(t, store.pgdb, orgID, "delete_jobs", 0)
+	assert.Empty(t, fakeSQS.bodies, "nothing was replaced, so nothing is enqueued")
+
+	var predecessorID int64
+	predecessorNodeID := fmt.Sprintf("N:package:%s", first.UploadId)
+	require.NoError(t, store.pgdb.QueryRow(
+		fmt.Sprintf(`SELECT id FROM "%d".packages WHERE node_id = $1`, orgID),
+		predecessorNodeID).Scan(&predecessorID))
+
+	// A different upload with the same name replaces it.
+	secondManifest := newManifest()
+	second := newFile(secondManifest.ManifestId)
+	require.NoError(t, store.ImportFiles(context.Background(), datasetID, orgID, user,
+		[]uploadFile.UploadFile{second}, secondManifest, true, "replace"))
+
+	test.AssertExistsOneWhere(t, store.pgdb, orgID, "packages",
+		map[string]any{"id": predecessorID, "state": "DELETING"})
+
+	test.AssertRowCount(t, store.pgdb, orgID, "delete_jobs", 1)
+	var (
+		jobID, nodeID, userNodeID, traceID, source, state string
+		packageID, dsID, attempts                         int64
+	)
+	require.NoError(t, store.pgdb.QueryRow(fmt.Sprintf(
+		`SELECT id, package_id, package_node_id, dataset_id, user_node_id, trace_id, source, state, attempts
+		 FROM "%d".delete_jobs`, orgID)).Scan(
+		&jobID, &packageID, &nodeID, &dsID, &userNodeID, &traceID, &source, &state, &attempts))
+	assert.Equal(t, predecessorID, packageID)
+	assert.Equal(t, predecessorNodeID, nodeID)
+	assert.EqualValues(t, datasetID, dsID)
+	assert.Equal(t, user.NodeId, userNodeID)
+	assert.Equal(t, secondManifest.ManifestId, traceID)
+	assert.Equal(t, "UPLOAD_REPLACE", source)
+	assert.Equal(t, "PENDING", state)
+	assert.EqualValues(t, 0, attempts)
+
+	require.Len(t, fakeSQS.bodies, 1)
+	var msg struct {
+		DeletePackageJob struct {
+			PackageID      int64  `json:"packageId"`
+			OrganizationID int64  `json:"organizationId"`
+			UserID         string `json:"userId"`
+			TraceID        string `json:"traceId"`
+			ID             string `json:"id"`
+		}
+	}
+	require.NoError(t, json.Unmarshal([]byte(fakeSQS.bodies[0]), &msg))
+	assert.Equal(t, jobID, msg.DeletePackageJob.ID, "message id must be the delete_jobs row id")
+	assert.Equal(t, predecessorID, msg.DeletePackageJob.PackageID)
+	assert.EqualValues(t, orgID, msg.DeletePackageJob.OrganizationID)
+	assert.Equal(t, user.NodeId, msg.DeletePackageJob.UserID)
+	assert.Equal(t, secondManifest.ManifestId, msg.DeletePackageJob.TraceID)
 }

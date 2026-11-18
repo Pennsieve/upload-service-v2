@@ -29,7 +29,8 @@ type sqsBatchAPI interface {
 }
 
 // buildDeleteRequests turns the packages created by an import into delete
-// jobs for the predecessors they replaced
+// requests for the predecessors they replaced. Every one is an
+// UPLOAD_REPLACE job.
 func buildDeleteRequests(packages []pgdb.Package, orgId int, userNodeId, traceId string) []packagedelete.DeleteRequest {
 	var reqs []packagedelete.DeleteRequest
 	for _, pkg := range packages {
@@ -41,6 +42,7 @@ func buildDeleteRequests(packages []pgdb.Package, orgId int, userNodeId, traceId
 			OrganizationID: int64(orgId),
 			UserNodeID:     userNodeId,
 			TraceID:        traceId,
+			Source:         packagedelete.SourceUploadReplace,
 		})
 	}
 	return reqs
@@ -129,7 +131,7 @@ func (s *sqsQueueSender) SendToQueue(ctx context.Context, bodies [][]byte) error
 //
 //	ImportFiles invocation (batch).
 //
-// ReplacementPublishFailures = 1 if DeletePackages returned any error
+// ReplacementPublishFailures = 1 if EnqueueJobs returned any error
 //
 //	for this batch, 0 otherwise. A Count dimension averaged over time
 //	gives the failure rate.

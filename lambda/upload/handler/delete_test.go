@@ -11,6 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	sqsTypes "github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	"github.com/pennsieve/pennsieve-go-core/pkg/models/pgdb"
+	"github.com/pennsieve/pennsieve-go-core/pkg/packagedelete"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -23,6 +24,7 @@ type fakeSQSBatch struct {
 	totalMsgs   int
 	returnErr   error // returned from every call
 	failEntries int   // mark this many entries failed in each response
+	bodies      []string
 }
 
 func (f *fakeSQSBatch) SendMessageBatch(_ context.Context, in *sqs.SendMessageBatchInput, _ ...func(*sqs.Options)) (*sqs.SendMessageBatchOutput, error) {
@@ -33,6 +35,9 @@ func (f *fakeSQSBatch) SendMessageBatch(_ context.Context, in *sqs.SendMessageBa
 	}
 	f.batchSizes = append(f.batchSizes, len(in.Entries))
 	f.totalMsgs += len(in.Entries)
+	for _, e := range in.Entries {
+		f.bodies = append(f.bodies, aws.ToString(e.MessageBody))
+	}
 	out := &sqs.SendMessageBatchOutput{}
 	for i := 0; i < f.failEntries && i < len(in.Entries); i++ {
 		out.Failed = append(out.Failed, sqsTypes.BatchResultErrorEntry{
@@ -63,6 +68,8 @@ func TestBuildDeleteRequests(t *testing.T) {
 		assert.Equal(t, int64(7), r.OrganizationID)
 		assert.Equal(t, "N:user:abc", r.UserNodeID)
 		assert.Equal(t, "manifest-xyz", r.TraceID)
+		assert.Equal(t, packagedelete.SourceUploadReplace, r.Source,
+			"upload replacements must be recorded as UPLOAD_REPLACE")
 	}
 }
 

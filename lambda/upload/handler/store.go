@@ -46,7 +46,7 @@ type UploadHandlerStore struct {
 	pusherClient       domain.PusherAPI
 	publisher          realtime.Publisher // AppSync; when set, used instead of Pusher
 	changelogClient    Changelogger
-	sqsClient          *sqs.Client
+	sqsClient          sqsBatchAPI
 	deleteQueueURL     string
 	FileFinalizedTopic string
 	fileTableName      string
@@ -56,6 +56,10 @@ type UploadHandlerStore struct {
 type PackagesAndFiles struct {
 	packages []pgdb.Package
 	files    []pgdb.File
+	// deleteJobs are the PENDING delete_jobs rows written in the import
+	// transaction for predecessors this import replaced. They are
+	// enqueued after commit.
+	deleteJobs []packagedelete.Job
 }
 
 type storageUpdateParams struct {
@@ -304,9 +308,21 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 			return nil, err
 		}
 
+		// Record a PENDING delete_jobs row for each predecessor that
+		// AddPackagesWithConflict just set to DELETING, in this same
+		// transaction, so the flip and the job row commit (or roll back)
+		// together. The messages are sent after commit (step 7).
+		deleteJobs, err := packagedelete.RecordPendingJobs(ctx, qtx.db,
+			buildDeleteRequests(packages, orgId, user.NodeId, manifest.ManifestId))
+		if err != nil {
+			contextLogger.WithError(err).Error("Unable to record delete jobs for replaced packages.")
+			return nil, err
+		}
+
 		response := PackagesAndFiles{
-			packages: packages,
-			files:    returnedFiles,
+			packages:   packages,
+			files:      returnedFiles,
+			deleteJobs: deleteJobs,
 		}
 
 		return response, nil
@@ -399,15 +415,16 @@ func (s *UploadHandlerStore) ImportFiles(ctx context.Context, datasetId int, org
 
 	// 7. Hand each replaced predecessor off to process-jobs-service for the
 	// async cleanup (storage decrement, S3 delete, restore record). The DB
-	// soft-delete (rename + state=DELETING) is already done by go-core's
-	// AddPackagesWithConflict inside the import transaction; sending the
-	// delete job is the part it leaves to us. Runs after the transaction —
-	// the SQS send isn't part of it and couldn't be rolled back anyway.
-	replacementJobs := buildDeleteRequests(result.packages, orgId, user.NodeId, manifest.ManifestId)
+	// soft-delete (rename + state=DELETING) and the PENDING delete_jobs row
+	// were both written inside the import transaction (step 3); sending the
+	// message is the part left to do. Runs after the transaction — the SQS
+	// send isn't part of it and couldn't be rolled back anyway. If the send
+	// fails, the PENDING row is what the monitor and re-drive pick up.
+	replacementJobs := result.deleteJobs
 	var replacementPublishFailures int
 	if len(replacementJobs) > 0 {
 		sender := &sqsQueueSender{client: s.sqsClient, queueURL: s.deleteQueueURL}
-		if err := packagedelete.DeletePackages(ctx, sender, replacementJobs); err != nil {
+		if err := packagedelete.EnqueueJobs(ctx, sender, replacementJobs); err != nil {
 			replacementPublishFailures = 1
 			contextLogger.WithError(err).WithField("replacement_count", len(replacementJobs)).
 				Error("failed to enqueue one or more DeletePackageJob messages for replaced predecessors")
